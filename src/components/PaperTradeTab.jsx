@@ -180,8 +180,8 @@ export default function PaperTradeTab() {
     try { return JSON.parse(text); } catch { throw new Error("Server returned non-JSON — backend may be down"); }
   };
 
-  const fetchPortfolio = async () => {
-    setLoading(true);
+  const fetchPortfolio = async (showLoader = true) => {
+    if (showLoader) setLoading(true);
     setError(null);
     try {
       const [pRes, hRes] = await Promise.all([
@@ -195,7 +195,7 @@ export default function PaperTradeTab() {
     } catch (e) {
       setError(e.message);
     }
-    setLoading(false);
+    if (showLoader) setLoading(false);
   };
 
   const initPortfolio = async () => {
@@ -228,7 +228,7 @@ export default function PaperTradeTab() {
       const res = await fetch("/api/paper-trade/rebalance", { method: "POST" });
       const data = await safeJson(res);
       if (!data.success) { setError(data.error); setRebalancing(false); return; }
-      await fetchPortfolio();
+      await fetchPortfolio(false);
     } catch (e) {
       setError(e.message);
     }
@@ -618,6 +618,97 @@ export default function PaperTradeTab() {
                             ))}
                           </tbody>
                         </table>
+                      </div>
+                    )}
+
+                    {rb.report && (
+                      <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 12 }}>
+                        <div style={{ fontSize: 10, color: "#818cf8", fontWeight: 700, letterSpacing: 1, marginBottom: 10, fontFamily: MONO }}>PERFORMANCE REPORT</div>
+
+                        <div style={{ display: "flex", gap: 16, marginBottom: 12, flexWrap: "wrap" }}>
+                          <div style={{ fontSize: 12, fontFamily: MONO }}>
+                            <span style={{ color: "#f0f0f0", opacity: 0.7 }}>Period: </span>
+                            <span style={{ color: rb.report.periodReturn >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
+                              {rb.report.periodReturn >= 0 ? "+" : ""}{rb.report.periodReturn}%
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, fontFamily: MONO }}>
+                            <span style={{ color: "#f0f0f0", opacity: 0.7 }}>S&P: </span>
+                            <span style={{ color: rb.report.spyReturn >= 0 ? "#f59e0b" : "#ef4444", fontWeight: 700 }}>
+                              {rb.report.spyReturn >= 0 ? "+" : ""}{rb.report.spyReturn}%
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, fontFamily: MONO }}>
+                            <span style={{ color: "#f0f0f0", opacity: 0.7 }}>Alpha: </span>
+                            <span style={{ color: rb.report.alpha >= 0 ? "#22c55e" : "#ef4444", fontWeight: 700 }}>
+                              {rb.report.alpha >= 0 ? "+" : ""}{rb.report.alpha}%
+                            </span>
+                          </div>
+                        </div>
+
+                        {rb.report.factorPerformance?.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>FACTOR PERFORMANCE</div>
+                            {rb.report.factorPerformance.map(fp => {
+                              const barPct = Math.min(100, Math.max(0, (fp.spread + 10) / 20 * 100));
+                              const barColor = fp.contribution === "strong" ? "#22c55e"
+                                : fp.contribution === "moderate" ? "#4ade80"
+                                : fp.contribution === "weak" ? "#eab308" : "#ef4444";
+                              return (
+                                <div key={fp.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                  <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, width: 80, flexShrink: 0 }}>{fp.label}</span>
+                                  <div style={{ flex: 1, height: 6, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
+                                    <div style={{ height: "100%", width: `${barPct}%`, background: barColor, borderRadius: 3 }} />
+                                  </div>
+                                  <span style={{ fontSize: 10, color: barColor, fontFamily: MONO, width: 60, textAlign: "right", flexShrink: 0 }}>
+                                    {fp.spread >= 0 ? "+" : ""}{fp.spread}
+                                  </span>
+                                  <span style={{ fontSize: 9, color: barColor, fontFamily: MONO, width: 60, textAlign: "right", flexShrink: 0, textTransform: "uppercase" }}>
+                                    {fp.contribution}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {rb.report.missedOpportunities?.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>MISSED OPPORTUNITIES</div>
+                            {rb.report.missedOpportunities.map(m => (
+                              <div key={m.ticker} style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0", marginBottom: 3 }}>
+                                <span style={{ fontWeight: 600, minWidth: 50, display: "inline-block" }}>{m.ticker}</span>
+                                <span style={{ color: "#22c55e" }}>+{m.returnPct}%</span>
+                                <span style={{ color: "#f0f0f0", opacity: 0.5, marginLeft: 8 }}>
+                                  {m.currentRank ? `ranked #${m.currentRank}` : "unranked"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {rb.report.weightChanges?.changes?.length > 0 && (
+                          <div style={{ marginBottom: 12 }}>
+                            <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>WEIGHT ADJUSTMENTS</div>
+                            {rb.report.weightChanges.changes.map(c => (
+                              <div key={c.factor} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: MONO, marginBottom: 3 }}>
+                                <span style={{ color: "#f0f0f0", width: 80, flexShrink: 0 }}>{c.label}</span>
+                                <span style={{ color: "#f0f0f0", opacity: 0.5 }}>{c.from}%</span>
+                                <span style={{ color: "#f0f0f0", opacity: 0.5 }}>→</span>
+                                <span style={{ color: c.direction === "increased" ? "#22c55e" : c.direction === "decreased" ? "#ef4444" : "#f0f0f0", fontWeight: 600 }}>
+                                  {c.to}%
+                                </span>
+                                <span style={{ fontSize: 10, color: c.direction === "increased" ? "#22c55e" : c.direction === "decreased" ? "#ef4444" : "#f0f0f0" }}>
+                                  {c.direction === "increased" ? "▲" : c.direction === "decreased" ? "▼" : "—"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div style={{ fontSize: 11, color: "#f0f0f0", padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6, lineHeight: 1.6, fontFamily: MONO }}>
+                          {rb.report.narrative}
+                        </div>
                       </div>
                     )}
                   </div>

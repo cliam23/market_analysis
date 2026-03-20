@@ -105,6 +105,12 @@ export default function BacktestTab() {
     strategy: "momentum_value",
     initialCapital: "10000"
   });
+
+  const updateSetting = (key, value) => {
+    setSettings(s => ({ ...s, [key]: value }));
+    setResults(null);
+    setError(null);
+  };
   
   const universeOptions = [
     { id: "sp500_top50", label: "S&P 500 Top 50" },
@@ -140,10 +146,12 @@ export default function BacktestTab() {
     { id: "quality_momentum", label: "Quality + Momentum" }
   ];
   
-  const runBacktest = async () => {
-    setLoading(true);
+  const [optimizing, setOptimizing] = useState(false);
+
+  const runBacktest = async (optimize = false) => {
+    if (optimize) setOptimizing(true);
+    else { setLoading(true); setResults(null); }
     setError(null);
-    setResults(null);
     
     try {
       const params = new URLSearchParams({
@@ -152,10 +160,9 @@ export default function BacktestTab() {
         topN: settings.topN,
         strategy: settings.strategy,
         initialCapital: settings.initialCapital,
+        optimize: optimize ? 'true' : 'false',
         _t: Date.now()
       });
-      
-      console.log('[Frontend] Running backtest with settings:', settings);
       
       const response = await fetch(`/api/backtest/${settings.universe}?${params}`);
       const data = await response.json();
@@ -169,6 +176,25 @@ export default function BacktestTab() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setOptimizing(false);
+    }
+  };
+
+  const resetOptimization = async () => {
+    try {
+      await fetch('/api/optimization/reset', { method: 'POST' });
+      if (results) runBacktest(false);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const freezeOptimization = async () => {
+    try {
+      await fetch('/api/optimization/freeze', { method: 'POST' });
+      if (results) runBacktest(false);
+    } catch (err) {
+      setError(err.message);
     }
   };
   
@@ -194,36 +220,36 @@ export default function BacktestTab() {
           <Select
             label="UNIVERSE"
             value={settings.universe}
-            onChange={(v) => setSettings(s => ({ ...s, universe: v }))}
+            onChange={(v) => updateSetting('universe', v)}
             options={universeOptions}
           />
           <Select
             label="PERIOD"
             value={settings.period}
-            onChange={(v) => setSettings(s => ({ ...s, period: v }))}
+            onChange={(v) => updateSetting('period', v)}
             options={periodOptions}
           />
           <Select
             label="REBALANCE"
             value={settings.rebalanceFreq}
-            onChange={(v) => setSettings(s => ({ ...s, rebalanceFreq: v }))}
+            onChange={(v) => updateSetting('rebalanceFreq', v)}
             options={freqOptions}
           />
           <Select
             label="HOLD TOP"
             value={settings.topN}
-            onChange={(v) => setSettings(s => ({ ...s, topN: v }))}
+            onChange={(v) => updateSetting('topN', v)}
             options={topNOptions}
           />
           <Select
             label="STRATEGY"
             value={settings.strategy}
-            onChange={(v) => setSettings(s => ({ ...s, strategy: v }))}
+            onChange={(v) => updateSetting('strategy', v)}
             options={strategyOptions}
           />
           <button
-            onClick={runBacktest}
-            disabled={loading}
+            onClick={() => runBacktest(false)}
+            disabled={loading || optimizing}
             style={{
               padding: "10px 24px",
               background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
@@ -238,6 +264,25 @@ export default function BacktestTab() {
           >
             {loading ? "RUNNING..." : "RUN BACKTEST"}
           </button>
+          {settings.strategy === 'full_composite' && (
+            <button
+              onClick={() => runBacktest(true)}
+              disabled={loading || optimizing || (results?.optimizationStatus?.frozen)}
+              style={{
+                padding: "10px 24px",
+                background: optimizing ? "rgba(255,255,255,0.04)" : results?.optimizationStatus?.frozen ? "rgba(255,255,255,0.02)" : "rgba(59,130,246,0.15)",
+                border: `1px solid ${results?.optimizationStatus?.frozen ? "rgba(255,255,255,0.06)" : "rgba(59,130,246,0.3)"}`,
+                borderRadius: 6,
+                color: optimizing ? "#555" : results?.optimizationStatus?.frozen ? "#444" : "#60a5fa",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: (loading || optimizing || results?.optimizationStatus?.frozen) ? "not-allowed" : "pointer",
+                fontFamily: MONO
+              }}
+            >
+              {optimizing ? "OPTIMIZING..." : results?.optimizationStatus?.frozen ? "WEIGHTS FROZEN" : "OPTIMIZE WEIGHTS"}
+            </button>
+          )}
         </div>
       </Box>
       
@@ -330,7 +375,188 @@ export default function BacktestTab() {
             </div>
           </Box>
           
-          {/* Factor Attribution for Full Composite */}
+          {/* Risk Management Summary */}
+          {results.riskManagement && (results.riskManagement.regimeSummary || results.riskManagement.totalStopsTriggered > 0) && (
+            <Box>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+                RISK MANAGEMENT
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {results.riskManagement.regimeSummary && (
+                  <>
+                    <MetricCard
+                      label="AVG EXPOSURE"
+                      value={(results.riskManagement.regimeSummary.avgExposure * 100).toFixed(0) + "%"}
+                      subValue={results.riskManagement.regimeSummary.totalPeriods + " rebalances"}
+                      color={results.riskManagement.regimeSummary.avgExposure >= 0.9 ? "#22c55e" : "#eab308"}
+                    />
+                    {Object.entries(results.riskManagement.regimeSummary.regimes).map(([regime, count]) => (
+                      <MetricCard
+                        key={regime}
+                        label={regime.toUpperCase().replace('_', ' ')}
+                        value={count + "x"}
+                        color={regime === 'strong_bull' ? "#22c55e" : regime === 'bear' ? "#ef4444" : regime === 'normal' ? "#888" : "#eab308"}
+                      />
+                    ))}
+                  </>
+                )}
+                <MetricCard
+                  label="STOP-LOSSES"
+                  value={results.riskManagement.totalStopsTriggered}
+                  subValue={results.performance.totalStops > 0 ? "positions exited early" : "none triggered"}
+                  color={results.riskManagement.totalStopsTriggered === 0 ? "#22c55e" : "#eab308"}
+                />
+              </div>
+              {results.riskManagement.stopsDetail.length > 0 && (
+                <div style={{ marginTop: 10, fontSize: 11, fontFamily: MONO, color: "#888" }}>
+                  Stops: {results.riskManagement.stopsDetail.map(s => `${s.ticker} ${s.return}`).join(', ')}
+                </div>
+              )}
+            </Box>
+          )}
+
+          {/* Optimization Dashboard for Full Composite */}
+          {results.strategy === 'full_composite' && results.optimizationStatus && (() => {
+            const os = results.optimizationStatus;
+            const opt = results.optimization;
+            const frozen = os.frozen;
+            const round = os.round;
+            const maxR = os.maxRounds;
+            const labels = { fundamental: 'Quality', dcf: 'DCF', valuation: 'Valuation', momentum: 'Momentum', value: 'Value' };
+            const pct = Math.round((round / maxR) * 100);
+
+            return (
+              <Box style={{ borderColor: frozen ? "rgba(239,68,68,0.2)" : opt?.status === 'accepted' ? "rgba(34,197,94,0.2)" : opt?.status === 'rejected' ? "rgba(234,179,8,0.2)" : "rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1 }}>
+                    WEIGHT OPTIMIZATION STATUS
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={resetOptimization} style={{ padding: "4px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#f0f0f0", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>
+                      RESET TO DEFAULTS
+                    </button>
+                    {!frozen && (
+                      <button onClick={freezeOptimization} style={{ padding: "4px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#f0f0f0", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>
+                        FREEZE WEIGHTS
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, whiteSpace: "nowrap" }}>
+                    Round {round}/{maxR}
+                  </div>
+                  <div style={{ flex: 1, height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${pct}%`, background: frozen ? "#ef4444" : "#60a5fa", borderRadius: 4, transition: "width 0.3s ease" }} />
+                  </div>
+                  <div style={{ fontSize: 11, color: frozen ? "#ef4444" : "#f0f0f0", fontFamily: MONO, whiteSpace: "nowrap" }}>
+                    {frozen ? "Frozen" : `${maxR - round} remaining`}
+                  </div>
+                </div>
+
+                {os.stability && (
+                  <div style={{ fontSize: 11, color: os.stability.stable ? "#22c55e" : "#eab308", fontFamily: MONO, marginBottom: 10 }}>
+                    Stability: {os.stability.message} (max variance: {os.stability.maxVariance}%)
+                  </div>
+                )}
+
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
+                  ACTIVE WEIGHTS
+                </div>
+                <div style={{ display: "flex", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+                  {Object.entries(results.activeWeights).map(([f, w]) => (
+                    <div key={f} style={{ fontSize: 12, fontFamily: MONO, color: "#f0f0f0" }}>
+                      {labels[f] || f}: <span style={{ fontWeight: 700 }}>{(w * 100).toFixed(0)}%</span>
+                    </div>
+                  ))}
+                </div>
+
+                {opt && opt.status === 'accepted' && opt.previousWeights && opt.newWeights && (
+                  <div style={{ background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", fontFamily: MONO, letterSpacing: 1, marginBottom: 8 }}>
+                      OPTIMIZATION ACCEPTED — ROUND {opt.round}
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 }}>
+                      {Object.keys(opt.newWeights).map(f => {
+                        const prev = opt.previousWeights[f] || 0;
+                        const next = opt.newWeights[f] || 0;
+                        const delta = next - prev;
+                        const deltaColor = delta > 0.005 ? "#22c55e" : delta < -0.005 ? "#ef4444" : "#666";
+                        return (
+                          <div key={f} style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
+                            {labels[f] || f}: {(prev * 100).toFixed(0)}%
+                            <span style={{ color: deltaColor, fontWeight: 700 }}> → {(next * 100).toFixed(0)}%</span>
+                            {Math.abs(delta) > 0.005 && <span style={{ color: deltaColor, fontSize: 10 }}> ({delta > 0 ? "+" : ""}{(delta * 100).toFixed(0)})</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 8, fontFamily: MONO }}>{opt.reason}</div>
+                  </div>
+                )}
+
+                {opt && opt.status === 'rejected' && (
+                  <div style={{ background: "rgba(234,179,8,0.05)", border: "1px solid rgba(234,179,8,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#eab308", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
+                      OPTIMIZATION REJECTED
+                    </div>
+                    <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>{opt.reason}</div>
+                  </div>
+                )}
+
+                {opt && opt.status === 'capped' && (
+                  <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
+                      OPTIMIZATION COMPLETE ({maxR}/{maxR} ROUNDS)
+                    </div>
+                    <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
+                      Weights are frozen to prevent overfitting. Click "Reset to Defaults" for 5 new rounds.
+                    </div>
+                  </div>
+                )}
+
+                {opt && opt.validation && (
+                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 12 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1, marginBottom: 8 }}>
+                      OUT-OF-SAMPLE VALIDATION
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Train Sharpe</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{opt.validation.trainSharpe}</div>
+                        <div style={{ fontSize: 9, color: "#666", fontFamily: MONO }}>{opt.validation.trainPeriod}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Test Sharpe (default)</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{opt.validation.testDefaultSharpe}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Test Sharpe (optimized)</div>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: opt.validation.oosAccepted ? "#22c55e" : "#ef4444", fontFamily: MONO }}>{opt.validation.testOptimizedSharpe}</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 10, display: "flex", gap: 16 }}>
+                      <div style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
+                        Sharpe decay: <span style={{ fontWeight: 700, color: opt.validation.sharpeDecay < 20 ? "#22c55e" : opt.validation.sharpeDecay < 50 ? "#eab308" : "#ef4444" }}>{opt.validation.sharpeDecay}%</span>
+                        <span style={{ color: "#666", fontSize: 10 }}> ({opt.validation.sharpeDecay < 20 ? "real signal" : opt.validation.sharpeDecay < 50 ? "mixed" : "overfitting"})</span>
+                      </div>
+                      <div style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
+                        OOS Return: <span style={{ fontWeight: 700, color: opt.validation.testOptimizedReturn > opt.validation.testDefaultReturn ? "#22c55e" : "#ef4444" }}>
+                          {opt.validation.testOptimizedReturn > 0 ? "+" : ""}{opt.validation.testOptimizedReturn}%
+                        </span>
+                        <span style={{ color: "#666", fontSize: 10 }}> vs {opt.validation.testDefaultReturn > 0 ? "+" : ""}{opt.validation.testDefaultReturn}% default</span>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginTop: 8 }}>
+                      {opt.validation.testPeriod}
+                    </div>
+                  </div>
+                )}
+              </Box>
+            );
+          })()}
+
           {results.strategy === 'full_composite' && results.factorAttribution && (
             <Box>
               <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
@@ -529,7 +755,7 @@ export default function BacktestTab() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1 }}>
-                TRADE LOG — {results.trades.length} TRADES
+                TRADE LOG — {results.trades.length} TRADES{results.performance.totalStops > 0 ? ` (${results.performance.totalStops} stops)` : ''}
               </div>
               <span style={{ color: "#f0f0f0", fontSize: 12 }}>{showTrades ? "▲" : "▼"}</span>
             </div>
@@ -555,7 +781,7 @@ export default function BacktestTab() {
                         <td style={{ padding: "8px 10px", color: "#f0f0f0" }}>{t.date}</td>
                         <td style={{ 
                           padding: "8px 10px", 
-                          color: t.type === "BUY" ? "#60a5fa" : t.holdingReturn > 0 ? "#22c55e" : "#ef4444",
+                          color: t.type === "BUY" ? "#60a5fa" : t.type === "STOP" ? "#f97316" : t.holdingReturn > 0 ? "#22c55e" : "#ef4444",
                           fontWeight: 700
                         }}>
                           {t.type}
