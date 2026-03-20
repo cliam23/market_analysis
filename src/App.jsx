@@ -1,6 +1,8 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import SearchView from "./components/SearchView.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
+import PaperTradeTab from "./components/PaperTradeTab.jsx";
+import AboutTab from "./components/AboutTab.jsx";
 const RankingsView = lazy(() => import("./components/RankingsView.jsx"));
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
 
@@ -10,7 +12,6 @@ const SANS = "'DM Sans', sans-serif";
 export default function App() {
   const [tab, setTab] = useState("search");
   const [selectedTicker, setSelectedTicker] = useState(null);
-  const [view, setView] = useState("list");
   const [backendConnected, setBackendConnected] = useState(true);
   const [rankingsKey, setRankingsKey] = useState(0);
 
@@ -31,13 +32,37 @@ export default function App() {
 
   const handleSelectTicker = (ticker) => {
     setSelectedTicker(ticker);
-    setView("detail");
+    setTab("search");
   };
 
   const handleBack = () => {
-    setView("list");
     setSelectedTicker(null);
   };
+
+  const tabBtn = (id, label) => (
+    <button
+      onClick={() => {
+        setTab(id);
+        if (id === "rankings") setRankingsKey(k => k + 1);
+      }}
+      style={{
+        padding: "10px 20px",
+        background: tab === id ? "rgba(129,140,248,0.15)" : "transparent",
+        border: "none",
+        borderRadius: 6,
+        color: tab === id ? "#f0f0f0" : "#555",
+        fontSize: 12,
+        fontWeight: 700,
+        cursor: "pointer",
+        fontFamily: MONO,
+        display: "flex",
+        alignItems: "center",
+        gap: 6
+      }}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
@@ -62,11 +87,10 @@ export default function App() {
             Buffett-Grade Analysis Engine
           </h1>
           <p style={{ fontSize: 10, color: "#444", marginTop: 5, fontFamily: MONO }}>
-            Real-time Analysis · Momentum Rankings · Strategy Backtest
+            Real-time Analysis · Momentum Rankings · Backtest · Paper Trade · About
           </p>
         </div>
 
-        {/* Connection Status */}
         {!backendConnected && (
           <div style={{
             padding: "10px 14px",
@@ -78,89 +102,52 @@ export default function App() {
             color: "#ef4444",
             fontFamily: MONO
           }}>
-            ⚠ Backend not connected — start with <strong>npm run dev:all</strong>
+            Backend not connected — start with <strong>npm run dev:all</strong>
           </div>
         )}
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 4, width: "fit-content" }}>
-          <button
-            onClick={() => { setTab("search"); setView("list"); setSelectedTicker(null); }}
-            style={{
-              padding: "10px 20px",
-              background: tab === "search" ? "rgba(129,140,248,0.15)" : "transparent",
-              border: "none",
-              borderRadius: 6,
-              color: tab === "search" ? "#f0f0f0" : "#555",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO,
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            }}
-          >
-            <span>🔍</span> Search
-          </button>
-          <button
-            onClick={() => { setTab("backtest"); setView("list"); setSelectedTicker(null); }}
-            style={{
-              padding: "10px 20px",
-              background: tab === "backtest" ? "rgba(129,140,248,0.15)" : "transparent",
-              border: "none",
-              borderRadius: 6,
-              color: tab === "backtest" ? "#f0f0f0" : "#555",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO,
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            }}
-          >
-            <span>Backtest</span>
-          </button>
-          <button
-            onClick={() => { setTab("rankings"); setView("list"); setSelectedTicker(null); setRankingsKey(k => k + 1); }}
-            style={{
-              padding: "10px 20px",
-              background: tab === "rankings" ? "rgba(129,140,248,0.15)" : "transparent",
-              border: "none",
-              borderRadius: 6,
-              color: tab === "rankings" ? "#f0f0f0" : "#555",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO,
-              display: "flex",
-              alignItems: "center",
-              gap: 6
-            }}
-          >
-            <span>📊</span> Momentum Rankings
-          </button>
+          {tabBtn("search", <><span>🔍</span> Search</>)}
+          {tabBtn("backtest", "Backtest")}
+          {tabBtn("rankings", <><span>📊</span> Momentum Rankings</>)}
+          {tabBtn("papertrade", "Paper Trade")}
+          {tabBtn("about", "About")}
         </div>
 
-        {/* Content */}
-        <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#555", fontFamily: MONO, fontSize: 11 }}>Loading...</div>}>
-          {view === "detail" && selectedTicker ? (
-            <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
-          ) : (
-            <>
-              {tab === "search" && (
-                <SearchView onSelectTicker={handleSelectTicker} key="search" />
-              )}
-              {tab === "backtest" && (
-                <BacktestTab />
-              )}
-              {tab === "rankings" && (
-                <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
-              )}
-            </>
+        {/* Search tab — always mounted */}
+        <div style={{ display: tab === "search" ? "block" : "none" }}>
+          <div style={{ display: selectedTicker ? "none" : "block" }}>
+            <SearchView onSelectTicker={handleSelectTicker} />
+          </div>
+          {selectedTicker && (
+            <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#555", fontFamily: MONO, fontSize: 11 }}>Loading analysis...</div>}>
+              <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
+            </Suspense>
           )}
-        </Suspense>
+        </div>
+
+        {/* Backtest tab — always mounted */}
+        <div style={{ display: tab === "backtest" ? "block" : "none" }}>
+          <BacktestTab />
+        </div>
+
+        {/* Rankings tab — remounts fresh each time */}
+        {tab === "rankings" && (
+          <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#555", fontFamily: MONO, fontSize: 11 }}>Loading...</div>}>
+            <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
+          </Suspense>
+        )}
+
+        {/* Paper Trade tab — always mounted */}
+        <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
+          <PaperTradeTab />
+        </div>
+
+        {/* About tab — always mounted */}
+        <div style={{ display: tab === "about" ? "block" : "none" }}>
+          <AboutTab />
+        </div>
 
         {/* Footer */}
         <div style={{
