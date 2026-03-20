@@ -117,40 +117,40 @@ const PEER_MAP = {
   "META": ["GOOGL", "SNAP", "PINS", "TTD", "ROKU", "RBLX"],
   "NVDA": ["AMD", "INTC", "AVGO", "QCOM", "TXN", "MRVL"],
   "TSLA": ["TM", "GM", "F", "RIVN", "LCID", "HMC"],
-  
+
   // Financials
   "JPM": ["BAC", "WFC", "GS", "MS", "C", "USB"],
   "V": ["MA", "AXP", "PYPL", "SQ", "FIS", "GPN"],
   "BRK-B": ["JPM", "BAC", "GS", "MET", "PRU", "AIG"],
-  
+
   // Healthcare
   "UNH": ["HUM", "CI", "ELV", "CNC", "MOH"],
   "LLY": ["NVO", "JNJ", "PFE", "MRK", "ABBV", "AZN"],
   "JNJ": ["PFE", "MRK", "ABBV", "LLY", "AZN", "BMY"],
-  
+
   // Consumer
   "KO": ["PEP", "MNST", "KDP", "STZ", "CELH"],
   "PG": ["CL", "KMB", "CHD", "CLX", "EL"],
   "MCD": ["SBUX", "YUM", "CMG", "QSR", "DPZ"],
   "WMT": ["COST", "TGT", "AMZN", "DG", "DLTR"],
   "COST": ["WMT", "TGT", "DG", "DLTR", "KR"],
-  
+
   // Semiconductors
   "AMD": ["NVDA", "INTC", "QCOM", "AVGO", "TXN", "MRVL"],
   "AVGO": ["QCOM", "TXN", "ADI", "MCHP", "NXPI"],
-  
+
   // Software
   "CRM": ["NOW", "WDAY", "HUBS", "VEEV", "ZS", "DDOG"],
   "ADBE": ["CRM", "INTU", "ANSS", "CDNS", "SNPS"],
   "NOW": ["CRM", "WDAY", "DDOG", "ZS", "NET", "TEAM"],
-  
+
   // Industrials
   "CAT": ["DE", "PCAR", "CMI", "URI", "EMR"],
   "GE": ["HON", "RTX", "LMT", "BA", "NOC"],
-  
+
   // Energy
   "XOM": ["CVX", "COP", "SLB", "EOG", "MPC"],
-  
+
   // REITs
   "AMT": ["CCI", "SBAC", "PLD", "EQIX", "DLR", "O"]
 };
@@ -216,12 +216,12 @@ function getPeers(ticker, industry, sector) {
   if (PEER_MAP[ticker]) {
     return { peers: PEER_MAP[ticker], source: "hardcoded" };
   }
-  
+
   // Layer 2: Industry-based peers (with flexible matching)
   const normalizedIndustry = normalizeIndustryName(industry);
   if (normalizedIndustry) {
     // Try exact normalized match first
-    const exactKey = Object.keys(INDUSTRY_TICKERS).find(key => 
+    const exactKey = Object.keys(INDUSTRY_TICKERS).find(key =>
       normalizeIndustryName(key) === normalizedIndustry
     );
     if (exactKey) {
@@ -230,17 +230,17 @@ function getPeers(ticker, industry, sector) {
         return { peers, source: "industry" };
       }
     }
-    
+
     // Try partial match (industry name contains or is contained by key)
     const partialMatch = Object.keys(INDUSTRY_TICKERS).find(key => {
       const normalizedKey = normalizeIndustryName(key);
       // Check if key words are in industry or vice versa
       const keyWords = normalizedKey.split(/\s+/).filter(w => w.length > 2);
       const indWords = normalizedIndustry.split(/\s+/).filter(w => w.length > 2);
-      return keyWords.some(kw => indWords.includes(kw)) || 
-             indWords.some(iw => normalizedKey.includes(iw) && iw.length > 3);
+      return keyWords.some(kw => indWords.includes(kw)) ||
+        indWords.some(iw => normalizedKey.includes(iw) && iw.length > 3);
     });
-    
+
     if (partialMatch) {
       const peers = INDUSTRY_TICKERS[partialMatch].filter(p => p !== ticker).slice(0, 7);
       if (peers.length >= 3) {
@@ -248,13 +248,13 @@ function getPeers(ticker, industry, sector) {
       }
     }
   }
-  
+
   // Layer 3: Sector fallback
   if (sector && SECTOR_FALLBACKS[sector]) {
     const peers = SECTOR_FALLBACKS[sector].filter(p => p !== ticker).slice(0, 7);
     return { peers, source: "sector_fallback" };
   }
-  
+
   // Last resort: mega-cap tech
   return { peers: ["AAPL", "MSFT", "GOOGL", "AMZN", "META"], source: "default" };
 }
@@ -294,7 +294,7 @@ function calculateComps(data) {
   const sector = data.sector || "";
   const peers = data.peers || [];
   const peerSource = data.peerSource || "unknown";
-  
+
   // Extract target metrics (values already processed from fetchCompMetrics)
   const target = {
     ticker,
@@ -325,19 +325,19 @@ function calculateComps(data) {
     enterpriseValue: safeNum(data.enterpriseValue),
     roe: safeNum(data.roe)
   };
-  
+
   // Detect P/B distortion (buyback-heavy companies with depleted book equity)
   const isPBDistorted = (
     target.priceToBook > 20 &&
     (target.roe > 1.0 || (target.bookValuePerShare > 0 && target.bookValuePerShare < 10))
   );
-  
+
   const isPBSoftCapped = (
     target.priceToBook > 15 &&
     target.roe > 0.40 &&
     !isPBDistorted
   );
-  
+
   if (isPBDistorted) {
     target.priceToBook_excluded = true;
     target.priceToBook_reason = `Excluded — distorted by share buybacks (book value: $${target.bookValuePerShare?.toFixed(0) || '?'}/share)`;
@@ -345,7 +345,7 @@ function calculateComps(data) {
     target.priceToBook_softCapped = true;
     target.priceToBook_reason = "P/B elevated by high ROE — percentile capped";
   }
-  
+
   // Process peers (values already processed from fetchCompMetrics)
   const processedPeers = peers.map(p => ({
     ticker: p.ticker,
@@ -369,12 +369,12 @@ function calculateComps(data) {
     totalDebt: safeNum(p.totalDebt),
     totalCash: safeNum(p.totalCash)
   }));
-  
+
   // Calculate peer statistics for each metric
   const metrics = ["trailingPE", "forwardPE", "pegRatio", "priceToSales", "priceToBook", "evToEbitda", "evToRevenue"];
   const metricResults = {};
   const allPercentiles = [];
-  
+
   for (const metric of metrics) {
     // Skip P/B if excluded
     if (metric === "priceToBook" && isPBDistorted) {
@@ -390,22 +390,22 @@ function calculateComps(data) {
       };
       continue;
     }
-    
+
     const peerValues = processedPeers.map(p => p[metric]).filter(v => v !== null && v !== undefined && v > 0);
     const stats = calculatePeerStats(peerValues);
     const targetValue = target[metric];
-    
+
     if (stats && targetValue !== null && targetValue !== undefined) {
       let percentile = calculatePercentile(targetValue, peerValues);
       const premiumToMedian = stats.median > 0 ? ((targetValue / stats.median) - 1) * 100 : 0;
-      
+
       // Soft cap: cap P/B percentile at 75 if elevated by high ROE
       if (metric === "priceToBook" && isPBSoftCapped) {
         percentile = Math.min(percentile, 75);
       }
-      
+
       allPercentiles.push(percentile);
-      
+
       metricResults[metric] = {
         targetValue,
         peerMedian: stats.median,
@@ -432,20 +432,20 @@ function calculateComps(data) {
       };
     }
   }
-  
+
   // Composite score (already excludes P/B if distorted since we don't push to allPercentiles)
-  const avgPercentile = allPercentiles.length > 0 
-    ? allPercentiles.reduce((a, b) => a + b, 0) / allPercentiles.length 
+  const avgPercentile = allPercentiles.length > 0
+    ? allPercentiles.reduce((a, b) => a + b, 0) / allPercentiles.length
     : 50;
   const relativeValueScore = Math.round(100 - avgPercentile);
-  
+
   // Growth context
   const targetGrowth = target.revenueGrowth || 0;
   const medianPeerGrowth = calculatePeerStats(processedPeers.map(p => p.revenueGrowth).filter(v => v !== null))?.median || 0;
   const targetForwardPE = target.forwardPE || 0;
   const medianPeerPE = metricResults.forwardPE?.peerMedian || 0;
   const growthGap = medianPeerGrowth - targetGrowth;
-  
+
   let growthContext = "fairly_priced";
   if (targetGrowth > medianPeerGrowth && targetForwardPE > medianPeerPE * 1.15) {
     growthContext = "premium_justified";
@@ -454,32 +454,32 @@ function calculateComps(data) {
   } else if (targetGrowth > medianPeerGrowth * 1.10 && targetForwardPE < medianPeerPE) {
     growthContext = "discount_opportunity";
   }
-  
+
   // Growth differential note (for peer groups with very different growth rates)
   let growthDifferentialNote = null;
   if (growthGap > 10) {
     growthDifferentialNote = `Note: Peer group median revenue growth (${medianPeerGrowth.toFixed(0)}%) is significantly higher than ${ticker}'s (${targetGrowth.toFixed(0)}%). Higher-growth companies naturally trade at higher multiples, so some valuation premium for peers is expected. P/S and EV/Revenue ratios normalize for growth differences and may be more meaningful here.`;
   }
-  
+
   // Composite verdict
   let compositeVerdict = "fairly_valued";
   if (relativeValueScore >= 65) compositeVerdict = "very_cheap";
   else if (relativeValueScore >= 55) compositeVerdict = "cheap";
   else if (relativeValueScore <= 35) compositeVerdict = "very_expensive";
   else if (relativeValueScore <= 45) compositeVerdict = "expensive";
-  
+
   // Summary
   const summary = generateSummary(ticker, compositeVerdict, growthContext, avgPercentile, industry, target, processedPeers);
-  
+
   // Implied fair value
   const impliedFV = calculateImpliedFairValue(target, metricResults, isPBDistorted);
-  
+
   // Comparison table
   const compTable = [
     { ...target, isTarget: true },
     ...processedPeers.map(p => ({ ...p, isTarget: false }))
   ].sort((a, b) => b.marketCap - a.marketCap);
-  
+
   return {
     ticker,
     name,
@@ -511,18 +511,18 @@ function generateMetricExplanation(ticker, metric, targetValue, stats, percentil
     evToEbitda: "EV/EBITDA",
     evToRevenue: "EV/Revenue"
   };
-  
+
   const verdict = getVerdictLabel(percentile);
   const valuationText = verdict === "very_cheap" || verdict === "cheap" ? "below" : verdict === "very_expensive" || verdict === "expensive" ? "above" : "near";
   const comparison = premiumToMedian >= 0 ? `${premiumToMedian.toFixed(1)}% premium to median` : `${Math.abs(premiumToMedian).toFixed(1)}% discount to median`;
-  
+
   return `${ticker} trades at ${targetValue.toFixed(1)}x ${metricNames[metric]}, ${valuationText} the peer median of ${stats.median.toFixed(1)}x. This places it at the ${percentile}th percentile — ${verdict.replace("_", " ")}. ${comparison}.`;
 }
 
 function generateSummary(ticker, compositeVerdict, growthContext, avgPercentile, industry, target, peers) {
   const verdictText = compositeVerdict.replace("_", " ");
   let growthNote = "";
-  
+
   if (growthContext === "premium_justified") {
     growthNote = "Higher multiples are supported by superior growth.";
   } else if (growthContext === "premium_unjustified") {
@@ -532,34 +532,34 @@ function generateSummary(ticker, compositeVerdict, growthContext, avgPercentile,
   } else {
     growthNote = "Valuation is broadly in line with peers given the growth profile.";
   }
-  
+
   return `${ticker} trades at a ${verdictText} to ${industry} peers on most metrics. ${growthNote}`;
 }
 
 function calculateImpliedFairValue(target, metrics, isPBDistorted = false) {
   const results = {};
-  
+
   // Forward P/E implied (primary method)
   if (metrics.forwardPE?.peerMedian && target.forwardEps > 0) {
     results.fromForwardPE = metrics.forwardPE.peerMedian * target.forwardEps;
   }
-  
+
   // Trailing P/E implied
   if (metrics.trailingPE?.peerMedian && target.trailingEps > 0) {
     results.fromTrailingPE = metrics.trailingPE.peerMedian * target.trailingEps;
   }
-  
+
   // P/B implied (skip if distorted by buybacks)
   if (!isPBDistorted && metrics.priceToBook?.peerMedian && target.bookValuePerShare > 0) {
     results.fromPB = metrics.priceToBook.peerMedian * target.bookValuePerShare;
   }
-  
+
   // P/S implied
   if (metrics.priceToSales?.peerMedian && target.sharesOutstanding > 0 && target.revenue > 0) {
     const revenuePerShare = target.revenue / target.sharesOutstanding;
     results.fromPS = metrics.priceToSales.peerMedian * revenuePerShare;
   }
-  
+
   // EV/EBITDA implied
   if (metrics.evToEbitda?.peerMedian && target.ebitda > 0 && target.sharesOutstanding > 0) {
     const impliedEV = metrics.evToEbitda.peerMedian * target.ebitda;
@@ -569,14 +569,14 @@ function calculateImpliedFairValue(target, metrics, isPBDistorted = false) {
       results.fromEV = impliedEquity / target.sharesOutstanding;
     }
   }
-  
+
   // Use median of available methods (need at least 1 valid)
   const values = Object.values(results).filter(v => v > 0 && isFinite(v));
-  const median = values.length > 0 
-    ? [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] 
+  const median = values.length > 0
+    ? [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)]
     : 0;
   const upside = target.currentPrice > 0 && median > 0 ? ((median - target.currentPrice) / target.currentPrice) * 100 : 0;
-  
+
   return {
     ...results,
     median,
@@ -620,9 +620,9 @@ function calcSupplySideEconomies(data) {
   const operatingMargin = safeNum(data.operatingMargin, 0);
   const totalRevenue = safeNum(data.totalRevenue, 0);
   const beta = safeNum(data.beta, 1);
-  
+
   const hasTrendData = data.dataQuality?.incomeStatementAvailable;
-  
+
   // A. Scale efficiency: earnings growth vs revenue growth (operating leverage)
   const leverageDelta = earningsGrowth - revenueGrowth;
   let scoreA = 0;
@@ -630,19 +630,19 @@ function calcSupplySideEconomies(data) {
   else if (leverageDelta > 5) scoreA = 6;
   else if (leverageDelta > 0) scoreA = 4;
   else if (leverageDelta > -5) scoreA = 2;
-  
+
   // B. Gross margin quality level
   let scoreB = 0;
   if (grossMargin >= 0.60) scoreB = 6;
   else if (grossMargin >= 0.45) scoreB = 4;
   else if (grossMargin >= 0.30) scoreB = 2;
-  
+
   // C. Operating leverage signal: earnings growing faster than revenue + healthy margins
   let scoreC = 0;
   if (earningsGrowth > revenueGrowth && operatingMargin > 0.20) scoreC = 6;
   else if (earningsGrowth > revenueGrowth && operatingMargin > 0.10) scoreC = 4;
   else if (earningsGrowth > 0) scoreC = 2;
-  
+
   // D. Revenue scale
   let scoreD = 0;
   if (totalRevenue > 100e9) scoreD = 5;
@@ -650,20 +650,20 @@ function calcSupplySideEconomies(data) {
   else if (totalRevenue > 20e9) scoreD = 3;
   else if (totalRevenue > 5e9) scoreD = 2;
   else if (totalRevenue > 1e9) scoreD = 1;
-  
+
   const totalScore = Math.min(scoreA + scoreB + scoreC + scoreD, 25);
-  
+
   let strength = "none";
   if (totalScore >= 20) strength = "strong";
   else if (totalScore >= 13) strength = "moderate";
   else if (totalScore >= 6) strength = "weak";
-  
+
   const scaleNote = totalRevenue > 100e9 ? "at massive scale" : totalRevenue > 20e9 ? "at significant scale" : "at current scale";
   const marginQuality = grossMargin >= 0.50 ? "strong" : grossMargin >= 0.35 ? "solid" : "moderate";
   const trendNote = hasTrendData ? "" : " (YoY growth rates; multi-year historical data unavailable)";
-  
+
   const explanation = `${companyName} ${strength === "strong" ? "has strong" : strength === "moderate" ? "shows moderate" : strength === "weak" ? "has weak" : "lacks"} supply-side economies of scale. Revenue growing at ${revenueGrowth.toFixed(1)}% with earnings growing at ${earningsGrowth.toFixed(1)}% — ${leverageDelta >= 0 ? "positive" : "negative"} ${Math.abs(leverageDelta).toFixed(1)}% operating leverage. ${marginQuality} gross margins of ${(grossMargin * 100).toFixed(1)}% and operating margins of ${(operatingMargin * 100).toFixed(1)}% at ${scaleNote}.${trendNote}`;
-  
+
   return {
     score: totalScore,
     maxScore: 25,
@@ -687,38 +687,38 @@ function calcNetworkEffects(data, userInput = null) {
   const industry = data.industry || "";
   const marketCap = safeNum(data.marketCap, 0);
   const sector = (data.sector || "").toLowerCase();
-  
+
   let scoreA = 1;
   if (matchIndustry(industry, STRONG_NETWORK)) scoreA = 7;
   else if (matchIndustry(industry, MODERATE_NETWORK)) scoreA = 4;
-  
+
   const revGrowth = safeNum(data.revenueGrowth, 0) * 100;
   const gmTrend = safeNum(data.gmTrend, 0);
   let scoreB = 0;
   if (revGrowth > 10 && gmTrend > 1) scoreB = 4;
   else if (revGrowth > 5 && gmTrend > 0) scoreB = 2;
-  
+
   let scoreC = 0;
   if (marketCap > 500e9 && (sector.includes("tech") || sector.includes("communication"))) scoreC = 4;
   else if (marketCap > 100e9 && matchIndustry(industry, [...STRONG_NETWORK, ...MODERATE_NETWORK])) scoreC = 3;
   else if (marketCap > 50e9 && matchIndustry(industry, [...STRONG_NETWORK, ...MODERATE_NETWORK])) scoreC = 2;
-  
+
   const algorithmicScore = Math.min(scoreA + scoreB + scoreC, 15);
   const userScore = userInput?.score || 0;
   const totalScore = algorithmicScore + userScore;
   const maxScore = userInput ? 25 : 15;
-  
+
   let strength = "none";
   if (totalScore >= 20) strength = "strong";
   else if (totalScore >= 13) strength = "moderate";
   else if (totalScore >= 6) strength = "weak";
-  
+
   const networkType = matchIndustry(industry, STRONG_NETWORK) ? "strong" : matchIndustry(industry, MODERATE_NETWORK) ? "moderate" : "limited";
   const growthSignal = revGrowth > 5 && gmTrend > 0 ? "Revenue growth with simultaneous margin expansion is consistent with network dynamics." : "Financial trends do not strongly indicate network effects.";
   const userNote = userInput ? `User assessment: ${userInput.label} network effects.` : "Awaiting user product-level assessment.";
-  
+
   const explanation = `${companyName} ${strength !== "none" ? "shows" : "has limited"} demand-side economies of scale. ${industry} suggests ${networkType} network potential. ${growthSignal} ${userNote}`;
-  
+
   return {
     score: totalScore,
     maxScore,
@@ -743,7 +743,7 @@ function calcLearningCurve(data) {
   const grossMargin = safeNum(data.grossMargin, 0);
   const beta = safeNum(data.beta, 1);
   const hasTrendData = data.dataQuality?.incomeStatementAvailable;
-  
+
   let scoreA = 0;
   if (matchIndustry(industry, HIGH_RD)) {
     if (grossMargin > 0.60) scoreA = 7;
@@ -752,7 +752,7 @@ function calcLearningCurve(data) {
   } else if (matchIndustry(industry, MODERATE_RD)) {
     scoreA = grossMargin > 0.50 ? 4 : 2;
   }
-  
+
   let scoreB = 0;
   if (marketCap > 200e9) scoreB = 6;
   else if (marketCap > 100e9) scoreB = 5;
@@ -760,7 +760,7 @@ function calcLearningCurve(data) {
   else if (marketCap > 20e9) scoreB = 3;
   else if (marketCap > 5e9) scoreB = 2;
   else scoreB = 1;
-  
+
   // C. Margin sustainability proxy (no multi-year data available)
   // High margins + low volatility = sustained; high margins + high volatility = potentially fragile
   let scoreC = 0;
@@ -770,30 +770,30 @@ function calcLearningCurve(data) {
   else if (grossMargin > 0.40) scoreC = 3;
   else if (grossMargin > 0.25) scoreC = 2;
   else scoreC = 1;
-  
+
   let scoreD = 0;
   if (matchIndustry(industry, HIGH_BARRIER)) scoreD = 6;
   else if (matchIndustry(industry, MODERATE_BARRIER)) scoreD = 3;
   else scoreD = 1;
-  
+
   const totalScore = Math.min(scoreA + scoreB + scoreC + scoreD, 25);
-  
+
   let strength = "none";
   if (totalScore >= 20) strength = "strong";
   else if (totalScore >= 13) strength = "moderate";
   else if (totalScore >= 6) strength = "weak";
-  
+
   let rdNote = "";
   if (matchIndustry(industry, HIGH_RD)) rdNote = `In ${industry}, cumulative R&D creates knowledge barriers new entrants cannot replicate.`;
   else if (matchIndustry(industry, HIGH_BARRIER)) rdNote = `${industry} requires regulatory approvals and expertise that take years to develop.`;
   else rdNote = `${industry} has limited knowledge barriers.`;
-  
-  const sustainedNote = hasTrendData 
-    ? "Historical margin data confirms sustained high margins." 
+
+  const sustainedNote = hasTrendData
+    ? "Historical margin data confirms sustained high margins."
     : `Current margins of ${(grossMargin * 100).toFixed(1)}% ${beta < 1.0 ? "with low volatility (beta " + beta.toFixed(2) + ") suggest sustainable advantages." : "though elevated beta (" + beta.toFixed(2) + ") suggests some margin stability risk."}`;
-  
+
   const explanation = `${companyName} has ${strength} learning curve advantages. ${rdNote} ${sustainedNote}`;
-  
+
   return {
     score: totalScore,
     maxScore: 25,
@@ -819,40 +819,40 @@ function calcSwitchingCosts(data) {
   const roe = safeNum(data.roe, 0);
   const revenueGrowth = safeNum(data.revenueGrowth, 0);
   const earningsGrowth = safeNum(data.earningsGrowth, 0);
-  
+
   let scoreA = 1;
   if (matchIndustry(industry, VERY_HIGH_SWITCHING)) scoreA = 10;
   else if (matchIndustry(industry, HIGH_SWITCHING)) scoreA = 7;
   else if (matchIndustry(industry, MODERATE_SWITCHING)) scoreA = 4;
-  
+
   let scoreB = 0;
   if (grossMargin > 0.60 && operatingMargin > 0.25) scoreB = 6;
   else if (grossMargin > 0.50 && operatingMargin > 0.18) scoreB = 4;
   else if (grossMargin > 0.40 && operatingMargin > 0.12) scoreB = 2;
-  
+
   let scoreC = 0;
   if (roe > 0.25) scoreC = 5;
   else if (roe > 0.18) scoreC = 4;
   else if (roe > 0.12) scoreC = 2;
-  
+
   // D. Revenue stability proxy - use YoY growth instead of multi-year
   let scoreD = 0;
   if (revenueGrowth > 0 && earningsGrowth > 0) scoreD = 4;  // Both growing = strong retention
   else if (revenueGrowth > 0) scoreD = 3;  // Revenue growing even if earnings pressured
   else if (revenueGrowth > -0.05) scoreD = 1;  // Small decline
   else scoreD = 0;  // Significant decline
-  
+
   const totalScore = Math.min(scoreA + scoreB + scoreC + scoreD, 25);
-  
+
   let strength = "none";
   if (totalScore >= 20) strength = "strong";
   else if (totalScore >= 13) strength = "moderate";
   else if (totalScore >= 6) strength = "weak";
-  
-  const industryLevel = matchIndustry(industry, VERY_HIGH_SWITCHING) ? "Very High" : 
-                       matchIndustry(industry, HIGH_SWITCHING) ? "High" : 
-                       matchIndustry(industry, MODERATE_SWITCHING) ? "Moderate" : "Low";
-  
+
+  const industryLevel = matchIndustry(industry, VERY_HIGH_SWITCHING) ? "Very High" :
+    matchIndustry(industry, HIGH_SWITCHING) ? "High" :
+      matchIndustry(industry, MODERATE_SWITCHING) ? "Moderate" : "Low";
+
   let switchNote = "";
   if (industryLevel !== "Low") {
     if (industry.toLowerCase().includes("software")) switchNote = "enterprise software requires deep workflow integration and data migration";
@@ -861,12 +861,12 @@ function calcSwitchingCosts(data) {
     else if (industry.toLowerCase().includes("medical") || industry.toLowerCase().includes("device")) switchNote = "medical devices require FDA-specific approvals tied to specific products";
     else switchNote = "established business relationships create meaningful switching friction";
   }
-  
+
   const marginNote = grossMargin > 0.50 ? `${(grossMargin * 100).toFixed(0)}% gross margins suggest customers pay premium rather than switch.` : "";
   const retentionNote = revenueGrowth > 0 ? `YoY revenue growth of ${(revenueGrowth * 100).toFixed(1)}% indicates strong customer retention.` : `Revenue declining ${(Math.abs(revenueGrowth) * 100).toFixed(1)}% YoY may indicate retention challenges.`;
-  
+
   const explanation = `${companyName} benefits from ${strength} switching costs. ${industryLevel !== "Low" ? `${industry} creates structural switching costs — ${switchNote}.` : `${industry} offers relatively easy substitution.`} ${marginNote} ${retentionNote}`;
-  
+
   return {
     score: totalScore,
     maxScore: 25,
@@ -886,7 +886,7 @@ function calcSwitchingCosts(data) {
 
 function calcEarningsQuality(data) {
   const companyName = data.name || "The company";
-  
+
   const netIncome = data.netIncome || 0;
   const totalRevenue = data.totalRevenue || 0;
   const fcf = data.freeCashflow || 0;
@@ -909,14 +909,14 @@ function calcEarningsQuality(data) {
   const repurchaseOfStock = safeNum(data.repurchaseOfStock, 0);
   const roic = safeNum(data.roic, 0);
   const wacc = safeNum(data.wacc, 9.5);
-  
+
   const flags = [];
   let dataSourceNote = null;
-  
+
   // === COMPONENT 1: ACCRUAL RATIO (0-20 pts) ===
   let accrualRatio = null;
   let accrualSource = "cashflowStatement";
-  
+
   if (operatingCF !== 0 && netIncome !== 0) {
     accrualRatio = (netIncome - operatingCF) / Math.abs(netIncome);
   } else if (ebitda > 0 && netIncome > 0) {
@@ -925,7 +925,7 @@ function calcEarningsQuality(data) {
     accrualSource = "estimated_from_ebitda";
     dataSourceNote = "Cashflow data limited — accrual ratio estimated from EBITDA";
   }
-  
+
   let accrualScore = 10;
   let accrualLabel = "Aligned";
   if (accrualRatio !== null) {
@@ -935,20 +935,20 @@ function calcEarningsQuality(data) {
     else if (accrualRatio <= 0.15) { accrualScore = 10; accrualLabel = "Moderate Accruals"; }
     else if (accrualRatio <= 0.30) { accrualScore = 6; accrualLabel = "High Accruals"; }
     else { accrualScore = 2; accrualLabel = "High Accruals"; }
-    
+
     if (accrualRatio < -0.2) {
       flags.push({ type: "positive", message: `Cash flow exceeds earnings by ${Math.abs(accrualRatio * 100).toFixed(0)}% — earnings are conservatively stated` });
     } else if (accrualRatio > 0.25) {
       flags.push({ type: "warning", message: `Accrual ratio of ${(accrualRatio * 100).toFixed(0)}% suggests earnings exceed cash flow` });
     }
   }
-  
+
   // === COMPONENT 2: FCF CONVERSION (0-20 pts) ===
   let fcfConversion = null;
   let fcfConversionScore = 10;
   let fcfConversionLabel = "Moderate";
   let fcfConversionSource = "actual";
-  
+
   if (fcf !== 0 && netIncome > 0) {
     fcfConversion = fcf / netIncome;
   } else if (ebitda > 0 && netIncome > 0) {
@@ -956,7 +956,7 @@ function calcEarningsQuality(data) {
     fcfConversion = estimatedFCF / netIncome;
     fcfConversionSource = "estimated";
   }
-  
+
   if (fcfConversion !== null) {
     if (netIncome < 0 && fcf > 0) {
       fcfConversionScore = 18;
@@ -967,14 +967,14 @@ function calcEarningsQuality(data) {
     else if (fcfConversion >= 0.6) { fcfConversionScore = 10; fcfConversionLabel = "Moderate"; }
     else if (fcfConversion >= 0.4) { fcfConversionScore = 6; fcfConversionLabel = "Poor"; }
     else { fcfConversionScore = 2; fcfConversionLabel = "Poor"; }
-    
+
     if (fcfConversion > 1.1) {
       flags.push({ type: "positive", message: `FCF conversion of ${(fcfConversion * 100).toFixed(0)}% — capital-light model generates more cash than earnings` });
     } else if (fcfConversion < 0.5) {
       flags.push({ type: "warning", message: `Only ${(fcfConversion * 100).toFixed(0)}% of earnings convert to free cash flow` });
     }
   }
-  
+
   // === COMPONENT 3: EARNINGS STABILITY (0-20 pts) ===
   let epsScore = 4;
   if (trailingEPS > 0 && forwardEPS > 0) {
@@ -985,7 +985,7 @@ function calcEarningsQuality(data) {
     else if (epsGrowth < 0 && epsGrowth >= -0.15) epsScore = 5;
     else epsScore = 2;
   }
-  
+
   let betaScore = 5;
   if (beta <= 0.7) betaScore = 7;
   else if (beta <= 0.9) betaScore = 6;
@@ -993,21 +993,21 @@ function calcEarningsQuality(data) {
   else if (beta <= 1.3) betaScore = 4;
   else if (beta <= 1.6) betaScore = 3;
   else betaScore = 1;
-  
+
   let marginScore = 4;
   if (grossMargin > 0.5 && operatingMargin > 0.2) marginScore = 6;
   else if (grossMargin > 0.4 && operatingMargin > 0.15) marginScore = 5;
   else if (grossMargin > 0.3 && operatingMargin > 0.1) marginScore = 4;
   else if (grossMargin > 0.2 && operatingMargin > 0.05) marginScore = 3;
   else marginScore = 1;
-  
+
   const stabilityScore = epsScore + betaScore + marginScore;
   let stabilityLabel = "Moderate";
   if (stabilityScore >= 16) stabilityLabel = "Very Stable";
   else if (stabilityScore >= 12) stabilityLabel = "Stable";
   else if (stabilityScore >= 8) stabilityLabel = "Moderate";
   else stabilityLabel = "Volatile";
-  
+
   // === COMPONENT 4: REVENUE QUALITY (0-20 pts) ===
   let gmScore = 5;
   if (grossMargin >= 0.6) gmScore = 7;
@@ -1016,14 +1016,14 @@ function calcEarningsQuality(data) {
   else if (grossMargin >= 0.25) gmScore = 3;
   else if (grossMargin >= 0.15) gmScore = 2;
   else gmScore = 1;
-  
+
   let growthQualityScore = 5;
   if (earningsGrowth > revenueGrowth && revenueGrowth > 0) growthQualityScore = 7;
   else if (earningsGrowth > 0 && revenueGrowth > 0) growthQualityScore = 5;
   else if (revenueGrowth > 0 && earningsGrowth <= 0) growthQualityScore = 2;
   else if (revenueGrowth <= 0 && earningsGrowth > 0) growthQualityScore = 4;
   else if (revenueGrowth <= 0 && earningsGrowth <= 0) growthQualityScore = 1;
-  
+
   let roeScore = 5;
   const roePct = roe * 100;
   if (roePct >= 15 && roePct <= 40) roeScore = 6;
@@ -1031,14 +1031,14 @@ function calcEarningsQuality(data) {
   else if (roePct >= 5 && roePct <= 100) roeScore = 3;
   else if (roePct > 100) roeScore = 2;
   else roeScore = 1;
-  
+
   const revenueQualityScore = gmScore + growthQualityScore + roeScore;
   let revenueQualityLabel = "Average";
   if (revenueQualityScore >= 16) revenueQualityLabel = "High Quality";
   else if (revenueQualityScore >= 12) revenueQualityLabel = "Good";
   else if (revenueQualityScore >= 8) revenueQualityLabel = "Average";
   else revenueQualityLabel = "Low Quality";
-  
+
   // === COMPONENT 5: CAPITAL ALLOCATION (0-20 pts) ===
   const roicSpread = roic - wacc;
   let roicScore = 4;
@@ -1047,7 +1047,7 @@ function calcEarningsQuality(data) {
   else if (roicSpread >= 5) roicScore = 4;
   else if (roicSpread >= 0) roicScore = 2;
   else roicScore = 0;
-  
+
   const hasBuybacks = repurchaseOfStock < 0 || (roe > 0.4);
   let returnScore = 4;
   if (hasBuybacks && payoutRatio < 0.6 && payoutRatio > 0) returnScore = 6;
@@ -1056,7 +1056,7 @@ function calcEarningsQuality(data) {
   else if (!hasBuybacks && payoutRatio < 0.3) returnScore = 3;
   else if (payoutRatio > 0.9) returnScore = 1;
   else returnScore = 2;
-  
+
   let debtScore = 5;
   if ((debtToEquity === 0 || debtToEquity === null) && currentRatio > 1.5) debtScore = 6;
   else if (debtToEquity < 50 && currentRatio > 1.5) debtScore = 6;
@@ -1064,30 +1064,30 @@ function calcEarningsQuality(data) {
   else if (debtToEquity < 150 && currentRatio > 0.8) debtScore = 3;
   else if (debtToEquity < 200) debtScore = 2;
   else debtScore = 1;
-  
+
   const capAllocationScore = roicScore + returnScore + debtScore;
   let capAllocationLabel = "Average";
   if (capAllocationScore >= 16) capAllocationLabel = "Excellent";
   else if (capAllocationScore >= 12) capAllocationLabel = "Good";
   else if (capAllocationScore >= 8) capAllocationLabel = "Average";
   else capAllocationLabel = "Poor";
-  
+
   if (roicSpread > 15) {
     flags.push({ type: "positive", message: `ROIC spread of +${roicSpread.toFixed(1)}% demonstrates exceptional value creation` });
   } else if (roicSpread < 0) {
     flags.push({ type: "warning", message: `Negative ROIC spread — returns below cost of capital` });
   }
-  
+
   // === TOTAL SCORE ===
   const totalScore = Math.min(accrualScore + fcfConversionScore + stabilityScore + revenueQualityScore + capAllocationScore, 100);
-  
+
   let grade = "C";
   if (totalScore >= 80) grade = "A";
   else if (totalScore >= 65) grade = "B";
   else if (totalScore >= 50) grade = "C";
   else if (totalScore >= 35) grade = "D";
   else grade = "F";
-  
+
   // Generate summary
   let summary = "";
   if (totalScore >= 80) {
@@ -1099,7 +1099,7 @@ function calcEarningsQuality(data) {
   } else {
     summary = `${companyName}'s earnings quality raises concerns. ${accrualScore < 10 ? "Accrual ratio of " + (accrualRatio !== null ? (accrualRatio * 100).toFixed(0) + "%" : "unknown") + " suggests potential overstatement. " : ""}${fcfConversionScore < 10 ? "Poor cash conversion raises questions about earnings reliability." : ""}`;
   }
-  
+
   // Key insight
   let keyInsight = "";
   if (accrualRatio !== null && accrualRatio < -0.2) {
@@ -1117,7 +1117,7 @@ function calcEarningsQuality(data) {
   } else {
     keyInsight = `Earnings quality is ${grade === "A" || grade === "B" ? "solid" : grade === "C" ? "adequate" : "concerning"} with no major red flags.`;
   }
-  
+
   return {
     score: totalScore,
     grade,
@@ -1168,27 +1168,27 @@ function calcMoatAnalysis(data, networkInput = null) {
   const networkEffects = calcNetworkEffects(data, networkInput);
   const learningCurve = calcLearningCurve(data);
   const switchingCosts = calcSwitchingCosts(data);
-  
+
   const categories = { supplySide, networkEffects, learningCurve, switchingCosts };
   const totalRaw = supplySide.score + networkEffects.score + learningCurve.score + switchingCosts.score;
   const maxPossible = networkInput ? 100 : 90;
   const moatScore = Math.round(totalRaw / maxPossible * 100);
-  
+
   const moatType = moatScore >= 70 ? "wide" : moatScore >= 45 ? "narrow" : "none";
-  
+
   const sortedCategories = Object.entries(categories)
     .sort((a, b) => b[1].score - a[1].score);
   const topTwo = sortedCategories.slice(0, 2);
-  
+
   const catLabels = {
     supplySide: "Supply-Side Economies",
     networkEffects: "Network Effects",
     learningCurve: "Learning Curve",
     switchingCosts: "Switching Costs"
   };
-  
+
   const moatNarrative = `${companyName} possesses a ${moatType} economic moat (score: ${moatScore}/100). Strongest advantages: ${catLabels[topTwo[0][0]]} (${topTwo[0][1].strength}) and ${catLabels[topTwo[1][0]]} (${topTwo[1][1].strength}). ${topTwo[0][1].explanation.split(".")[0]}.`;
-  
+
   return {
     moat_score: moatScore,
     moat_type: moatType,
@@ -1209,17 +1209,17 @@ function calcMoatAnalysis(data, networkInput = null) {
 function calcAIDisruption(data) {
   const companyName = data.name || "The company";
   const industry = data.industry || "";
-  
+
   let threatLevel = "low";
   if (matchIndustry(industry, AI_THREAT_SEVERE)) threatLevel = "severe";
   else if (matchIndustry(industry, AI_THREAT_HIGH)) threatLevel = "high";
   else if (matchIndustry(industry, AI_THREAT_MODERATE)) threatLevel = "moderate";
-  
+
   let oppLevel = "minimal";
   if (matchIndustry(industry, AI_OPP_MASSIVE)) oppLevel = "massive";
   else if (matchIndustry(industry, AI_OPP_SIGNIFICANT)) oppLevel = "significant";
   else if (matchIndustry(industry, AI_OPP_MODERATE)) oppLevel = "moderate";
-  
+
   let netImpact = "neutral";
   if (oppLevel === "massive" && (threatLevel === "low" || threatLevel === "moderate")) netImpact = "strong_tailwind";
   else if (oppLevel === "significant" && threatLevel === "low") netImpact = "tailwind";
@@ -1229,21 +1229,21 @@ function calcAIDisruption(data) {
   else if (oppLevel === "moderate" && (threatLevel === "high" || threatLevel === "severe")) netImpact = "headwind";
   else if (oppLevel === "minimal" && (threatLevel === "high" || threatLevel === "severe")) netImpact = "strong_headwind";
   else if (oppLevel === "minimal" && threatLevel === "moderate") netImpact = "headwind";
-  
+
   const threatTemplates = {
     severe: `${industry} faces severe AI disruption. Core functions are directly automatable, threatening the fundamental value proposition.`,
     high: `${industry} faces significant AI disruption. AI can automate key workflows, potentially compressing margins and reducing demand.`,
     moderate: `AI presents manageable disruption to ${industry}. Some processes will be automated, but core value chain has structural resistance.`,
     low: `${industry} has limited AI disruption risk. Physical infrastructure, regulatory moats, and tangible assets provide insulation.`
   };
-  
+
   const oppTemplates = {
     massive: `${companyName} is positioned as a primary AI beneficiary. ${industry} companies can leverage AI to expand TAM and create new revenue streams.`,
     significant: `AI offers meaningful opportunities for ${companyName} to enhance operations, accelerate R&D, and develop AI-enhanced premium products.`,
     moderate: `${companyName} can use AI to improve efficiency and customer experience, though AI won't fundamentally transform the business model.`,
     minimal: `AI offers limited transformative potential for ${industry}. Benefits are primarily operational efficiency gains.`
   };
-  
+
   const netNotes = {
     strong_tailwind: "Opportunity significantly outweighs disruption risk.",
     tailwind: "AI opportunity provides meaningful upside potential.",
@@ -1251,7 +1251,7 @@ function calcAIDisruption(data) {
     headwind: "Disruption risk outpaces the company's ability to leverage AI for growth.",
     strong_headwind: "AI disruption poses significant structural threat."
   };
-  
+
   return {
     threat_level: threatLevel,
     opportunity_level: oppLevel,
@@ -1276,30 +1276,30 @@ function calcROICSensitivity(data) {
   const forwardEPS = safeNum(data.forwardEPS, 0);
   const trailingEPS = safeNum(data.trailingEPS, 0);
   const taxRate = 0.21;
-  
+
   // Work in DECIMALS internally to avoid unit confusion
   const nopatMargin = nopatMarginPct / 100;  // e.g., 0.279
   const currentRoic = currentRoicPct / 100;  // e.g., 0.682
-  
+
   // Calculate new ROIC for each lever
   // Lever A: Gross Margin +200bps (+2 percentage points)
   const newNopatMarginA = nopatMargin + (0.02 * (1 - taxRate));  // Add 2% GM * (1-tax)
   const newRoicA = newNopatMarginA * assetTurnover;
   const deltaA = newRoicA - currentRoic;
-  
+
   // Lever B: OpEx Efficiency +150bps (+1.5 percentage points)
   const newNopatMarginB = nopatMargin + (0.015 * (1 - taxRate));
   const newRoicB = newNopatMarginB * assetTurnover;
   const deltaB = newRoicB - currentRoic;
-  
+
   // Lever C: Asset Turnover +0.1x
   const newRoicC = nopatMargin * (assetTurnover + 0.1);
   const deltaC = newRoicC - currentRoic;
-  
+
   // Lever D: Working Capital +0.05x
   const newRoicD = nopatMargin * (assetTurnover + 0.05);
   const deltaD = newRoicD - currentRoic;
-  
+
   const levers = [
     {
       name: "Gross Margin Expansion (+200bps)",
@@ -1338,15 +1338,15 @@ function calcROICSensitivity(data) {
       newRoic: (newRoicD * 100).toFixed(1)
     }
   ];
-  
+
   const sortedLevers = [...levers].sort((a, b) => parseFloat(b.roicDelta) - parseFloat(a.roicDelta));
   const primaryIndex = levers.findIndex(l => l.name === sortedLevers[0].name);
   const secondaryIndex = levers.findIndex(l => l.name === sortedLevers[1].name);
-  
+
   const primaryName = sortedLevers[0].name;
   let probability = "medium";
   let timeline = "18-36 months";
-  
+
   if (primaryName.includes("Gross Margin")) {
     probability = grossMarginPct < 40 ? "high" : grossMarginPct > 60 ? "low" : "medium";
   } else if (primaryName.includes("OpEx")) {
@@ -1354,10 +1354,10 @@ function calcROICSensitivity(data) {
   } else {
     probability = assetTurnover < 0.8 ? "high" : assetTurnover > 1.5 ? "low" : "medium";
   }
-  
+
   if (probability === "high" && forwardEPS > trailingEPS) timeline = "12-18 months";
   else if (probability === "low") timeline = "36+ months or unlikely";
-  
+
   let managementAction = "No clear evidence of lever-pulling";
   if (forwardEPS > trailingEPS) {
     const growth = ((forwardEPS - trailingEPS) / trailingEPS * 100).toFixed(0);
@@ -1367,14 +1367,14 @@ function calcROICSensitivity(data) {
       managementAction = `Modest growth guidance of ${growth}% suggests incremental improvement`;
     }
   }
-  
+
   let decompositionInsight = "";
   if (nopatMargin > assetTurnover * 0.15) decompositionInsight += "This is a margin-led business.";
   else if (assetTurnover > 1.2 && nopatMargin < 0.15) decompositionInsight += "This is a turnover-led business.";
   else decompositionInsight += "This is a balanced business.";
-  
+
   decompositionInsight += ` NOPAT margin of ${nopatMarginPct.toFixed(1)}% is ${nopatMarginPct > 20 ? "strong" : nopatMarginPct > 12 ? "solid" : "thin"} while asset turnover of ${assetTurnover.toFixed(2)}x is ${assetTurnover > 1.2 ? "efficient" : assetTurnover > 0.7 ? "moderate" : "capital-heavy"}.`;
-  
+
   return {
     levers,
     primaryLever: {
@@ -1404,44 +1404,44 @@ function calcProfitabilityPath(data) {
   const operatingMargin = safeNum(data.operatingMargin, 0) * 100;
   const freeCashflow = safeNum(data.freeCashflow, 0);
   const netIncome = safeNum(data.netIncome, 0);
-  
+
   let recurring = 5;
   if (grossMargin >= 60) recurring = 25;
   else if (grossMargin >= 50) recurring = 20;
   else if (grossMargin >= 40) recurring = 15;
   else if (grossMargin >= 25) recurring = 10;
-  
+
   let stability = 5;
   if (beta <= 0.7) stability = 25;
   else if (beta <= 1.0) stability = 20;
   else if (beta <= 1.3) stability = 15;
   else if (beta <= 1.6) stability = 10;
-  
+
   let margin = 5;
   if (operatingMargin >= 25) margin = 25;
   else if (operatingMargin >= 18) margin = 20;
   else if (operatingMargin >= 12) margin = 15;
   else if (operatingMargin >= 5) margin = 10;
-  
+
   const fcfRatio = netIncome !== 0 ? Math.abs(freeCashflow / netIncome) : (freeCashflow > 0 ? 0.8 : 0);
   let conversion = 5;
   if (fcfRatio >= 1.0) conversion = 25;
   else if (fcfRatio >= 0.8) conversion = 20;
   else if (fcfRatio >= 0.6) conversion = 15;
   else if (fcfRatio >= 0.4) conversion = 10;
-  
+
   const total = recurring + stability + margin + conversion;
-  
+
   const subScores = [
     { name: "Recurring Revenue", score: recurring, max: 25, weakness: recurring < 15 },
     { name: "Earnings Stability", score: stability, max: 25, weakness: stability < 15 },
     { name: "Margin Quality", score: margin, max: 25, weakness: margin < 15 },
     { name: "FCF Conversion", score: conversion, max: 25, weakness: conversion < 15 }
   ];
-  
+
   const weakest = subScores.filter(s => s.weakness);
   const strongest = subScores.filter(s => s.score >= 20);
-  
+
   let pathDescription = "";
   if (total >= 80 && grossMargin > 50 && fcfRatio > 0.8) {
     pathDescription = `${companyName} has a highly predictable profitability path. ${grossMargin.toFixed(0)}% gross margins with ${(fcfRatio * 100).toFixed(0)}% FCF conversion indicates recurring-like revenue with strong visibility.`;
@@ -1452,19 +1452,19 @@ function calcProfitabilityPath(data) {
   } else {
     pathDescription = `${companyName} has low predictability. ${weakest[0]?.name || "Multiple factors"} create uncertainty. Earnings trajectory is uncertain.`;
   }
-  
+
   let bullMilestone = "";
   if (subScores[0].weakness) bullMilestone = "Improving FCF conversion above 80% would confirm operational leverage translating to cash";
   else if (subScores[2].weakness) bullMilestone = "Expanding operating margins above 15% would signal sustainable pricing power";
   else if (subScores[1].weakness) bullMilestone = "Reducing beta below 1.0 would attract institutional capital and improve multiple";
   else bullMilestone = "Growing gross margins above 50% would suggest shift toward higher-quality revenue";
-  
+
   let bearRisk = "";
   const debtToEquity = safeNum(data.debtToEquity, 0);
   if (debtToEquity > 100) bearRisk = `Leverage of ${debtToEquity.toFixed(0)}% D/E could amplify losses in a downturn`;
   else if (operatingMargin < 10) bearRisk = `Thin ${operatingMargin.toFixed(0)}% margins leave little room for error`;
   else bearRisk = "Macro headwinds or sector rotation could pressure the stock";
-  
+
   return {
     predictability_score: total,
     sub_scores: subScores,
@@ -1496,57 +1496,57 @@ function calcGrowthConstraints(data, moatScore = 0) {
   const grossMargin = safeNum(data.grossMargin, 0) * 100;
   const operatingMargin = safeNum(data.operatingMargin, 0) * 100;
   const gmTrend = safeNum(data.gmTrend, 0);
-  
+
   // 5A. Valuation
   let valSeverity = "low";
   if (forwardPE > 35 || priceToSales > 12) valSeverity = "high";
   else if (forwardPE > 28 || priceToSales > 8) valSeverity = "moderate";
-  
+
   const valDesc = valSeverity === "high" ? "Premium valuation prices in significant growth, leaving minimal margin for error." :
-                  valSeverity === "moderate" ? "Elevated but not extreme given growth profile." :
-                  "Reasonable valuation provides margin of safety.";
-  
-  const valMitigation = forwardEPS > trailingEPS ? 
+    valSeverity === "moderate" ? "Elevated but not extreme given growth profile." :
+      "Reasonable valuation provides margin of safety.";
+
+  const valMitigation = forwardEPS > trailingEPS ?
     `Earnings growth of ${((forwardEPS / trailingEPS - 1) * 100).toFixed(0)}% can grow into valuation over 12-24 months` :
     "No near-term catalyst to justify multiple";
-  
+
   // 5B. Debt
   let debtSeverity = "low";
   if (debtToEquity > 200) debtSeverity = "high";
   else if (debtToEquity > 100) debtSeverity = "moderate";
-  
+
   if (currentRatio < 1.0 && debtSeverity !== "high") debtSeverity = "moderate";
   else if (currentRatio < 1.0) debtSeverity = "high";
-  
+
   const debtDesc = `Debt-to-equity of ${debtToEquity.toFixed(0)} with ${currentRatio.toFixed(2)} current ratio.`;
-  const debtMitigation = data.totalCash > data.totalDebt * 0.5 ? 
+  const debtMitigation = data.totalCash > data.totalDebt * 0.5 ?
     `Strong cash position of $${billions(data.totalCash)}B partially offsets debt` :
     "Limited cash cushion";
-  
+
   // 5C. Growth
   let growthSeverity = "low";
   if (forwardEPS < trailingEPS) growthSeverity = "high";
   else if (peg > 2.5) growthSeverity = "moderate";
   else if (peg > 1.5) growthSeverity = "low";
-  
+
   const growthDesc = `Forward EPS $${forwardEPS.toFixed(2)} vs trailing $${trailingEPS.toFixed(2)}. PEG ratio ${peg.toFixed(1)}.`;
   const roicSpread = safeNum(data.roic, 0) - safeNum(data.wacc, 0);
-  const growthMitigation = roicSpread > 10 ? 
+  const growthMitigation = roicSpread > 10 ?
     `Strong ${roicSpread.toFixed(0)}% ROIC spread suggests reinvestment can drive organic growth` :
     "Limited reinvestment returns";
-  
+
   // 5D. Sector Risk
   const sectorRiskData = SECTOR_RISK[sector] || { severity: "moderate", description: "Sector-specific risks apply" };
   const sectorMitigation = moatScore >= 70 ? "Wide moat provides strong competitive insulation" :
-                          moatScore >= 45 ? "Narrow moat offers some protection" :
-                          "Limited competitive protection";
-  
+    moatScore >= 45 ? "Narrow moat offers some protection" :
+      "Limited competitive protection";
+
   // 5E. Concentration
   let concSeverity = "low";
   let concDesc = "Diversified operations at scale reduce concentration risk";
   if (marketCap < 2e9) { concSeverity = "high"; concDesc = "Small cap companies typically face significant concentration risk"; }
   else if (marketCap < 10e9) { concSeverity = "moderate"; concDesc = "Smaller scale increases likelihood of customer or product concentration"; }
-  
+
   // 5F. Margin Pressure
   let marginSeverity = "low";
   let marginDesc = `Healthy margins of ${grossMargin.toFixed(0)}% gross / ${operatingMargin.toFixed(0)}% operating provide resilience`;
@@ -1557,9 +1557,9 @@ function calcGrowthConstraints(data, moatScore = 0) {
     marginSeverity = "moderate";
     marginDesc = "Moderate margins face competitive pressure risk";
   }
-  
+
   const marginMitigation = gmTrend > 0 ? "Margins trending upward suggests improving position" : "Stable or declining margins warrant monitoring";
-  
+
   const constraints = [
     { name: "Valuation", type: "valuation", severity: valSeverity, description: `Trading at ${forwardPE.toFixed(0)}x forward earnings and ${priceToSales.toFixed(1)}x revenue. ${valDesc}`, mitigation: valMitigation, timeline: "" },
     { name: "Debt Level", type: "balance_sheet", severity: debtSeverity, description: debtDesc, mitigation: debtMitigation, timeline: "" },
@@ -1568,13 +1568,13 @@ function calcGrowthConstraints(data, moatScore = 0) {
     { name: "Concentration", type: "concentration", severity: concSeverity, description: concDesc, mitigation: "Diversification strategy and customer base monitoring recommended", timeline: "" },
     { name: "Margin Pressure", type: "margin_pressure", severity: marginSeverity, description: marginDesc, mitigation: marginMitigation, timeline: "" }
   ];
-  
+
   const severities = constraints.map(c => c.severity);
   const overallSeverity = severities.includes("high") ? "high" : severities.includes("moderate") ? "moderate" : "low";
-  
+
   const highConstraints = constraints.filter(c => c.severity === "high").map(c => c.name);
   const netAssessment = `${companyName} faces ${overallSeverity} growth constraints. ${highConstraints.length > 0 ? "Primary concerns: " + highConstraints.join(", ") + "." : ""}`;
-  
+
   return {
     overall_severity: overallSeverity,
     net_assessment: netAssessment,
@@ -1588,11 +1588,11 @@ function calcGrowthConstraints(data, moatScore = 0) {
 
 function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   const companyName = data.name || "The company";
-  
+
   const currentPrice = safeNum(data.price, 0);
   const sharesOutstanding = safeNum(data.sharesOutstanding, 0);
   const marketCap = currentPrice * sharesOutstanding;
-  
+
   const dividendYieldRaw = safeNum(data.dividendYield, 0);
   const dividendRate = safeNum(data.dividendRate, 0);
   const payoutRatio = safeNum(data.payoutRatio, 0);
@@ -1606,19 +1606,19 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   const roicSpread = safeNum(data.roicSpread || (data.roic - data.wacc), 0);
   const totalDebt = safeNum(data.totalDebt, 0);
   const totalCash = safeNum(data.totalCash, 0);
-  
+
   const dividendYieldPct = dividendYieldRaw * 100;
-  
+
   let annualDividendAmount = null;
   if (dividendRate > 0 && sharesOutstanding > 0) {
     annualDividendAmount = dividendRate * sharesOutstanding;
   }
-  
+
   let buybackAmount = null;
   let buybackYield = 0;
   let buybackEstimated = false;
   let netDilution = 0;
-  
+
   // === BUYBACK DETECTION ===
   // Method 1: Direct cashflow data
   const hasBuybacks_cf = repurchaseOfStock < 0;
@@ -1654,13 +1654,13 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
     buybackYield = 0;
     buybackEstimated = false;
   }
-  
+
   let debtPaydownYield = 0;
   let debtPaydownAmount = 0;
   let debtIncreaseYield = 0;
   let debtIncreaseAmount = 0;
   let debtPaydownEstimated = false;
-  
+
   const netDebtChange = safeNum(data.netDebtChange, null);
   if (netDebtChange !== null) {
     if (netDebtChange < 0) {
@@ -1673,28 +1673,28 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     debtPaydownEstimated = true;
   }
-  
+
   const totalYield = dividendYieldPct + buybackYield + debtPaydownYield;
   const netYield = totalYield - debtIncreaseYield;
-  
+
   let category = "growth_reinvestor";
   if (totalYield >= 6) category = "exceptional_returner";
   else if (totalYield >= 4) category = "strong_returner";
   else if (totalYield >= 2) category = "moderate_returner";
   else if (totalYield >= 0.5) category = "minimal_returner";
-  
+
   const treasuryYield = 4.3;
   const yieldVsTreasury = totalYield - treasuryYield;
-  
+
   const totalReturnAmount = (annualDividendAmount || 0) + Math.abs(buybackAmount || 0) + debtPaydownAmount;
   const returnCoverage = totalReturnAmount > 0 && freeCashflow > 0 ? freeCashflow / totalReturnAmount : null;
-  
+
   let yieldScore = 0;
   let yieldLevelScore = 0;
   let sustainabilityScore = 0;
   let buybackEffectivenessScore = 0;
   let dividendGrowthScore = 0;
-  
+
   if (totalYield >= 8) yieldLevelScore = 25;
   else if (totalYield >= 6) yieldLevelScore = 22;
   else if (totalYield >= 4) yieldLevelScore = 18;
@@ -1703,7 +1703,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   else if (totalYield >= 1) yieldLevelScore = 8;
   else if (totalYield >= 0.5) yieldLevelScore = 5;
   else yieldLevelScore = 2;
-  
+
   if (returnCoverage !== null) {
     // Base score from coverage ratio
     let sustainScore;
@@ -1713,7 +1713,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
     else if (returnCoverage >= 1.0) sustainScore = 15;
     else if (returnCoverage >= 0.8) sustainScore = 10;
     else sustainScore = 5;
-    
+
     // BUT: if total yield is very low, high coverage is less meaningful
     // It's easy to "sustain" a 0.5% yield — that doesn't deserve 25/25
     if (totalYield < 1.0 && sustainScore > 15) {
@@ -1723,7 +1723,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     sustainabilityScore = 10; // no returns = neutral sustainability
   }
-  
+
   if (Math.abs(buybackYield) > 0.5) {
     const mos = -marginOfSafety;
     if (mos < 0) buybackEffectivenessScore = 25;
@@ -1734,7 +1734,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     buybackEffectivenessScore = 15;
   }
-  
+
   const payoutPct = payoutRatio * 100;
   if (dividendYieldPct > 0 && payoutRatio > 0) {
     if (payoutPct < 40) dividendGrowthScore = 25;
@@ -1750,10 +1750,10 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     dividendGrowthScore = 10;
   }
-  
+
   // Calculate raw quality score
   const rawQualityScore = yieldLevelScore + sustainabilityScore + buybackEffectivenessScore + dividendGrowthScore;
-  
+
   // GATE: if total yield is very low, the quality of that yield matters less
   // You can have perfect quality on a 0.5% yield — it's still only 0.5%
   if (totalYield < 1.0) {
@@ -1765,7 +1765,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     yieldScore = rawQualityScore;
   }
-  
+
   const flags = [];
   if (marginOfSafety < -25 && buybackYield > 1) {
     flags.push({ type: "warning", message: "Share buybacks occurring above estimated intrinsic value — reduces capital allocation efficiency" });
@@ -1785,7 +1785,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   if (totalYield < 1.0 && rawQualityScore > yieldScore) {
     flags.push({ type: "info", message: "Quality score capped due to low total yield" });
   }
-  
+
   let summary = "";
   if (category === "exceptional_returner") {
     summary = `${companyName} returns an exceptional ${totalYield.toFixed(1)}% to shareholders annually: ${dividendYieldPct.toFixed(1)}% dividends + ${buybackYield.toFixed(1)}% buybacks${debtPaydownYield > 0 ? ` + ${debtPaydownYield.toFixed(1)}% debt paydown` : ''}. This ${yieldVsTreasury > 0 ? 'exceeds' : 'trails'} the 10-year Treasury yield of 4.3% by ${Math.abs(yieldVsTreasury).toFixed(1)} percentage points${returnCoverage !== null && returnCoverage >= 1.5 ? ', and is well-covered by free cash flow' : ''}.`;
@@ -1798,7 +1798,7 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
   } else {
     summary = `${companyName} returns minimal cash to shareholders (${totalYield.toFixed(1)}% yield), instead reinvesting in growth. ${roicSpread > 10 ? `Given the strong ${roicSpread.toFixed(0)}% ROIC spread, this reinvestment strategy is creating significant value.` : 'The effectiveness of this reinvestment depends on maintaining returns above cost of capital.'}`;
   }
-  
+
   return {
     dividendYield: parseFloat(dividendYieldPct.toFixed(2)),
     buybackYield: parseFloat(buybackYield.toFixed(2)),
@@ -1819,22 +1819,22 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
     qualityScoreCapped: rawQualityScore !== yieldScore,
     qualityComponents: {
       yieldLevel: { score: yieldLevelScore, maxScore: 25, detail: `${totalYield.toFixed(1)}% total yield` },
-      sustainability: { 
-        score: sustainabilityScore, 
-        maxScore: 25, 
+      sustainability: {
+        score: sustainabilityScore,
+        maxScore: 25,
         detail: returnCoverage !== null ? `${returnCoverage.toFixed(1)}x FCF coverage` : "Unable to calculate"
       },
-      buybackEffectiveness: { 
-        score: buybackEffectivenessScore, 
-        maxScore: 25, 
-        detail: buybackYield > 0.5 
+      buybackEffectiveness: {
+        score: buybackEffectivenessScore,
+        maxScore: 25,
+        detail: buybackYield > 0.5
           ? (marginOfSafety < 0 ? `Buying at ${Math.abs(marginOfSafety).toFixed(0)}% discount to IV` : `Buying at ${marginOfSafety.toFixed(0)}% premium to IV`)
           : "No significant buybacks"
       },
       dividendGrowth: {
         score: dividendGrowthScore,
         maxScore: 25,
-        detail: dividendYieldPct > 0 
+        detail: dividendYieldPct > 0
           ? `${payoutPct.toFixed(0)}% payout ratio — ${payoutPct < 40 ? 'significant room to grow' : payoutPct < 60 ? 'moderate growth potential' : 'limited growth potential'}`
           : roicSpread > 10 ? `High ${roicSpread.toFixed(0)}% ROIC spread justifies reinvestment` : "No dividend"
       }
@@ -1865,23 +1865,23 @@ function calcComposite({
   price
 }) {
   const components = [];
-  
+
   // 1. BUFFETT QUALITY (already 0-100)
   const buffettScore = safeNum(buffettChecklist?.total, null);
   if (buffettScore != null) {
     components.push({ name: "Quality", score: Math.max(0, Math.min(100, buffettScore)), weight: 0.20, source: "buffettChecklist" });
   }
-  
+
   // 2. MOAT DURABILITY (already 0-100)
   const moatScore = safeNum(moatAnalysis?.moat_score, null);
   if (moatScore != null) {
     components.push({ name: "Moat", score: Math.max(0, Math.min(100, moatScore)), weight: 0.15, source: "moat" });
   }
-  
+
   // 3. VALUATION ATTRACTIVENESS
   let valuationScore = null;
   const marginOfSafety = parseFloat(intrinsicValue?.undervaluation) || 0;
-  
+
   let mosPoints = 0;
   if (marginOfSafety >= 30) mosPoints = 35;
   else if (marginOfSafety >= 20) mosPoints = 30;
@@ -1891,7 +1891,7 @@ function calcComposite({
   else if (marginOfSafety >= -25) mosPoints = 6;
   else if (marginOfSafety >= -50) mosPoints = 3;
   else mosPoints = 0;
-  
+
   let dcfPoints = 0;
   const dcfUpside = (parseFloat(intrinsicValue?.dcfUpside) || 0) * 100;
   if (dcfUpside >= 30) dcfPoints = 30;
@@ -1901,12 +1901,12 @@ function calcComposite({
   else if (dcfUpside >= -15) dcfPoints = 10;
   else if (dcfUpside >= -30) dcfPoints = 5;
   else dcfPoints = 0;
-  
+
   valuationScore = mosPoints + dcfPoints;
   valuationScore = Math.max(0, Math.min(100, valuationScore));
-  
+
   components.push({ name: "Valuation", score: valuationScore, weight: 0.20, source: "calculated" });
-  
+
   // 4. ROIC SPREAD
   const spread = safeNum(roicTree?.spread, 0);
   let roicScore = 0;
@@ -1918,19 +1918,19 @@ function calcComposite({
   else if (spread >= 2) roicScore = 40;
   else if (spread >= 0) roicScore = 25;
   else roicScore = Math.max(0, 25 + spread * 5);
-  
+
   components.push({ name: "ROIC", score: roicScore, weight: 0.10, source: "roicTree" });
-  
+
   // 5. EARNINGS QUALITY
   const eqScore = safeNum(earningsQuality?.score, null);
   if (eqScore != null) {
     components.push({ name: "Earnings Quality", score: Math.max(0, Math.min(100, eqScore)), weight: 0.10, source: "earningsQuality" });
   }
-  
+
   // 6. MOMENTUM & TIMING
   const entryTotal = safeNum(entryTiming?.total, 0);
   const entryPts = (entryTotal / 17) * 50;
-  
+
   const distFromHigh = Math.abs(safeNum(entryTiming?.distance, 0));
   let techPts = 0;
   if (distFromHigh <= 5) techPts = 15;
@@ -1938,7 +1938,7 @@ function calcComposite({
   else if (distFromHigh <= 25) techPts = 50;
   else if (distFromHigh <= 40) techPts = 40;
   else techPts = 20;
-  
+
   const maDist = safeNum(entryTiming?.maDistance, 0);
   if (maDist > 0) {
     if (maDist <= 10) techPts += 15;
@@ -1947,10 +1947,10 @@ function calcComposite({
     if (Math.abs(maDist) <= 10) techPts += 20;
     else techPts += 10;
   }
-  
+
   const momentumScore = Math.min(100, entryPts + techPts);
   components.push({ name: "Momentum", score: momentumScore, weight: 0.10, source: "calculated" });
-  
+
   // 7. TOTAL SHAREHOLDER YIELD
   const tsyYield = safeNum(totalShareholderYield?.totalYield, 0);
   let tsyScore = 0;
@@ -1962,51 +1962,51 @@ function calcComposite({
   else if (tsyYield >= 1) tsyScore = 25;
   else if (tsyYield >= 0.5) tsyScore = 15;
   else tsyScore = 5;
-  
+
   const fcfCoverage = safeNum(totalShareholderYield?.returnCoverage, null);
   if (fcfCoverage !== null) {
     if (fcfCoverage < 0.8) tsyScore = tsyScore * 0.6;
     else if (fcfCoverage < 1.0) tsyScore = tsyScore * 0.8;
   }
-  
+
   components.push({ name: "Shareholder Yield", score: tsyScore, weight: 0.05, source: "totalShareholderYield" });
-  
+
   // 8. QUALITY FLOOR (extra weight on business quality)
   if (buffettScore != null && moatScore != null) {
     const qualityFloor = (buffettScore + moatScore) / 2;
     components.push({ name: "Quality Floor", score: qualityFloor, weight: 0.10, source: "calculated" });
   }
-  
+
   // Renormalize weights if some components missing
   const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
   if (Math.abs(totalWeight - 1.0) > 0.01) {
     const scale = 1.0 / totalWeight;
     components.forEach(c => c.adjustedWeight = c.weight * scale);
   }
-  
+
   // Calculate weighted contributions
   components.forEach(c => {
     c.weighted = c.score * (c.adjustedWeight || c.weight);
   });
-  
+
   const rawScore = components.reduce((sum, c) => sum + c.weighted, 0);
-  
+
   // 9. CONSTRAINT PENALTIES
   let constraintPenalty = 0;
   const severity = growthConstraints?.overall_severity;
   if (severity === "critical") constraintPenalty = -10;
   else if (severity === "high") constraintPenalty = -7;
   else if (severity === "moderate") constraintPenalty = -3;
-  
+
   if (entryTiming?.overextendedWarning) constraintPenalty -= 3;
-  
+
   const aiImpact = aiDisruption?.net_impact;
   if (aiImpact === "strong_headwind") constraintPenalty -= 3;
   else if (aiImpact === "headwind") constraintPenalty -= 1;
-  
+
   // Final composite
   let compositeScore = Math.max(0, Math.min(100, Math.round(rawScore + constraintPenalty)));
-  
+
   // Grade and label
   let grade, label, color;
   if (compositeScore >= 80) { grade = "A"; label = "STRONG BUY"; color = "#22c55e"; }
@@ -2017,11 +2017,11 @@ function calcComposite({
   else if (compositeScore >= 35) { grade = "C"; label = "LEAN SELL"; color = "#f97316"; }
   else if (compositeScore >= 25) { grade = "D"; label = "SELL"; color = "#ef4444"; }
   else { grade = "F"; label = "STRONG SELL"; color = "#dc2626"; }
-  
+
   // Safety override: extreme overvaluation should never be BUY
   if (marginOfSafety < -50) { label = "AVOID"; color = "#dc2626"; }
   else if (marginOfSafety < -25 && (label === "STRONG BUY" || label === "BUY")) { label = "HOLD"; color = "#eab308"; }
-  
+
   // Strengths and weaknesses
   const sorted = [...components].sort((a, b) => b.score - a.score);
   const strengths = sorted.slice(0, 2).map(s => {
@@ -2036,7 +2036,7 @@ function calcComposite({
     else if (s.name === "Quality Floor") insight = `Combined quality indicator at ${s.score}/100`;
     return { name: s.name, score: s.score, insight };
   });
-  
+
   const weaknesses = sorted.slice(-2).map(s => {
     let insight = "";
     if (s.name === "Valuation") insight = `Trading at ${Math.abs(marginOfSafety)}% ${marginOfSafety < 0 ? "premium" : "discount"} to intrinsic value`;
@@ -2046,17 +2046,17 @@ function calcComposite({
     else insight = `Score of ${s.score}/100 indicates room for improvement`;
     return { name: s.name, score: s.score, insight };
   });
-  
+
   // Narrative
   let narrative = `Strongest attributes: ${strengths[0]?.name} (${strengths[0]?.score}/100) and ${strengths[1]?.name} (${strengths[1]?.score}/100). `;
   narrative += `Key concerns: ${weaknesses[0]?.name} (${weaknesses[0]?.score}/100) and ${weaknesses[1]?.name} (${weaknesses[1]?.score}/100). `;
-  
+
   if (valuationScore > 70) narrative += "Attractive valuation provides margin of safety. ";
   else if (valuationScore < 30) narrative += "Rich valuation limits upside and increases risk. ";
-  
+
   if (momentumScore > 70) narrative += "Positive technical momentum supports entry timing.";
   else if (momentumScore < 30) narrative += "Weak momentum suggests waiting for a better entry point.";
-  
+
   // Catalysts
   const catalysts = {};
   if (valuationScore < 50) {
@@ -2066,7 +2066,7 @@ function calcComposite({
   if (compositeScore < 70 && marginOfSafety < 0) {
     catalysts.toReachStrongBuy = `Would need price to decline to ~$${Math.max(1, Math.round(price * 0.7))} for significant margin of safety while maintaining quality scores.`;
   }
-  
+
   return {
     score: compositeScore,
     grade,
@@ -2104,10 +2104,10 @@ export {
   AI_THREAT_SEVERE, AI_THREAT_HIGH, AI_THREAT_MODERATE,
   AI_OPP_MASSIVE, AI_OPP_SIGNIFICANT, AI_OPP_MODERATE,
   SECTOR_RISK,
-  
+
   // Helper functions
   safeNum, matchIndustry, billions,
-  
+
   // Scoring functions
   calcSupplySideEconomies,
   calcNetworkEffects,

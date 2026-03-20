@@ -1,12 +1,13 @@
-export const MONO = "'IBM Plex Mono', monospace";
-export const SANS = "'DM Sans', sans-serif";
+import { useState, useEffect } from "react";
+export { MONO, SANS, TEXT, GREEN, RED, AMBER } from "../lib/theme.js";
+import { MONO, SANS, TEXT } from "../lib/theme.js";
 
-export function Pill({ children, color = "#818cf8", style: sx = {} }) {
+export function Pill({ children, color = "#f0f0f0", style: sx = {} }) {
   return (
     <span style={{
       display: "inline-block",
-      padding: "2px 8px",
-      fontSize: 9,
+      padding: "3px 10px",
+      fontSize: 11,
       fontWeight: 700,
       letterSpacing: 0.8,
       borderRadius: 3,
@@ -55,10 +56,10 @@ export function Ring({ value, max = 100, size = 52, sw = 4, color }) {
 export function SH({ color, children }) {
   return (
     <div style={{
-      fontSize: 9,
+      fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
-      color,
+      color: color || "#f0f0f0",
       marginBottom: 8,
       textTransform: "uppercase",
       fontFamily: MONO
@@ -74,8 +75,8 @@ export function Box({ border, children, style: sx = {} }) {
       background: "rgba(255,255,255,0.02)",
       border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
       borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
+      padding: 16,
+      marginBottom: 12,
       ...sx
     }}>
       {children}
@@ -88,18 +89,18 @@ export function Met({ label, value, color = "#f0f0f0" }) {
     <div style={{
       background: "rgba(255,255,255,0.03)",
       borderRadius: 6,
-      padding: "8px 10px",
+      padding: "10px 12px",
       textAlign: "center",
       flex: "1 1 75px",
       minWidth: 75
     }}>
-      <div style={{ fontSize: 8, color: "#555", fontWeight: 700, letterSpacing: 1, fontFamily: MONO }}>{label}</div>
-      <div style={{ fontSize: 15, fontWeight: 800, color, fontFamily: MONO, marginTop: 2 }}>{value}</div>
+      <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, fontFamily: MONO }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 800, color, fontFamily: MONO, marginTop: 2 }}>{value}</div>
     </div>
   );
 }
 
-export function LoadingSpinner({ size = 24, color = "#818cf8" }) {
+export function LoadingSpinner({ size = 24, color = "#f0f0f0" }) {
   return (
     <div style={{
       width: size,
@@ -117,22 +118,22 @@ export const vc = (v) => ({
   buy: "#4ade80",
   buy_zone: "#4ade80",
   accumulate: "#eab308",
-  hold: "#94a3b8",
+  hold: "#f0f0f0",
   avoid: "#ef4444",
   wait: "#ef4444"
-}[v] || "#888");
+}[v] || "#f0f0f0");
 
 export const tc = (l) => ({
   low: "#22c55e",
   moderate: "#eab308",
   high: "#f97316",
   severe: "#ef4444"
-}[l] || "#888");
+}[l] || "#f0f0f0");
 
 export const trendColors = {
   strong_uptrend: "#22c55e",
   pullback_in_uptrend: "#eab308",
-  mixed: "#94a3b8",
+  mixed: "#f0f0f0",
   downtrend: "#ef4444"
 };
 
@@ -155,7 +156,7 @@ export function fmtPct(pct, signed = false) {
 }
 
 export function TrendBadge({ status }) {
-  const color = trendColors[status] || "#888";
+  const color = trendColors[status] || "#f0f0f0";
   const label = status?.replace(/_/g, " ").toUpperCase() || "N/A";
   return <Pill color={color}>{label}</Pill>;
 }
@@ -168,11 +169,20 @@ export function SeverityBadge({ severity }) {
   return <Pill color={tc(severity)}>{severity?.toUpperCase() || "MODERATE"}</Pill>;
 }
 
-import { useState, useEffect } from "react";
+let _infoTipCloseId = 0;
 
 export function InfoTip({ title, children }) {
   const [open, setOpen] = useState(false);
+  const [myId] = useState(() => ++_infoTipCloseId);
   
+  useEffect(() => {
+    const closeOthers = (e) => {
+      if (e.detail !== myId) setOpen(false);
+    };
+    document.addEventListener('infotip:open', closeOthers);
+    return () => document.removeEventListener('infotip:open', closeOthers);
+  }, [myId]);
+
   useEffect(() => {
     if (!open) return;
     const handler = () => setOpen(false);
@@ -180,16 +190,25 @@ export function InfoTip({ title, children }) {
     return () => document.removeEventListener('click', handler);
   }, [open]);
   
+  const handleClick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!open) {
+      document.dispatchEvent(new CustomEvent('infotip:open', { detail: myId }));
+    }
+    setOpen(!open);
+  };
+
   return (
     <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
       <span 
-        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setOpen(!open); }}
+        onClick={handleClick}
         style={{ 
-          cursor: 'pointer', fontSize: 11, color: open ? '#818cf8' : '#555', marginLeft: 6,
-          width: 16, height: 16, borderRadius: '50%', display: 'inline-flex',
+          cursor: 'pointer', fontSize: 12, color: '#f0f0f0', marginLeft: 6,
+          width: 18, height: 18, borderRadius: '50%', display: 'inline-flex',
           alignItems: 'center', justifyContent: 'center',
-          background: open ? 'rgba(129,140,248,0.2)' : 'rgba(255,255,255,0.03)',
-          border: '1px solid ' + (open ? 'rgba(129,140,248,0.4)' : 'rgba(255,255,255,0.08)'),
+          background: open ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
+          border: '1px solid ' + (open ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.08)'),
           transition: 'all 0.2s', userSelect: 'none'
         }}
       >
@@ -199,26 +218,26 @@ export function InfoTip({ title, children }) {
         <div 
           onClick={(e) => { e.stopPropagation(); }}
           style={{
-            position: 'absolute', top: 26, left: -10, zIndex: 100,
-            width: 320, maxWidth: '85vw',
-            background: '#141420', border: '1px solid rgba(129,140,248,0.25)',
-            borderRadius: 10, padding: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            animation: 'fadeUp 0.2s ease-out'
+            position: 'absolute', top: 28, left: -10, zIndex: 100,
+            width: 340, maxWidth: '85vw',
+            background: '#141420', border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 10, padding: 18, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            animation: 'fadeUp 0.2s ease-out', textTransform: 'none'
           }}
         >
           {title && (
             <div style={{ 
-              fontSize: 10, fontWeight: 700, color: '#818cf8', marginBottom: 10, 
-              fontFamily: MONO, letterSpacing: 1, textTransform: 'uppercase',
+              fontSize: 11, fontWeight: 700, color: '#f0f0f0', marginBottom: 10, 
+              fontFamily: MONO, letterSpacing: 1,
               paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.06)'
             }}>
               {title}
             </div>
           )}
-          <div style={{ fontSize: 12, color: '#b0b0b0', lineHeight: 1.7 }}>{children}</div>
+          <div style={{ fontSize: 13, color: '#f0f0f0', lineHeight: 1.7 }}>{children}</div>
           <div 
             onClick={(e) => { e.stopPropagation(); setOpen(false); }} 
-            style={{ fontSize: 10, color: '#555', marginTop: 12, cursor: 'pointer', textAlign: 'right' }}
+            style={{ fontSize: 11, color: '#f0f0f0', marginTop: 12, cursor: 'pointer', textAlign: 'right' }}
           >
             close ✕
           </div>

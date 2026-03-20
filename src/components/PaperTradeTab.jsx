@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
-const MONO = "'IBM Plex Mono', monospace";
-const SANS = "'DM Sans', sans-serif";
+import { MONO, SANS } from "../lib/theme.js";
 
 function Box({ children, style: sx = {} }) {
   return (
@@ -10,8 +9,8 @@ function Box({ children, style: sx = {} }) {
       background: "rgba(255,255,255,0.02)",
       border: "1px solid rgba(255,255,255,0.06)",
       borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
+      padding: 16,
+      marginBottom: 12,
       ...sx
     }}>
       {children}
@@ -30,10 +29,10 @@ function MetricCard({ label, value, subLabel, subValue, color }) {
       textAlign: "center",
       flex: "1 1 120px"
     }}>
-      <div style={{ fontSize: 8, color: "#555", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>{label}</div>
+      <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: displayColor, fontFamily: MONO }}>{value}</div>
       {subLabel && (
-        <div style={{ fontSize: 10, color: "#666", marginTop: 4, fontFamily: MONO }}>{subLabel}: {subValue}</div>
+        <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 4, fontFamily: MONO }}>{subLabel}: {subValue}</div>
       )}
     </div>
   );
@@ -48,9 +47,9 @@ function ChartTooltip({ active, payload, label }) {
       borderRadius: 8,
       padding: 12,
       fontFamily: MONO,
-      fontSize: 11
+      fontSize: 12
     }}>
-      <div style={{ color: "#888", marginBottom: 6 }}>{label}</div>
+      <div style={{ color: "#f0f0f0", marginBottom: 6 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, marginBottom: 2 }}>
           {p.name}: ${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
@@ -63,7 +62,7 @@ function ChartTooltip({ active, payload, label }) {
 function Select({ value, onChange, options, label, style }) {
   return (
     <div style={style}>
-      {label && <div style={{ fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
+      {label && <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -73,7 +72,7 @@ function Select({ value, onChange, options, label, style }) {
           borderRadius: 6,
           padding: "8px 12px",
           color: "#f0f0f0",
-          fontSize: 12,
+          fontSize: 13,
           fontFamily: MONO,
           cursor: "pointer"
         }}
@@ -210,25 +209,24 @@ export default function PaperTradeTab() {
   if (loading) {
     return (
       <Box style={{ textAlign: "center", padding: 60 }}>
-        <div style={{ fontSize: 11, color: "#555", fontFamily: MONO }}>Loading paper portfolio...</div>
+        <div style={{ fontSize: 13, color: "#f0f0f0", fontFamily: MONO }}>Loading paper portfolio...</div>
       </Box>
     );
   }
 
-  // No portfolio yet — show init form
   if (!portfolio) {
     return (
       <div>
         <Box>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: "#818cf8", marginBottom: 12, fontFamily: MONO }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO }}>
             INITIALIZE PAPER PORTFOLIO
           </div>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 16, lineHeight: 1.6 }}>
+          <p style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 16, lineHeight: 1.6 }}>
             Start a forward paper trade to test your model out-of-sample. The model runs on live market data — no overfitting possible.
           </p>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
             <div>
-              <div style={{ fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>CAPITAL ($)</div>
+              <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>CAPITAL ($)</div>
               <input
                 type="number"
                 value={initForm.initialCapital}
@@ -239,7 +237,7 @@ export default function PaperTradeTab() {
                   borderRadius: 6,
                   padding: "8px 12px",
                   color: "#f0f0f0",
-                  fontSize: 12,
+                  fontSize: 13,
                   fontFamily: MONO,
                   width: 140
                 }}
@@ -251,23 +249,23 @@ export default function PaperTradeTab() {
           </div>
           <button onClick={initPortfolio} style={{
             padding: "10px 24px",
-            background: "#818cf8",
-            border: "none",
+            background: "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.15)",
             borderRadius: 6,
-            color: "#fff",
-            fontSize: 12,
+            color: "#f0f0f0",
+            fontSize: 13,
             fontWeight: 700,
             cursor: "pointer",
             fontFamily: MONO
           }}>
             Create Paper Portfolio
           </button>
-          {error && <div style={{ color: "#ef4444", fontSize: 11, marginTop: 10, fontFamily: MONO }}>{error}</div>}
+          {error && <div style={{ color: "#ef4444", fontSize: 12, marginTop: 10, fontFamily: MONO }}>{error}</div>}
         </Box>
 
-        <Box style={{ background: "rgba(129,140,248,0.04)", borderColor: "rgba(129,140,248,0.15)" }}>
-          <div style={{ fontSize: 10, color: "#818cf8", fontFamily: MONO, lineHeight: 1.8 }}>
-            <strong>Why paper trade?</strong> The biggest risk isn't the model — it's overfitting. A backtest always looks better than reality.
+        <Box>
+          <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.8 }}>
+            <strong style={{ color: "#f0f0f0" }}>Why paper trade?</strong> The biggest risk isn't the model — it's overfitting. A backtest always looks better than reality.
             Forward paper trading is the ultimate test: live picks, tracked daily against S&P 500, with zero look-ahead bias.
           </div>
         </Box>
@@ -275,7 +273,6 @@ export default function PaperTradeTab() {
     );
   }
 
-  // Portfolio exists — show dashboard
   const { summary, holdings, config, createdAt, lastRebalance, nextRebalance, cash, navHistory } = portfolio;
   const rebalanceHistory = history?.rebalanceHistory || [];
 
@@ -292,23 +289,23 @@ export default function PaperTradeTab() {
     <div>
       {/* Status Bar */}
       <Box style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>
+        <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
           Paper trading since <span style={{ color: "#f0f0f0" }}>{createdAt}</span>
           {" | "}{stratLabel}{" | "}{uniLabel}{" | Top "}{config.topN}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {lastRebalance && (
-            <span style={{ fontSize: 9, color: "#555", fontFamily: MONO }}>
+            <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
               Last: {lastRebalance} {nextRebalance && `· Next: ~${nextRebalance}`}
             </span>
           )}
           <button onClick={rebalance} disabled={rebalancing} style={{
             padding: "6px 14px",
-            background: rebalancing ? "rgba(129,140,248,0.3)" : "#818cf8",
-            border: "none",
+            background: rebalancing ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+            border: "1px solid rgba(255,255,255,0.12)",
             borderRadius: 5,
-            color: "#fff",
-            fontSize: 10,
+            color: rebalancing ? "#555" : "#f0f0f0",
+            fontSize: 11,
             fontWeight: 700,
             cursor: rebalancing ? "wait" : "pointer",
             fontFamily: MONO
@@ -321,7 +318,7 @@ export default function PaperTradeTab() {
             border: "1px solid rgba(239,68,68,0.3)",
             borderRadius: 5,
             color: "#ef4444",
-            fontSize: 10,
+            fontSize: 11,
             fontWeight: 700,
             cursor: "pointer",
             fontFamily: MONO
@@ -332,8 +329,8 @@ export default function PaperTradeTab() {
       </Box>
 
       {rebalancing && autoRebalanced && (
-        <Box style={{ background: "rgba(129,140,248,0.06)", borderColor: "rgba(129,140,248,0.2)" }}>
-          <div style={{ fontSize: 11, color: "#818cf8", fontFamily: MONO }}>
+        <Box>
+          <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
             Auto-rebalancing — it's been 30+ days since last rebalance. Running the model on live data...
           </div>
         </Box>
@@ -341,12 +338,12 @@ export default function PaperTradeTab() {
 
       {error && (
         <Box style={{ background: "rgba(239,68,68,0.05)", borderColor: "rgba(239,68,68,0.2)" }}>
-          <div style={{ color: "#ef4444", fontSize: 11, fontFamily: MONO }}>{error}</div>
+          <div style={{ color: "#ef4444", fontSize: 12, fontFamily: MONO }}>{error}</div>
         </Box>
       )}
 
       {/* Metric Cards */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
         <MetricCard
           label="TOTAL VALUE"
           value={`$${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
@@ -370,51 +367,88 @@ export default function PaperTradeTab() {
         <MetricCard
           label="DAYS ACTIVE"
           value={summary.daysActive}
-          color="#818cf8"
+          color="#f0f0f0"
         />
       </div>
 
-      {/* Equity Curve */}
-      {chartData.length > 1 && (
-        <Box>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: "#818cf8", marginBottom: 12, fontFamily: MONO }}>
-            PORTFOLIO vs S&P 500
-          </div>
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={chartData}>
+      {/* S&P 500 Comparison */}
+      <Box>
+        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO }}>
+          PORTFOLIO vs S&P 500
+        </div>
+        {chartData.length > 1 ? (
+          <ResponsiveContainer width="100%" height={280}>
+            <LineChart data={chartData} margin={{ top: 5, right: 30, bottom: 5, left: 5 }}>
               <XAxis
                 dataKey="date"
-                tick={{ fontSize: 9, fill: "#555", fontFamily: MONO }}
+                tick={{ fontSize: 10, fill: "#f0f0f0", fontFamily: MONO }}
                 tickLine={false}
                 axisLine={{ stroke: "rgba(255,255,255,0.05)" }}
+                tickFormatter={(v) => {
+                  const d = new Date(v + "T00:00:00");
+                  return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+                }}
+                minTickGap={40}
               />
               <YAxis
-                tick={{ fontSize: 9, fill: "#555", fontFamily: MONO }}
+                tick={{ fontSize: 10, fill: "#f0f0f0", fontFamily: MONO }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={v => `$${(v / 1000).toFixed(0)}k`}
-                domain={["dataMin", "dataMax"]}
+                domain={["dataMin - 500", "dataMax + 500"]}
               />
               <Tooltip content={<ChartTooltip />} />
-              <Line type="monotone" dataKey="Portfolio" stroke="#818cf8" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="S&P 500" stroke="#555" strokeWidth={1.5} dot={false} strokeDasharray="4 4" />
+              <Legend
+                wrapperStyle={{ fontSize: 11, fontFamily: MONO, paddingTop: 8 }}
+                formatter={(val) => <span style={{ color: val === "Portfolio" ? "#f0f0f0" : "#f59e0b" }}>{val}</span>}
+              />
+              <Line type="monotone" dataKey="Portfolio" stroke="#f0f0f0" strokeWidth={2.5} dot={false} name="Portfolio" />
+              <Line type="monotone" dataKey="S&P 500" stroke="#f59e0b" strokeWidth={2} dot={false} strokeDasharray="6 3" name="S&P 500" />
             </LineChart>
           </ResponsiveContainer>
-        </Box>
-      )}
+        ) : (
+          <div style={{ textAlign: "center", padding: "30px 0" }}>
+            <div style={{ display: "flex", justifyContent: "center", gap: 24, marginBottom: 16 }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>YOUR RETURN</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: summary.totalReturn >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
+                  {summary.totalReturn >= 0 ? "+" : ""}{summary.totalReturn.toFixed(1)}%
+                </div>
+              </div>
+              <div style={{ fontSize: 18, color: "#f0f0f0", fontWeight: 300, alignSelf: "center" }}>vs</div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>S&P 500</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: summary.spyReturn >= 0 ? "#f59e0b" : "#ef4444", fontFamily: MONO }}>
+                  {summary.spyReturn >= 0 ? "+" : ""}{summary.spyReturn.toFixed(1)}%
+                </div>
+              </div>
+              <div style={{ fontSize: 18, color: "#f0f0f0", fontWeight: 300, alignSelf: "center" }}>=</div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>ALPHA</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: summary.alpha >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
+                  {summary.alpha >= 0 ? "+" : ""}{summary.alpha.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
+              Chart appears after 2+ data points (rebalance to begin tracking)
+            </div>
+          </div>
+        )}
+      </Box>
 
       {/* Holdings Table */}
       {holdings.length > 0 && (
         <Box>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: "#818cf8", marginBottom: 12, fontFamily: MONO }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO }}>
             CURRENT HOLDINGS ({holdings.length})
           </div>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: MONO }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
                   {["Ticker", "Shares", "Entry", "Current", "Position", "P&L $", "P&L %", "Weight", "Composite"].map(h => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 8px", color: "#555", fontSize: 9, fontWeight: 700, letterSpacing: 1 }}>{h}</th>
+                    <th key={h} style={{ textAlign: "left", padding: "6px 8px", color: "#f0f0f0", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -422,8 +456,8 @@ export default function PaperTradeTab() {
                 {holdings.sort((a, b) => b.weight - a.weight).map(h => (
                   <tr key={h.ticker} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
                     <td style={{ padding: "8px", color: "#f0f0f0", fontWeight: 600 }}>{h.ticker}</td>
-                    <td style={{ padding: "8px", color: "#888" }}>{h.shares}</td>
-                    <td style={{ padding: "8px", color: "#888" }}>${h.entryPrice.toFixed(2)}</td>
+                    <td style={{ padding: "8px", color: "#f0f0f0" }}>{h.shares}</td>
+                    <td style={{ padding: "8px", color: "#f0f0f0" }}>${h.entryPrice.toFixed(2)}</td>
                     <td style={{ padding: "8px", color: "#f0f0f0" }}>${h.currentPrice.toFixed(2)}</td>
                     <td style={{ padding: "8px", color: "#f0f0f0", fontWeight: 600 }}>${(h.shares * h.currentPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
                     <td style={{ padding: "8px", color: h.pnl >= 0 ? "#22c55e" : "#ef4444" }}>
@@ -432,8 +466,8 @@ export default function PaperTradeTab() {
                     <td style={{ padding: "8px", color: h.pnlPct >= 0 ? "#22c55e" : "#ef4444" }}>
                       {h.pnlPct >= 0 ? "+" : ""}{h.pnlPct.toFixed(1)}%
                     </td>
-                    <td style={{ padding: "8px", color: "#888" }}>{h.weight}%</td>
-                    <td style={{ padding: "8px", color: "#818cf8" }}>{h.scores?.composite?.toFixed(1) || "—"}</td>
+                    <td style={{ padding: "8px", color: "#f0f0f0" }}>{h.weight}%</td>
+                    <td style={{ padding: "8px", color: "#f0f0f0" }}>{h.scores?.composite?.toFixed(1) || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -444,8 +478,8 @@ export default function PaperTradeTab() {
 
       {holdings.length === 0 && portfolio.rebalanceCount === 0 && (
         <Box style={{ textAlign: "center", padding: 30 }}>
-          <div style={{ fontSize: 13, color: "#888", marginBottom: 8 }}>No holdings yet</div>
-          <div style={{ fontSize: 11, color: "#555", fontFamily: MONO }}>
+          <div style={{ fontSize: 14, color: "#f0f0f0", marginBottom: 8 }}>No holdings yet</div>
+          <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
             Click "Rebalance Now" to run the model and make initial picks.
           </div>
         </Box>
@@ -454,7 +488,7 @@ export default function PaperTradeTab() {
       {/* Rebalance Log */}
       {rebalanceHistory.length > 0 && (
         <Box>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 2, color: "#818cf8", marginBottom: 12, fontFamily: MONO }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO }}>
             REBALANCE LOG ({rebalanceHistory.length})
           </div>
           {rebalanceHistory.slice().reverse().map((rb, idx) => {
@@ -475,15 +509,15 @@ export default function PaperTradeTab() {
                   }}
                 >
                   <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, fontWeight: 600 }}>{rb.date}</span>
-                    <span style={{ fontSize: 10, color: "#22c55e", fontFamily: MONO }}>
+                    <span style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, fontWeight: 600 }}>{rb.date}</span>
+                    <span style={{ fontSize: 11, color: "#22c55e", fontFamily: MONO }}>
                       +{rb.buys.length} buys
                     </span>
-                    <span style={{ fontSize: 10, color: "#ef4444", fontFamily: MONO }}>
+                    <span style={{ fontSize: 11, color: "#ef4444", fontFamily: MONO }}>
                       -{rb.sells.length} sells
                     </span>
                   </div>
-                  <span style={{ fontSize: 10, color: "#555", fontFamily: MONO }}>
+                  <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
                     ${rb.portfolioValue?.toLocaleString(undefined, { maximumFractionDigits: 0 })} {isExpanded ? "▲" : "▼"}
                   </span>
                 </div>
@@ -491,12 +525,12 @@ export default function PaperTradeTab() {
                   <div style={{ padding: "10px 12px", background: "rgba(255,255,255,0.01)", borderRadius: "0 0 6px 6px" }}>
                     {rb.buys.length > 0 && (
                       <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: 9, color: "#22c55e", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>BOUGHT</div>
+                        <div style={{ fontSize: 10, color: "#22c55e", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>BOUGHT</div>
                         {rb.buys.map(b => (
-                          <div key={b.ticker} style={{ display: "flex", gap: 16, fontSize: 10, fontFamily: MONO, color: "#888", marginBottom: 3 }}>
+                          <div key={b.ticker} style={{ display: "flex", gap: 16, fontSize: 11, fontFamily: MONO, color: "#f0f0f0", marginBottom: 3 }}>
                             <span style={{ color: "#f0f0f0", fontWeight: 600, minWidth: 50 }}>{b.ticker}</span>
                             <span>{b.shares} shares @ ${b.buyPrice.toFixed(2)}</span>
-                            {b.scores?.composite && <span style={{ color: "#818cf8" }}>Score: {b.scores.composite.toFixed(1)}</span>}
+                            {b.scores?.composite && <span style={{ color: "#f0f0f0" }}>Score: {b.scores.composite.toFixed(1)}</span>}
                             {b.scores?.fundamental && <span>Fund: {b.scores.fundamental.toFixed(0)}</span>}
                             {b.scores?.momentum && <span>Mom: {b.scores.momentum.toFixed(0)}</span>}
                           </div>
@@ -505,9 +539,9 @@ export default function PaperTradeTab() {
                     )}
                     {rb.sells.length > 0 && (
                       <div style={{ marginBottom: 10 }}>
-                        <div style={{ fontSize: 9, color: "#ef4444", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>SOLD</div>
+                        <div style={{ fontSize: 10, color: "#ef4444", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>SOLD</div>
                         {rb.sells.map(s => (
-                          <div key={s.ticker} style={{ display: "flex", gap: 16, fontSize: 10, fontFamily: MONO, color: "#888", marginBottom: 3 }}>
+                          <div key={s.ticker} style={{ display: "flex", gap: 16, fontSize: 11, fontFamily: MONO, color: "#f0f0f0", marginBottom: 3 }}>
                             <span style={{ color: "#f0f0f0", fontWeight: 600, minWidth: 50 }}>{s.ticker}</span>
                             <span>{s.shares} shares @ ${s.sellPrice.toFixed(2)}</span>
                             <span style={{ color: s.pnl >= 0 ? "#22c55e" : "#ef4444" }}>
@@ -519,25 +553,25 @@ export default function PaperTradeTab() {
                     )}
                     {rb.allRankings && rb.allRankings.length > 0 && (
                       <div>
-                        <div style={{ fontSize: 9, color: "#818cf8", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>TOP RANKINGS</div>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: MONO }}>
+                        <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>TOP RANKINGS</div>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
                           <thead>
                             <tr>
                               {["#", "Ticker", "Composite", "Fund", "Mom", "Val", "Value"].map(h => (
-                                <th key={h} style={{ textAlign: "left", padding: "4px 6px", color: "#555", fontSize: 8, fontWeight: 700, letterSpacing: 1 }}>{h}</th>
+                                <th key={h} style={{ textAlign: "left", padding: "4px 6px", color: "#f0f0f0", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {rb.allRankings.map((r, ri) => (
                               <tr key={ri} style={{ borderBottom: "1px solid rgba(255,255,255,0.02)" }}>
-                                <td style={{ padding: "4px 6px", color: "#555" }}>{ri + 1}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{ri + 1}</td>
                                 <td style={{ padding: "4px 6px", color: "#f0f0f0", fontWeight: 600 }}>{r.ticker}</td>
-                                <td style={{ padding: "4px 6px", color: "#818cf8" }}>{r.compositeScore?.toFixed(1)}</td>
-                                <td style={{ padding: "4px 6px", color: "#888" }}>{r.fundamentalScore?.toFixed(0) || "—"}</td>
-                                <td style={{ padding: "4px 6px", color: "#888" }}>{r.momentumScore?.toFixed(0) || "—"}</td>
-                                <td style={{ padding: "4px 6px", color: "#888" }}>{r.valuationScore?.toFixed(0) || "—"}</td>
-                                <td style={{ padding: "4px 6px", color: "#888" }}>{r.valueScore?.toFixed(0) || "—"}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.compositeScore?.toFixed(1)}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.fundamentalScore?.toFixed(0) || "—"}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.momentumScore?.toFixed(0) || "—"}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.valuationScore?.toFixed(0) || "—"}</td>
+                                <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.valueScore?.toFixed(0) || "—"}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -553,9 +587,9 @@ export default function PaperTradeTab() {
       )}
 
       {/* Disclaimer */}
-      <Box style={{ background: "rgba(129,140,248,0.04)", borderColor: "rgba(129,140,248,0.15)" }}>
-        <div style={{ fontSize: 10, color: "#818cf8", fontFamily: MONO, lineHeight: 1.8 }}>
-          <strong>Forward Paper Trade</strong> — This tracks live model picks against the S&P 500 with real market data. No real money is involved.
+      <Box>
+        <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.8 }}>
+          <strong style={{ color: "#f0f0f0" }}>Forward Paper Trade</strong> — This tracks live model picks against the S&P 500 with real market data. No real money is involved.
           Fundamental scores use current data (point-in-time approximation). This is the honest out-of-sample test: the model can't overfit to data it hasn't seen yet.
         </div>
       </Box>
