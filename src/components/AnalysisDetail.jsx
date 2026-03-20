@@ -112,19 +112,40 @@ const tc = (l) => ({ low: "#22c55e", moderate: "#eab308", high: "#f97316", sever
 const aiColors = { strong_tailwind: "#22c55e", tailwind: "#4ade80", neutral: "#94a3b8", headwind: "#f97316", strong_headwind: "#ef4444" };
 const strengthColors = { strong: "#22c55e", moderate: "#eab308", weak: "#f97316", none: "#ef4444" };
 
-function ScoreBar({ score, max = 25, label, strength, color }) {
-  const pct = Math.min(score / max, 1) * 100;
+function ScoreSection({ title, score, max, grade, infoTip, color: colorOverride, children }) {
+  const pct = max > 0 ? (score / max) * 100 : 0;
+  const color = colorOverride || (pct >= 70 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444");
   return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: "#f0f0f0" }}>{label}</span>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Pill color={strengthColors[strength] || "#888"}>{strength}</Pill>
-          <span style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO }}>{score}/{max}</span>
+    <Box border={color + "30"}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <Ring value={score} max={max} size={44} sw={4} color={color} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
+          <SH color="#f0f0f0">{title}</SH>
+          {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
         </div>
+        <Pill color={color}>
+          {grade ? `${grade} ` : ""}{score}/{max}
+        </Pill>
       </div>
-      <div style={{ height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: color, transition: "width 0.5s" }} />
+      {children}
+    </Box>
+  );
+}
+
+function SubBar({ label, score, max, infoTip }) {
+  const pct = max > 0 ? Math.min(score / max, 1) * 100 : 0;
+  const color = pct >= 70 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ fontSize: 11, color: "#f0f0f0", width: 110, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        {label}
+        {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
+      </div>
+      <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 3, transition: "width 0.3s" }} />
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO, width: 36, textAlign: "right" }}>
+        {score}/{max}
       </div>
     </div>
   );
@@ -299,11 +320,7 @@ function OverviewTab({ data }) {
         )}
       </Box>
 
-      <Box border="rgba(255,255,255,0.06)">
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <SH color="#f0f0f0">Buffett Checklist — {data.buffettChecklist?.total || 0}/100</SH>
-          <InfoTip title={EDUCATION.buffettChecklist.title}>{EDUCATION.buffettChecklist.content}</InfoTip>
-        </div>
+      <ScoreSection title="Buffett Checklist" score={data.buffettChecklist?.total || 0} max={100} infoTip={EDUCATION.buffettChecklist}>
         <div style={{ display: "grid", gap: 6 }}>
           {data.buffettChecklist?.items?.map((item, i) => {
             const eduKey = item.name.toLowerCase().replace(/\s+/g, '');
@@ -327,16 +344,9 @@ function OverviewTab({ data }) {
             );
           })}
         </div>
-      </Box>
+      </ScoreSection>
 
-      <Box border="rgba(255,255,255,0.06)">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <SH color="#f0f0f0">Earnings Quality</SH>
-          <InfoTip title={EDUCATION.earningsQuality.title}>{EDUCATION.earningsQuality.content}</InfoTip>
-          <Pill color={data.earningsQuality?.grade === "A" ? "#22c55e" : data.earningsQuality?.grade === "B" ? "#888" : data.earningsQuality?.grade === "C" ? "#eab308" : "#ef4444"} style={{ fontSize: 11, padding: "3px 10px" }}>
-            {data.earningsQuality?.grade || "?"} ({data.earningsQuality?.score || 0}/100)
-          </Pill>
-        </div>
+      <ScoreSection title="Earnings Quality" score={data.earningsQuality?.score || 0} max={100} grade={data.earningsQuality?.grade} infoTip={EDUCATION.earningsQuality}>
         {data.earningsQuality?.keyInsight && (
           <div style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 12, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6 }}>
             {data.earningsQuality.keyInsight}
@@ -344,28 +354,14 @@ function OverviewTab({ data }) {
         )}
         <div style={{ display: "grid", gap: 6 }}>
           {[
-            { label: "Accruals", key: "accruals", color: "#f0f0f0", edu: EDUCATION.accrualRatio },
-            { label: "FCF Conversion", key: "fcfConversion", color: "#f0f0f0", edu: EDUCATION.fcfConversion },
-            { label: "Stability", key: "earningsStability", color: "#f0f0f0", edu: EDUCATION.earningsStability },
-            { label: "Revenue Quality", key: "revenueQuality", color: "#f0f0f0", edu: EDUCATION.revenueQuality },
-            { label: "Capital Alloc", key: "capitalAllocation", color: "#f0f0f0", edu: EDUCATION.capitalAllocation }
+            { label: "Accruals", key: "accruals", edu: EDUCATION.accrualRatio },
+            { label: "FCF Conversion", key: "fcfConversion", edu: EDUCATION.fcfConversion },
+            { label: "Stability", key: "earningsStability", edu: EDUCATION.earningsStability },
+            { label: "Revenue Quality", key: "revenueQuality", edu: EDUCATION.revenueQuality },
+            { label: "Capital Alloc", key: "capitalAllocation", edu: EDUCATION.capitalAllocation }
           ].map(comp => {
             const c = data.earningsQuality?.components?.[comp.key] || {};
-            const pct = (c.score / c.maxScore) * 100;
-            return (
-              <div key={comp.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ fontSize: 11, color: "#f0f0f0", width: 80, display: "flex", alignItems: "center", gap: 4 }}>
-                  {comp.label}
-                  {comp.edu && <InfoTip title={comp.edu.title}>{comp.edu.content}</InfoTip>}
-                </div>
-                <div style={{ flex: 1, height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${pct}%`, background: comp.color, transition: "width 0.3s" }} />
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: comp.color, fontFamily: MONO, width: 28 }}>
-                  {c.score}/{c.maxScore}
-                </div>
-              </div>
-            );
+            return <SubBar key={comp.key} label={comp.label} score={c.score || 0} max={c.maxScore || 1} infoTip={comp.edu} />;
           })}
         </div>
         {data.earningsQuality?.flags?.length > 0 && (
@@ -377,17 +373,10 @@ function OverviewTab({ data }) {
             ))}
           </div>
         )}
-      </Box>
+      </ScoreSection>
 
       {data.totalShareholderYield && (
-        <Box border="rgba(255,255,255,0.06)">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <SH color="#f0f0f0">Total Shareholder Yield</SH>
-            <InfoTip title={EDUCATION.totalShareholderYield.title}>{EDUCATION.totalShareholderYield.content}</InfoTip>
-            <Pill color={data.totalShareholderYield.qualityScore >= 70 ? "#22c55e" : data.totalShareholderYield.qualityScore >= 50 ? "#eab308" : "#ef4444"} style={{ fontSize: 11, padding: "3px 10px" }}>
-              {data.totalShareholderYield.qualityScore}/100
-            </Pill>
-          </div>
+        <ScoreSection title="Total Shareholder Yield" score={data.totalShareholderYield.qualityScore || 0} max={100} infoTip={EDUCATION.totalShareholderYield}>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <Pill 
@@ -514,27 +503,13 @@ function OverviewTab({ data }) {
 
           <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
             {[
-              { label: "Yield Level", key: "yieldLevel", color: "#f0f0f0", edu: EDUCATION.totalShareholderYield },
-              { label: "Sustainability", key: "sustainability", color: "#f0f0f0", edu: EDUCATION.tsyFcfCoverage },
-              { label: "Buyback Effectiveness", key: "buybackEffectiveness", color: "#f0f0f0", edu: EDUCATION.tsyBuybacks },
-              { label: "Dividend Growth", key: "dividendGrowth", color: "#f0f0f0", edu: EDUCATION.tsyDividends }
+              { label: "Yield Level", key: "yieldLevel", edu: EDUCATION.totalShareholderYield },
+              { label: "Sustainability", key: "sustainability", edu: EDUCATION.tsyFcfCoverage },
+              { label: "Buyback Effect.", key: "buybackEffectiveness", edu: EDUCATION.tsyBuybacks },
+              { label: "Dividend Growth", key: "dividendGrowth", edu: EDUCATION.tsyDividends }
             ].map(comp => {
               const c = data.totalShareholderYield.qualityComponents?.[comp.key] || {};
-              const pct = (c.score / c.maxScore) * 100;
-              return (
-                <div key={comp.key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ fontSize: 11, color: "#f0f0f0", width: 120, display: "flex", alignItems: "center", gap: 4 }}>
-                    {comp.label}
-                    <InfoTip title={comp.edu.title}>{comp.edu.content}</InfoTip>
-                  </div>
-                  <div style={{ flex: 1, height: 4, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: comp.color, transition: "width 0.3s" }} />
-                  </div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: comp.color, fontFamily: MONO, width: 28 }}>
-                    {c.score}/{c.maxScore}
-                  </div>
-                </div>
-              );
+              return <SubBar key={comp.key} label={comp.label} score={c.score || 0} max={c.maxScore || 1} infoTip={comp.edu} />;
             })}
           </div>
 
@@ -561,14 +536,10 @@ function OverviewTab({ data }) {
           <div style={{ fontSize: 13, color: "#f0f0f0", lineHeight: 1.5, padding: "10px 12px", background: "rgba(255,255,255,0.02)", borderRadius: 6 }}>
             {data.totalShareholderYield.summary}
           </div>
-        </Box>
+        </ScoreSection>
       )}
 
-      <Box border={data.entryTiming?.overextended ? "rgba(239,68,68,0.3)" : "rgba(255,255,255,0.06)"}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <SH color="#f0f0f0">Entry Timing — {data.entryTiming?.signal?.replace(/_/g, " ").toUpperCase()}</SH>
-          <InfoTip title={EDUCATION.entryTiming.title}>{EDUCATION.entryTiming.content}</InfoTip>
-        </div>
+      <ScoreSection title="Entry Timing" score={data.entryTiming?.total || 0} max={17} infoTip={EDUCATION.entryTiming}>
         {data.entryTiming?.overextendedWarning && (
           <div style={{ fontSize: 12, color: "#f87171", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
             ⚠️ {data.entryTiming.overextendedWarning}
@@ -580,14 +551,9 @@ function OverviewTab({ data }) {
           <Met label="MOS SCORE" value={data.entryTiming?.mos + "/4" || "—"} color="#22c55e" />
           <Met label="PE SCORE" value={data.entryTiming?.pe + "/4" || "—"} color="#f0f0f0" />
         </div>
-        <Pill color={vc(data.entryTiming?.signal)} style={{ fontSize: 11, padding: "4px 12px" }}>Total: {data.entryTiming?.total || 0}/17</Pill>
-      </Box>
+      </ScoreSection>
 
-      <Box border="rgba(255,255,255,0.06)">
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <SH color="#f0f0f0">Intrinsic Value</SH>
-          <InfoTip title={EDUCATION.intrinsicValue.title}>{EDUCATION.intrinsicValue.content}</InfoTip>
-        </div>
+      <ScoreSection title="Intrinsic Value" score={Math.min(100, Math.max(0, Math.round(50 + uv)))} max={100} infoTip={EDUCATION.intrinsicValue}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
           {[
             { label: "EPV", value: data.intrinsicValue?.epv, color: "#f0f0f0" },
@@ -606,7 +572,7 @@ function OverviewTab({ data }) {
         <div style={{ fontSize: 13, color: "#f0f0f0", textAlign: "center" }}>
           Current: ${data.price?.toFixed(2)} → <strong style={{ color: uv >= 0 ? "#22c55e" : "#ef4444" }}>{uv.toFixed(1)}%</strong> {uv >= 0 ? "undervalued" : "overvalued"}
         </div>
-      </Box>
+      </ScoreSection>
     </>
   );
 }
@@ -955,19 +921,7 @@ function ScaleTab({ data, ticker, refreshKey }) {
   return (
     <>
       {/* MOAT Section */}
-      <Box border={moat.moat_type === "wide" ? "#22c55e30" : moat.moat_type === "narrow" ? "#eab30830" : "#ef444430"}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
-          <Ring value={moat.moat_score || 0} size={56} sw={4} color={moat.moat_type === "wide" ? "#22c55e" : moat.moat_type === "narrow" ? "#eab308" : "#ef4444"} />
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
-              MOAT
-              <InfoTip title={EDUCATION.economicMoat.title}>{EDUCATION.economicMoat.content}</InfoTip>
-            </div>
-            <Pill color={moat.moat_type === "wide" ? "#22c55e" : moat.moat_type === "narrow" ? "#eab308" : "#ef4444"}>
-              {moat.moat_type?.toUpperCase()}
-            </Pill>
-          </div>
-        </div>
+      <ScoreSection title="Moat" score={moat.moat_score || 0} max={100} grade={moat.moat_type?.toUpperCase()} infoTip={EDUCATION.economicMoat} color={moat.moat_type === "wide" ? "#22c55e" : moat.moat_type === "narrow" ? "#eab308" : "#ef4444"}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 10 }}>
           {moatCategories.map(({ key, label }) => {
             const eduKey = key === "supply_side" ? "supplySide" : key === "network_effects" ? "networkEffects" : key === "learning_curve" ? "learningCurve" : "switchingCosts";
@@ -989,7 +943,6 @@ function ScaleTab({ data, ticker, refreshKey }) {
           })}
         </div>
         
-        {/* Expanded Detail Panels */}
         {expandedMoat === "supply_side" && (
           <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 16, marginTop: 8 }}>
             <SupplySideDetail data={data} />
@@ -1010,20 +963,14 @@ function ScaleTab({ data, ticker, refreshKey }) {
             <SwitchingDetail data={data} />
           </div>
         )}
-      </Box>
+      </ScoreSection>
 
       {/* ROIC Section */}
-      <Box border="rgba(255,255,255,0.06)">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SH color="#f0f0f0">ROIC</SH>
-            <InfoTip title={EDUCATION.roic.title}>{EDUCATION.roic.content}</InfoTip>
-          </div>
-          <div style={{ display: "flex", gap: 12 }}>
-            <Met label="ROIC" value={roic.roic + "%"} color="#f0f0f0" />
-            <Met label="WACC" value={roic.wacc + "%"} color="#888" />
-            <Met label="SPREAD" value={(parseFloat(roic.spread) > 0 ? "+" : "") + roic.spread + "%"} color={parseFloat(roic.spread) > 10 ? "#22c55e" : "#eab308"} />
-          </div>
+      <ScoreSection title="ROIC" score={Math.min(100, Math.max(0, Math.round(parseFloat(roic.roic || 0))))} max={100} infoTip={EDUCATION.roic}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          <Met label="ROIC" value={roic.roic + "%"} color="#f0f0f0" />
+          <Met label="WACC" value={roic.wacc + "%"} color="#f0f0f0" />
+          <Met label="SPREAD" value={(parseFloat(roic.spread) > 0 ? "+" : "") + roic.spread + "%"} color={parseFloat(roic.spread) > 10 ? "#22c55e" : "#eab308"} />
         </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 16, padding: "10px 0", background: "rgba(255,255,255,0.02)", borderRadius: 7, marginBottom: 8 }}>
           <div style={{ textAlign: "center" }}>
@@ -1064,48 +1011,49 @@ function ScaleTab({ data, ticker, refreshKey }) {
             ))}
           </div>
         )}
-      </Box>
+      </ScoreSection>
 
       {/* AI Disruption */}
-      <Box border={aiColors[ai.net_impact] + "30"}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <SH color={aiColors[ai.net_impact] || "#888"}>AI DISRUPTION</SH>
-          <InfoTip title={EDUCATION.aiDisruption.title}>{EDUCATION.aiDisruption.content}</InfoTip>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-          <Pill color={tc(ai.threat_level)}>Threat: {ai.threat_level?.toUpperCase()}</Pill>
-          <Pill color="#22c55e">Opp: {ai.opportunity_level?.toUpperCase()}</Pill>
-          <Pill color={aiColors[ai.net_impact]}>{ai.net_impact?.replace(/_/g, " ").toUpperCase()}</Pill>
-        </div>
-        <p style={{ fontSize: 13, color: "#f0f0f0", margin: 0, lineHeight: 1.5 }}>{ai.net_assessment}</p>
-      </Box>
+      {(() => {
+        const aiScoreMap = { strong_tailwind: 90, tailwind: 70, neutral: 50, headwind: 30, strong_headwind: 10 };
+        const aiScore = aiScoreMap[ai.net_impact] || 50;
+        return (
+          <ScoreSection title="AI Disruption" score={aiScore} max={100} grade={ai.net_impact?.replace(/_/g, " ")} infoTip={EDUCATION.aiDisruption} color={aiColors[ai.net_impact]}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <Pill color={tc(ai.threat_level)}>Threat: {ai.threat_level?.toUpperCase()}</Pill>
+              <Pill color="#22c55e">Opp: {ai.opportunity_level?.toUpperCase()}</Pill>
+              <Pill color={aiColors[ai.net_impact]}>{ai.net_impact?.replace(/_/g, " ").toUpperCase()}</Pill>
+            </div>
+            <p style={{ fontSize: 13, color: "#f0f0f0", margin: 0, lineHeight: 1.5 }}>{ai.net_assessment}</p>
+          </ScoreSection>
+        );
+      })()}
 
       {/* Constraints Section */}
-      <Box border="rgba(239,68,68,0.15)">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SH color="#ef4444">CONSTRAINTS</SH>
-            <InfoTip title={EDUCATION.growthConstraints.title}>{EDUCATION.growthConstraints.content}</InfoTip>
-          </div>
-          <Pill color={tc(constraints.overall_severity)}>{constraints.overall_severity?.toUpperCase()}</Pill>
-        </div>
-        <div style={{ display: "grid", gap: 6 }}>
-          {constraints.constraints?.map((c, i) => (
-            <div key={i} style={{ 
-              padding: "8px 10px", 
-              background: "rgba(255,255,255,0.02)", 
-              borderRadius: 6,
-              borderLeft: `3px solid ${tc(c.severity)}`
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#f0f0f0" }}>{c.name}</span>
-                <Pill color={tc(c.severity)}>{c.severity}</Pill>
-              </div>
+      {(() => {
+        const constraintScoreMap = { low: 85, moderate: 55, high: 25, severe: 10 };
+        const constraintScore = constraintScoreMap[constraints.overall_severity] || 50;
+        return (
+          <ScoreSection title="Growth Constraints" score={constraintScore} max={100} grade={constraints.overall_severity?.toUpperCase()} infoTip={EDUCATION.growthConstraints}>
+            <div style={{ display: "grid", gap: 6 }}>
+              {constraints.constraints?.map((c, i) => (
+                <div key={i} style={{ 
+                  padding: "8px 10px", 
+                  background: "rgba(255,255,255,0.02)", 
+                  borderRadius: 6,
+                  borderLeft: `3px solid ${tc(c.severity)}`
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#f0f0f0" }}>{c.name}</span>
+                    <Pill color={tc(c.severity)}>{c.severity}</Pill>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-        <p style={{ fontSize: 12, color: "#f0f0f0", margin: "10px 0 0", fontStyle: "italic" }}>{constraints.net_assessment}</p>
-      </Box>
+            <p style={{ fontSize: 12, color: "#f0f0f0", margin: "10px 0 0", fontStyle: "italic" }}>{constraints.net_assessment}</p>
+          </ScoreSection>
+        );
+      })()}
     </>
   );
 }
