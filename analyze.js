@@ -1,8 +1,9 @@
 import { pullTicker } from './pull-data.js';
 
 function safeNum(val, def = 0) {
-  if (val === null || val === undefined || isNaN(val)) return def;
-  return val;
+  if (val === null || val === undefined) return def;
+  const n = Number(val);
+  return isNaN(n) ? def : n;
 }
 
 function calcBuffettScore(data) {

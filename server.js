@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import yf from 'yahoo-finance2';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import {
   safeNum, billions, calcMoatAnalysis, calcAIDisruption,
   calcROICSensitivity, calcProfitabilityPath, calcGrowthConstraints,
@@ -1878,6 +1879,43 @@ function calculateFundamentalScore(data, ticker) {
     if (aiThreat && (industry.includes('enterprise') || industry.includes('legacy'))) aiBonus = -3;
     else if (aiThreat) aiBonus = 2;
 
+    // 8. SIMPLIFIED DCF (0-100)
+    const price = p.regularMarketPrice || p.price || sd.previousClose || 0;
+    const shares = p.sharesOutstanding || (marketCap > 0 && price > 0 ? marketCap / price : 0);
+    const annualFCF = Number(fd.freeCashFlow) || Number(fd.operatingCashflow || 0) * 0.75 || 0;
+    const netCash = (Number(fd.totalCash) || 0) - (Number(fd.totalDebt) || 0);
+
+    const wacc = 0.043 + (beta || 1) * 0.055;
+    const terminalGrowth = 0.025;
+    const baseGrowth = Math.min(Math.max((pct.earnGrowth || pct.revGrowth || 5) / 100, -0.05), 0.30);
+
+    let dcfScore = 50;
+    let dcfUpside = 0;
+    let dcfIntrinsicValue = 0;
+
+    if (annualFCF > 0 && shares > 0 && price > 0 && wacc > terminalGrowth) {
+      let pvFCF = 0;
+      let projectedFCF = annualFCF;
+      for (let yr = 1; yr <= 5; yr++) {
+        const yearGrowth = baseGrowth * (1 - (yr - 1) * 0.15);
+        projectedFCF *= (1 + yearGrowth);
+        pvFCF += projectedFCF / Math.pow(1 + wacc, yr);
+      }
+      const terminalValue = (projectedFCF * (1 + terminalGrowth)) / (wacc - terminalGrowth);
+      const pvTerminal = terminalValue / Math.pow(1 + wacc, 5);
+      const enterpriseValue = pvFCF + pvTerminal + netCash;
+      dcfIntrinsicValue = enterpriseValue / shares;
+      dcfUpside = (dcfIntrinsicValue - price) / price;
+
+      if (dcfUpside >= 0.40) dcfScore = 100;
+      else if (dcfUpside >= 0.25) dcfScore = 85;
+      else if (dcfUpside >= 0.10) dcfScore = 70;
+      else if (dcfUpside >= 0) dcfScore = 55;
+      else if (dcfUpside >= -0.10) dcfScore = 40;
+      else if (dcfUpside >= -0.25) dcfScore = 25;
+      else dcfScore = 10;
+    }
+
     // FUNDAMENTAL COMPOSITE
     const fundamentalComposite = Math.max(0, Math.min(100,
       buffettScore * 0.25 +
@@ -1905,6 +1943,9 @@ function calculateFundamentalScore(data, ticker) {
       totalShareholderYield: parseFloat(tsy.toFixed(2)),
       constraintPenalty,
       aiBonus,
+      dcfScore,
+      dcfUpside: parseFloat((dcfUpside * 100).toFixed(1)),
+      dcfIntrinsicValue: parseFloat(dcfIntrinsicValue.toFixed(2)),
       fundamentalComposite: parseFloat(fundamentalComposite.toFixed(1)),
       forwardPE: sd.forwardPE || ks.forwardPE || 0,
       trailingPE: sd.trailingPE || 0,
@@ -2002,11 +2043,13 @@ function bt_rankFullComposite(universe, priceHistory, fundamentals, asOfDate) {
 
     const momNormalized = Math.max(0, Math.min(100, (momentum.finalMomentumScore + 1) * 33));
 
+    const dcf = fundData.dcfScore || 50;
     const fullComposite = (
-      fundData.fundamentalComposite * 0.30 +
-      dynamicVal.score * 0.25 +
+      fundData.fundamentalComposite * 0.25 +
+      dcf * 0.15 +
+      dynamicVal.score * 0.20 +
       momNormalized * 0.25 +
-      priceValue.valueScore * 0.20
+      priceValue.valueScore * 0.15
     );
 
     // Filters
@@ -2020,6 +2063,8 @@ function bt_rankFullComposite(universe, priceHistory, fundamentals, asOfDate) {
       name: fundData.name,
       sector: fundData.sector,
       fundamentalScore: fundData.fundamentalComposite,
+      dcfScore: dcf,
+      dcfUpside: fundData.dcfUpside,
       momentumScore: momNormalized,
       valuationScore: dynamicVal.score,
       priceValueScore: priceValue.valueScore,
@@ -2526,18 +2571,22 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate) 
     const momNorm = Math.max(0, Math.min(100, (mom.finalMomentumScore + 1) * 33));
     const dynVal = calculateDynamicValuation(mom.currentPrice, fund, prices, asOfDate);
     
-    // FULL COMPOSITE: 30% fundamental + 25% dyn valuation + 25% momentum + 20% price value
+    // FULL COMPOSITE: 25% fundamental + 15% DCF + 20% dyn valuation + 25% momentum + 15% price value
+    const dcf = fund.dcfScore || 50;
     const fullScore = (
-      fund.fundamentalComposite * 0.30 +
-      dynVal.score * 0.25 +
+      fund.fundamentalComposite * 0.25 +
+      dcf * 0.15 +
+      dynVal.score * 0.20 +
       momNorm * 0.25 +
-      val.valueScore * 0.20
+      val.valueScore * 0.15
     );
     
     results.push({
       ticker,
       compositeScore: fullScore,
       fundamentalScore: fund.fundamentalComposite,
+      dcfScore: dcf,
+      dcfUpside: fund.dcfUpside,
       momentumScore: momNorm,
       valuationScore: dynVal.score,
       valueScore: val.valueScore,
@@ -3012,11 +3061,444 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   }
 });
 
+// =====================================================================
+// PAPER TRADE — Persistence
+// =====================================================================
+
+const PAPER_PORTFOLIO_PATH = './paper-portfolio.json';
+
+function loadPortfolio() {
+  if (!existsSync(PAPER_PORTFOLIO_PATH)) return null;
+  try {
+    return JSON.parse(readFileSync(PAPER_PORTFOLIO_PATH, 'utf-8'));
+  } catch { return null; }
+}
+
+function savePortfolio(portfolio) {
+  if (portfolio === null) {
+    writeFileSync(PAPER_PORTFOLIO_PATH, 'null');
+  } else {
+    writeFileSync(PAPER_PORTFOLIO_PATH, JSON.stringify(portfolio, null, 2));
+  }
+}
+
+function createEmptyPortfolio(config) {
+  return {
+    config,
+    initialCapital: config.initialCapital,
+    cash: config.initialCapital,
+    holdings: [],
+    navHistory: [],
+    rebalanceHistory: [],
+    createdAt: new Date().toISOString().split('T')[0],
+    lastRebalance: null,
+    lastNavUpdate: null
+  };
+}
+
+// =====================================================================
+// PAPER TRADE — Init / Reset
+// =====================================================================
+
+app.post('/api/paper-trade/init', (req, res) => {
+  const existing = loadPortfolio();
+  if (existing) {
+    return res.status(409).json({ success: false, error: 'Portfolio already exists. DELETE /api/paper-trade/reset first.' });
+  }
+  const { initialCapital = 100000, strategy = 'full_composite', universe = 'sp500_top50', topN = 10 } = req.body || {};
+  const config = { initialCapital: parseFloat(initialCapital), strategy, universe, topN: parseInt(topN) };
+  if (!UNIVERSE_TICKERS[config.universe]) {
+    return res.status(400).json({ success: false, error: `Unknown universe: ${config.universe}` });
+  }
+  const portfolio = createEmptyPortfolio(config);
+  savePortfolio(portfolio);
+  res.json({ success: true, portfolio });
+});
+
+app.delete('/api/paper-trade/reset', (req, res) => {
+  savePortfolio(null);
+  res.json({ success: true, message: 'Portfolio reset.' });
+});
+
+// =====================================================================
+// PAPER TRADE — Snapshot (record daily NAV)
+// =====================================================================
+
+async function takeNavSnapshot(portfolio) {
+  const today = new Date().toISOString().split('T')[0];
+
+  if (portfolio.lastNavUpdate === today) return portfolio;
+
+  const tickers = [...new Set([
+    ...portfolio.holdings.map(h => h.ticker),
+    'SPY'
+  ])].filter(Boolean);
+
+  const prices = {};
+  for (const ticker of tickers) {
+    try {
+      const quote = await yahooFinance.quote(ticker);
+      prices[ticker] = quote?.regularMarketPrice || null;
+    } catch { prices[ticker] = null; }
+    await sleep(100);
+  }
+
+  let portfolioValue = portfolio.cash;
+  for (const h of portfolio.holdings) {
+    const px = prices[h.ticker];
+    if (px) portfolioValue += h.shares * px;
+    else portfolioValue += h.shares * h.entryPrice;
+  }
+
+  const spyPrice = prices['SPY'];
+  let spyValue = portfolio.initialCapital;
+  if (spyPrice && portfolio.navHistory.length === 0) {
+    portfolio._spyStartPrice = spyPrice;
+  }
+  if (spyPrice && portfolio._spyStartPrice) {
+    spyValue = portfolio.initialCapital * (spyPrice / portfolio._spyStartPrice);
+  } else if (portfolio.navHistory.length > 0) {
+    spyValue = portfolio.navHistory[portfolio.navHistory.length - 1].spyValue;
+  }
+
+  portfolio.navHistory.push({
+    date: today,
+    portfolioValue: parseFloat(portfolioValue.toFixed(2)),
+    spyValue: parseFloat(spyValue.toFixed(2))
+  });
+  portfolio.lastNavUpdate = today;
+  savePortfolio(portfolio);
+  return portfolio;
+}
+
+app.post('/api/paper-trade/snapshot', async (req, res) => {
+  try {
+    let portfolio = loadPortfolio();
+    if (!portfolio) return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
+    portfolio = await takeNavSnapshot(portfolio);
+    res.json({ success: true, latestNav: portfolio.navHistory[portfolio.navHistory.length - 1] });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// =====================================================================
+// PAPER TRADE — Portfolio (GET, with auto-snapshot)
+// =====================================================================
+
+app.get('/api/paper-trade/portfolio', async (req, res) => {
+  try {
+    let portfolio = loadPortfolio();
+    if (!portfolio) return res.json({ success: true, portfolio: null });
+
+    const today = new Date().toISOString().split('T')[0];
+    if (portfolio.lastNavUpdate !== today && portfolio.holdings.length > 0) {
+      portfolio = await takeNavSnapshot(portfolio);
+    }
+
+    const tickers = portfolio.holdings.map(h => h.ticker);
+    const currentPrices = {};
+    for (const ticker of tickers) {
+      try {
+        const quote = await yahooFinance.quote(ticker);
+        currentPrices[ticker] = quote?.regularMarketPrice || null;
+      } catch { currentPrices[ticker] = null; }
+      await sleep(50);
+    }
+
+    let totalValue = portfolio.cash;
+    const enrichedHoldings = portfolio.holdings.map(h => {
+      const currentPrice = currentPrices[h.ticker] || h.entryPrice;
+      const marketValue = h.shares * currentPrice;
+      totalValue += h.shares * currentPrice;
+      const pnl = (currentPrice - h.entryPrice) * h.shares;
+      const pnlPct = h.entryPrice > 0 ? ((currentPrice / h.entryPrice) - 1) * 100 : 0;
+      return { ...h, currentPrice, marketValue, pnl, pnlPct: parseFloat(pnlPct.toFixed(2)) };
+    });
+
+    enrichedHoldings.forEach(h => {
+      h.weight = totalValue > 0 ? parseFloat(((h.marketValue / totalValue) * 100).toFixed(1)) : 0;
+    });
+
+    const totalReturn = portfolio.initialCapital > 0
+      ? ((totalValue / portfolio.initialCapital) - 1) * 100 : 0;
+
+    let spyReturn = 0;
+    if (portfolio.navHistory.length > 0) {
+      const latestSpy = portfolio.navHistory[portfolio.navHistory.length - 1].spyValue;
+      spyReturn = ((latestSpy / portfolio.initialCapital) - 1) * 100;
+    }
+
+    const alpha = totalReturn - spyReturn;
+    const daysActive = Math.floor((Date.now() - new Date(portfolio.createdAt).getTime()) / (86400000));
+
+    let nextRebalance = null;
+    if (portfolio.lastRebalance) {
+      const lr = new Date(portfolio.lastRebalance);
+      lr.setMonth(lr.getMonth() + 1);
+      nextRebalance = lr.toISOString().split('T')[0];
+    }
+
+    res.json({
+      success: true,
+      portfolio: {
+        config: portfolio.config,
+        createdAt: portfolio.createdAt,
+        lastRebalance: portfolio.lastRebalance,
+        nextRebalance,
+        cash: parseFloat(portfolio.cash.toFixed(2)),
+        holdings: enrichedHoldings,
+        summary: {
+          totalValue: parseFloat(totalValue.toFixed(2)),
+          totalReturn: parseFloat(totalReturn.toFixed(2)),
+          spyReturn: parseFloat(spyReturn.toFixed(2)),
+          alpha: parseFloat(alpha.toFixed(2)),
+          daysActive,
+          holdingsCount: portfolio.holdings.length
+        },
+        navHistory: portfolio.navHistory,
+        rebalanceCount: portfolio.rebalanceHistory.length
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// =====================================================================
+// PAPER TRADE — Rebalance (run model, execute paper trades)
+// =====================================================================
+
+app.post('/api/paper-trade/rebalance', async (req, res) => {
+  try {
+    let portfolio = loadPortfolio();
+    if (!portfolio) return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
+
+    const { strategy, universe: universeId, topN } = portfolio.config;
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
+
+    const today = new Date().toISOString().split('T')[0];
+    const lookbackStart = new Date(Date.now() - 500 * 86400000).toISOString().split('T')[0];
+
+    // Fetch price histories for the entire universe
+    const priceHistory = {};
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(Boolean);
+    for (let i = 0; i < tickersToFetch.length; i++) {
+      const ticker = tickersToFetch[i];
+      const data = await bt_fetchPriceHistory(ticker, lookbackStart, today);
+      if (data) priceHistory[ticker] = data;
+      if (i % 5 === 0) await sleep(100);
+    }
+
+    // Fetch fundamentals (with cache)
+    const needsFundamentals = strategy === 'full_composite' || strategy === 'quality_momentum';
+    let fundamentals = null;
+    if (needsFundamentals) {
+      fundamentals = {};
+      const fundTickers = tickersToFetch.filter(t => t !== 'SPY');
+      for (let i = 0; i < fundTickers.length; i++) {
+        const ticker = fundTickers[i];
+        const cached = FUNDAMENTALS_CACHE.get(ticker);
+        if (cached && Date.now() - cached.timestamp < FUNDAMENTALS_CACHE_TTL) {
+          fundamentals[ticker] = cached.data;
+        } else {
+          const fund = await fetchFundamentals(ticker);
+          if (fund) {
+            fundamentals[ticker] = fund;
+            FUNDAMENTALS_CACHE.set(ticker, { data: fund, timestamp: Date.now() });
+          }
+        }
+        if (i % 5 === 0) await sleep(200);
+      }
+    }
+
+    // Run ranking
+    let rankings;
+    if (strategy === 'full_composite') {
+      rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentals, today);
+    } else if (strategy === 'quality_momentum') {
+      rankings = bt_rankQualityMomentumV2(universe, priceHistory, fundamentals, today);
+    } else if (strategy === 'momentum') {
+      rankings = bt_rankMomentumOnly(universe, priceHistory, today);
+    } else {
+      rankings = bt_rankMomentumValue(universe, priceHistory, today);
+    }
+
+    const topPicks = rankings.slice(0, topN);
+    const topTickers = new Set(topPicks.map(p => p.ticker));
+
+    // Current prices for held stocks
+    const allRelevantTickers = [...new Set([
+      ...portfolio.holdings.map(h => h.ticker),
+      ...topPicks.map(p => p.ticker),
+      'SPY'
+    ])];
+    const currentPrices = {};
+    for (const ticker of allRelevantTickers) {
+      const ph = priceHistory[ticker];
+      if (ph && ph.length > 0) {
+        currentPrices[ticker] = ph[ph.length - 1].close;
+      }
+    }
+
+    // Sell holdings that dropped out of top N
+    const sells = [];
+    const remainingHoldings = [];
+    for (const h of portfolio.holdings) {
+      if (!topTickers.has(h.ticker)) {
+        const sellPrice = currentPrices[h.ticker] || h.entryPrice;
+        const proceeds = h.shares * sellPrice;
+        portfolio.cash += proceeds;
+        sells.push({
+          ticker: h.ticker,
+          shares: h.shares,
+          entryPrice: h.entryPrice,
+          sellPrice,
+          pnl: parseFloat(((sellPrice - h.entryPrice) * h.shares).toFixed(2)),
+          pnlPct: parseFloat((((sellPrice / h.entryPrice) - 1) * 100).toFixed(2))
+        });
+      } else {
+        remainingHoldings.push(h);
+      }
+    }
+
+    // Calculate equal-weight allocation for new buys
+    const heldTickers = new Set(remainingHoldings.map(h => h.ticker));
+    const newPicks = topPicks.filter(p => !heldTickers.has(p.ticker));
+    const totalSlots = topN;
+    const slotsUsed = remainingHoldings.length;
+    const slotsAvailable = totalSlots - slotsUsed;
+
+    const buys = [];
+    if (slotsAvailable > 0 && newPicks.length > 0) {
+      const capitalPerSlot = portfolio.cash / Math.max(slotsAvailable, 1);
+      const buyTargets = newPicks.slice(0, slotsAvailable);
+
+      for (const pick of buyTargets) {
+        const buyPrice = currentPrices[pick.ticker];
+        if (!buyPrice || buyPrice <= 0) continue;
+        const shares = Math.floor(capitalPerSlot / buyPrice);
+        if (shares <= 0) continue;
+        const cost = shares * buyPrice;
+        portfolio.cash -= cost;
+        remainingHoldings.push({
+          ticker: pick.ticker,
+          shares,
+          entryPrice: buyPrice,
+          entryDate: today,
+          scores: {
+            composite: pick.compositeScore,
+            fundamental: pick.fundamentalScore,
+            momentum: pick.momentumScore,
+            valuation: pick.valuationScore,
+            value: pick.valueScore
+          }
+        });
+        buys.push({
+          ticker: pick.ticker,
+          shares,
+          buyPrice,
+          cost: parseFloat(cost.toFixed(2)),
+          scores: {
+            composite: pick.compositeScore,
+            fundamental: pick.fundamentalScore,
+            momentum: pick.momentumScore,
+            valuation: pick.valuationScore,
+            value: pick.valueScore
+          }
+        });
+      }
+    }
+
+    portfolio.holdings = remainingHoldings;
+    portfolio.lastRebalance = today;
+
+    // Record SPY start price on first rebalance
+    if (!portfolio._spyStartPrice && currentPrices['SPY']) {
+      portfolio._spyStartPrice = currentPrices['SPY'];
+    }
+
+    // Log rebalance
+    portfolio.rebalanceHistory.push({
+      date: today,
+      sells,
+      buys,
+      allRankings: topPicks.map(p => ({
+        ticker: p.ticker,
+        compositeScore: p.compositeScore,
+        fundamentalScore: p.fundamentalScore,
+        momentumScore: p.momentumScore,
+        valuationScore: p.valuationScore,
+        valueScore: p.valueScore
+      })),
+      portfolioValue: portfolio.cash + remainingHoldings.reduce((sum, h) => {
+        return sum + h.shares * (currentPrices[h.ticker] || h.entryPrice);
+      }, 0),
+      cashAfter: parseFloat(portfolio.cash.toFixed(2))
+    });
+
+    // Take NAV snapshot
+    portfolio = await takeNavSnapshot(portfolio);
+
+    savePortfolio(portfolio);
+
+    res.json({
+      success: true,
+      rebalance: {
+        date: today,
+        sells,
+        buys,
+        rankings: topPicks.map(p => ({
+          ticker: p.ticker,
+          compositeScore: p.compositeScore,
+          fundamentalScore: p.fundamentalScore,
+          momentumScore: p.momentumScore
+        })),
+        holdingsAfter: remainingHoldings.length,
+        cashAfter: parseFloat(portfolio.cash.toFixed(2))
+      }
+    });
+  } catch (e) {
+    console.error('Paper trade rebalance error:', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+// =====================================================================
+// PAPER TRADE — History
+// =====================================================================
+
+app.get('/api/paper-trade/history', (req, res) => {
+  const portfolio = loadPortfolio();
+  if (!portfolio) return res.json({ success: true, history: null });
+
+  res.json({
+    success: true,
+    history: {
+      navHistory: portfolio.navHistory,
+      rebalanceHistory: portfolio.rebalanceHistory,
+      createdAt: portfolio.createdAt,
+      config: portfolio.config
+    }
+  });
+});
+
+// =====================================================================
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+});
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is already in use. Kill the existing process or use a different port.`);
+  } else {
+    console.error('Server error:', err);
+  }
+  process.exit(1);
 });
