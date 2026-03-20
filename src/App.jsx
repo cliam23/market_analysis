@@ -79,14 +79,11 @@ export default function App() {
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 32px" }}>
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 5, color: "#f0f0f0", marginBottom: 5, fontFamily: MONO }}>
-            VALUE SIGNAL PRO
-          </div>
           <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>
-            Buffett-Grade Analysis Engine
+            Market Analysis
           </h1>
           <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 5, fontFamily: MONO }}>
-            Real Time Analysis · Momentum Rankings · Backtest · Paper Trade · About
+            Real Time Analysis&nbsp;&nbsp;Strategy Rankings&nbsp;&nbsp;Backtest&nbsp;&nbsp;Trading
           </p>
         </div>
 
@@ -107,10 +104,10 @@ export default function App() {
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 4, width: "fit-content", margin: "0 auto 20px" }}>
-          {tabBtn("search", <><span>🔍</span> Search</>)}
+          {tabBtn("search", "Search")}
           {tabBtn("backtest", "Backtest")}
-          {tabBtn("rankings", <><span>📊</span> Momentum Rankings</>)}
-          {tabBtn("papertrade", "Paper Trade")}
+          {tabBtn("rankings", "Strategy Rankings")}
+          {tabBtn("papertrade", "Trading")}
           {tabBtn("about", "About")}
         </div>
 

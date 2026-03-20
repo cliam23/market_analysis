@@ -1,5 +1,13 @@
 import { useState } from "react";
-import { Box, SH, Pill, LoadingSpinner, TrendBadge, vc } from "./shared.jsx";
+import { Box, SH, Pill, LoadingSpinner, TrendBadge } from "./shared.jsx";
+import { MONO } from "../lib/theme.js";
+
+const STRATEGIES = [
+  { id: "momentum", label: "Momentum Only" },
+  { id: "momentum_value", label: "Momentum + Value" },
+  { id: "full_composite", label: "Full Composite" },
+  { id: "quality_momentum", label: "Quality + Momentum" }
+];
 
 const UNIVERSES = [
   { id: "sp500_top50", label: "S&P 500 Top 50" },
@@ -16,22 +24,45 @@ const LOOKBACKS = [
 ];
 
 const SORT_OPTIONS = [
+  { id: "strategy", label: "Strategy Score" },
   { id: "momentum", label: "Momentum" },
-  { id: "composite", label: "Composite Score" },
   { id: "riskAdj", label: "Risk-Adjusted" }
 ];
 
-function calcQuickComposite(r) {
-  const momentumScore = Math.min(100, Math.max(0, 50 + parseFloat(r.rawMomentum || 0) * 3));
-  const riskAdjScore = parseFloat(r.riskAdjMomentum || 0) >= 1 ? 80 : parseFloat(r.riskAdjMomentum || 0) >= 0.5 ? 60 : 40;
-  return Math.round((momentumScore * 0.6 + riskAdjScore * 0.4));
-}
+const METHODOLOGY = {
+  momentum: "Ranks by risk-adjusted momentum (annualized return / volatility) with optional trend filter bonus. Pure price-based signal.",
+  momentum_value: "Combines momentum (60%) with valuation metrics like P/E and P/B (40%). Balances price trend with value attractiveness.",
+  quality_momentum: "Weights quality fundamentals (60%) — ROE, gross margin, operating margin — alongside momentum (40%).",
+  full_composite: "Runs the full Buffett-grade analysis engine: quality, moat, valuation, ROIC, earnings quality, momentum, shareholder yield, with constraint penalties."
+};
+
+const selectStyle = {
+  background: "rgba(255,255,255,0.04)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 6,
+  padding: "8px 12px",
+  color: "#f0f0f0",
+  fontSize: 12,
+  fontFamily: MONO,
+  cursor: "pointer"
+};
+
+const labelStyle = {
+  fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1,
+  display: "block", marginBottom: 4, fontFamily: MONO
+};
+
+const thStyle = {
+  padding: "10px 12px", color: "#f0f0f0", fontWeight: 700,
+  fontSize: 9, letterSpacing: 1, fontFamily: MONO
+};
 
 export default function RankingsView({ onSelectTicker }) {
+  const [selectedStrategy, setSelectedStrategy] = useState("momentum");
   const [selectedUniverse, setSelectedUniverse] = useState("sp500_top50");
   const [selectedLookback, setSelectedLookback] = useState("6");
   const [smooth, setSmooth] = useState(true);
-  const [sortBy, setSortBy] = useState("momentum");
+  const [sortBy, setSortBy] = useState("strategy");
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
@@ -43,19 +74,11 @@ export default function RankingsView({ onSelectTicker }) {
 
     try {
       const response = await fetch(
-        `/api/momentum/${selectedUniverse}?lookback=${selectedLookback}&smooth=${smooth}&fresh=true`
+        `/api/scan/${selectedUniverse}?strategy=${selectedStrategy}&lookback=${selectedLookback}&smooth=${smooth}&fresh=true`
       );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || "Scan failed");
-      }
-      
+      if (!data.success) throw new Error(data.error || "Scan failed");
       setResults(data);
     } catch (err) {
       setError(err.message);
@@ -64,30 +87,51 @@ export default function RankingsView({ onSelectTicker }) {
     }
   };
 
+  const sortRows = (rows) => {
+    const sorted = [...rows];
+    if (sortBy === "strategy") sorted.sort((a, b) => b.strategyScore - a.strategyScore);
+    else if (sortBy === "momentum") sorted.sort((a, b) => parseFloat(b.rawMomentum || 0) - parseFloat(a.rawMomentum || 0));
+    else if (sortBy === "riskAdj") sorted.sort((a, b) => parseFloat(b.riskAdjMomentum || 0) - parseFloat(a.riskAdjMomentum || 0));
+    return sorted;
+  };
+
+  const scoreColor = (s) => s >= 70 ? "#22c55e" : s >= 50 ? "#eab308" : "#ef4444";
+  const gradeColor = (label) => {
+    if (!label) return "#888";
+    const l = label.toUpperCase();
+    if (l.includes("STRONG BUY") || l === "BUY") return "#22c55e";
+    if (l.includes("ACCUMULATE") || l.includes("LEAN BUY")) return "#4ade80";
+    if (l.includes("HOLD")) return "#eab308";
+    if (l.includes("LEAN SELL")) return "#f97316";
+    return "#ef4444";
+  };
+
   return (
     <div>
       {/* Controls */}
       <Box border="rgba(255,255,255,0.06)" style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <div>
-            <label style={{ fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              UNIVERSE
-            </label>
+            <label style={labelStyle}>STRATEGY</label>
+            <select
+              value={selectedStrategy}
+              onChange={(e) => setSelectedStrategy(e.target.value)}
+              disabled={loading}
+              style={{ ...selectStyle, minWidth: 170 }}
+            >
+              {STRATEGIES.map((s) => (
+                <option key={s.id} value={s.id}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label style={labelStyle}>UNIVERSE</label>
             <select
               value={selectedUniverse}
               onChange={(e) => setSelectedUniverse(e.target.value)}
               disabled={loading}
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 6,
-                padding: "8px 12px",
-                color: "#f0f0f0",
-                fontSize: 12,
-                fontFamily: "'IBM Plex Mono', monospace",
-                cursor: "pointer",
-                minWidth: 160
-              }}
+              style={{ ...selectStyle, minWidth: 160 }}
             >
               {UNIVERSES.map((u) => (
                 <option key={u.id} value={u.id}>{u.label}</option>
@@ -96,23 +140,12 @@ export default function RankingsView({ onSelectTicker }) {
           </div>
 
           <div>
-            <label style={{ fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              LOOKBACK
-            </label>
+            <label style={labelStyle}>LOOKBACK</label>
             <select
               value={selectedLookback}
               onChange={(e) => setSelectedLookback(e.target.value)}
               disabled={loading}
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 6,
-                padding: "8px 12px",
-                color: "#f0f0f0",
-                fontSize: 12,
-                fontFamily: "'IBM Plex Mono', monospace",
-                cursor: "pointer"
-              }}
+              style={selectStyle}
             >
               {LOOKBACKS.map((l) => (
                 <option key={l.id} value={l.id}>{l.label}</option>
@@ -121,46 +154,25 @@ export default function RankingsView({ onSelectTicker }) {
           </div>
 
           <div>
-            <label style={{ fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              TREND FILTER
-            </label>
-            <button
-              onClick={() => setSmooth(!smooth)}
+            <label style={labelStyle}>TREND FILTER</label>
+            <select
+              value={smooth ? "on" : "off"}
+              onChange={(e) => setSmooth(e.target.value === "on")}
               disabled={loading}
-              style={{
-                padding: "8px 16px",
-                background: smooth ? "rgba(34,197,94,0.15)" : "rgba(255,255,255,0.04)",
-                border: `1px solid ${smooth ? "rgba(34,197,94,0.3)" : "rgba(255,255,255,0.1)"}`,
-                borderRadius: 6,
-                color: smooth ? "#22c55e" : "#888",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: "pointer",
-                fontFamily: "'IBM Plex Mono', monospace"
-              }}
+              style={selectStyle}
             >
-              {smooth ? "ON" : "OFF"}
-            </button>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
           </div>
 
           <div>
-            <label style={{ fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              SORT BY
-            </label>
+            <label style={labelStyle}>SORT BY</label>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               disabled={loading}
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 6,
-                padding: "8px 12px",
-                color: "#f0f0f0",
-                fontSize: 12,
-                fontFamily: "'IBM Plex Mono', monospace",
-                cursor: "pointer"
-              }}
+              style={selectStyle}
             >
               {SORT_OPTIONS.map((o) => (
                 <option key={o.id} value={o.id}>{o.label}</option>
@@ -169,9 +181,7 @@ export default function RankingsView({ onSelectTicker }) {
           </div>
 
           <div style={{ marginLeft: "auto" }}>
-            <label style={{ fontSize: 9, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, display: "block", marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>
-              &nbsp;
-            </label>
+            <label style={labelStyle}>&nbsp;</label>
             <button
               onClick={runScan}
               disabled={loading}
@@ -184,7 +194,7 @@ export default function RankingsView({ onSelectTicker }) {
                 fontSize: 12,
                 fontWeight: 700,
                 cursor: loading ? "not-allowed" : "pointer",
-                fontFamily: "'IBM Plex Mono', monospace"
+                fontFamily: MONO
               }}
             >
               {loading ? "SCANNING..." : "RUN SCAN"}
@@ -195,8 +205,8 @@ export default function RankingsView({ onSelectTicker }) {
         {loading && (
           <Box border="rgba(255,255,255,0.06)" style={{ textAlign: "center", padding: "40px 20px" }}>
             <LoadingSpinner size={32} />
-            <div style={{ marginTop: 16, color: "#f0f0f0", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}>
-              Scanning universe...
+            <div style={{ marginTop: 16, color: "#f0f0f0", fontSize: 12, fontFamily: MONO }}>
+              Scanning universe with {STRATEGIES.find(s => s.id === selectedStrategy)?.label} strategy...
             </div>
           </Box>
         )}
@@ -216,22 +226,28 @@ export default function RankingsView({ onSelectTicker }) {
             <SH color="#f0f0f0">Scan Summary</SH>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "14px 18px", textAlign: "center", flex: "1 1 100px" }}>
-                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>ASSETS</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: "#f0f0f0", fontFamily: "'IBM Plex Mono', monospace" }}>{results.summary.totalAssets}</div>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>ASSETS</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{results.summary.totalAssets}</div>
               </div>
               <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "14px 18px", textAlign: "center", flex: "1 1 100px" }}>
-                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>AVG MOMENTUM</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: parseFloat(results.summary.avgMomentum) >= 0 ? "#22c55e" : "#ef4444", fontFamily: "'IBM Plex Mono', monospace" }}>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>AVG SCORE</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: scoreColor(results.summary.avgStrategyScore), fontFamily: MONO }}>
+                  {results.summary.avgStrategyScore}
+                </div>
+              </div>
+              <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "14px 18px", textAlign: "center", flex: "1 1 100px" }}>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>AVG MOMENTUM</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: parseFloat(results.summary.avgMomentum) >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
                   {results.summary.avgMomentum}%
                 </div>
               </div>
               <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "14px 18px", textAlign: "center", flex: "1 1 100px" }}>
-                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>UPTREND</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: "#22c55e", fontFamily: "'IBM Plex Mono', monospace" }}>{results.summary.percentUptrend}%</div>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>UPTREND</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: "#22c55e", fontFamily: MONO }}>{results.summary.percentUptrend}%</div>
               </div>
               <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "14px 18px", textAlign: "center", flex: "1 1 100px" }}>
-                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: "'IBM Plex Mono', monospace" }}>MED VOL</div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: "#f0f0f0", fontFamily: "'IBM Plex Mono', monospace" }}>{results.summary.medianVolatility}</div>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>MED VOL</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{results.summary.medianVolatility}</div>
               </div>
             </div>
           </Box>
@@ -242,108 +258,80 @@ export default function RankingsView({ onSelectTicker }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.02)" }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>#</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>TICKER</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>PRICE</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>MOMENTUM</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>RISK ADJ</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>COMPOSITE</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>TREND</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>VOL</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}>MAX DD</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", color: "#f0f0f0", fontWeight: 700, fontSize: 9, letterSpacing: 1, fontFamily: "'IBM Plex Mono', monospace" }}></th>
+                    <th style={{ ...thStyle, textAlign: "left" }}>#</th>
+                    <th style={{ ...thStyle, textAlign: "left" }}>TICKER</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>PRICE</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>SCORE</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>GRADE</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>MOMENTUM</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>RISK ADJ</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>TREND</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>VOL</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>MAX DD</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(() => {
-                    const rows = [...(results?.results || [])];
-                    if (sortBy === "composite") {
-                      rows.sort((a, b) => {
-                        const aScore = calcQuickComposite(a);
-                        const bScore = calcQuickComposite(b);
-                        return bScore - aScore;
-                      });
-                    } else if (sortBy === "riskAdj") {
-                      rows.sort((a, b) => parseFloat(b.riskAdjMomentum || 0) - parseFloat(a.riskAdjMomentum || 0));
-                    }
-                    return rows.map((r, i) => {
-                      const compositeScore = calcQuickComposite(r);
-                      const compColor = compositeScore >= 70 ? "#22c55e" : compositeScore >= 50 ? "#eab308" : "#ef4444";
-                      return (
-                        <tr
-                          key={r.ticker}
-                          style={{
-                            borderTop: "1px solid rgba(255,255,255,0.03)",
-                            cursor: "pointer",
-                            transition: "background 0.15s"
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
-                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                          onClick={() => onSelectTicker(r.ticker)}
-                        >
-                          <td style={{ padding: "10px 12px" }}>
-                            <span style={{
-                              fontFamily: "'IBM Plex Mono', monospace",
-                              fontWeight: 800,
-                              color: i === 0 ? "#fbbf24" : i === 1 ? "#f0f0f0" : i === 2 ? "#cd7f32" : "#f0f0f0"
-                            }}>
-                              {i + 1}
-                            </span>
-                          </td>
-                          <td style={{ padding: "10px 12px" }}>
-                            <div style={{ fontWeight: 700, color: "#f0f0f0", fontFamily: "'IBM Plex Mono', monospace" }}>{r.ticker}</div>
-                            <div style={{ fontSize: 10, color: "#f0f0f0", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", color: "#f0f0f0" }}>
-                            ${r.currentPrice?.toFixed(2) || "—"}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", color: parseFloat(r.rawMomentum) >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
-                            {r.rawMomentum}%
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", color: "#f0f0f0", fontWeight: 600 }}>
-                            {r.riskAdjMomentum}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                            <span style={{
-                              fontFamily: "'IBM Plex Mono', monospace",
-                              fontWeight: 700,
-                              color: compColor,
-                              background: compColor + "15",
-                              padding: "3px 8px",
-                              borderRadius: 4,
-                              fontSize: 11
-                            }}>
-                              {compositeScore}
-                            </span>
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                            <TrendBadge status={r.trendStatus} />
-                            {r.volatilityFlagged && <span title="High volatility detected" style={{ marginLeft: 4, color: "#f97316", fontSize: 10 }}>⚠</span>}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", color: "#f0f0f0" }}>
-                            {r.volatility}
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", color: "#ef4444" }}>
-                            {r.maxDrawdown}%
-                          </td>
-                          <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                            <span style={{ color: "#f0f0f0", fontSize: 14 }}>→</span>
-                          </td>
-                        </tr>
-                      );
-                    });
-                  })()}
+                  {sortRows(results?.results || []).map((r, i) => (
+                    <tr
+                      key={r.ticker}
+                      style={{ borderTop: "1px solid rgba(255,255,255,0.03)", cursor: "pointer", transition: "background 0.15s" }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255,255,255,0.04)"}
+                      onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                      onClick={() => onSelectTicker(r.ticker)}
+                    >
+                      <td style={{ padding: "10px 12px" }}>
+                        <span style={{
+                          fontFamily: MONO, fontWeight: 800,
+                          color: i === 0 ? "#fbbf24" : i === 1 ? "#f0f0f0" : i === 2 ? "#cd7f32" : "#f0f0f0"
+                        }}>
+                          {i + 1}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px" }}>
+                        <div style={{ fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>{r.ticker}</div>
+                        <div style={{ fontSize: 10, color: "#f0f0f0", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</div>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: "#f0f0f0" }}>
+                        ${r.currentPrice?.toFixed(2) || "—"}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <span style={{
+                          fontFamily: MONO, fontWeight: 700, color: scoreColor(r.strategyScore),
+                          background: scoreColor(r.strategyScore) + "15", padding: "3px 8px", borderRadius: 4, fontSize: 11
+                        }}>
+                          {r.strategyScore}
+                        </span>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <Pill color={gradeColor(r.strategyLabel)}>{r.strategyLabel}</Pill>
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: parseFloat(r.rawMomentum) >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
+                        {r.rawMomentum}%
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: "#f0f0f0", fontWeight: 600 }}>
+                        {r.riskAdjMomentum}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                        <TrendBadge status={r.trendStatus} />
+                        {r.volatilityFlagged && <span title="High volatility detected" style={{ marginLeft: 4, color: "#f97316", fontSize: 10 }}>!</span>}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: "#f0f0f0" }}>
+                        {r.volatility}
+                      </td>
+                      <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: "#ef4444" }}>
+                        {r.maxDrawdown}%
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
           </Box>
 
           {/* Methodology note */}
-          <Box border="rgba(255,255,255,0.06)" style={{ marginTop: 16, background: "rgba(255,255,255,0.01)" }}>
-            <div style={{ fontSize: 10, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "'IBM Plex Mono', monospace" }}>
-              <strong style={{ color: "#f0f0f0" }}>Methodology:</strong> Risk-adjusted momentum = Annualized Return / Annualized Volatility. 
-              Trend filter adds +2 for strong uptrends, +1 for pullbacks, -1 for downtrends (when enabled). 
-              Rankings sorted by final score descending.
+          <Box border="rgba(255,255,255,0.06)" style={{ marginTop: 8, background: "rgba(255,255,255,0.01)" }}>
+            <div style={{ fontSize: 10, color: "#f0f0f0", lineHeight: 1.6, fontFamily: MONO }}>
+              <strong style={{ color: "#f0f0f0" }}>Methodology:</strong> {METHODOLOGY[selectedStrategy] || METHODOLOGY.momentum}
             </div>
           </Box>
         </>
@@ -351,9 +339,10 @@ export default function RankingsView({ onSelectTicker }) {
 
       {!results && !loading && !error && (
         <Box border="rgba(255,255,255,0.06)" style={{ textAlign: "center", padding: "40px 20px" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📊</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f0", marginBottom: 6 }}>Momentum Scanner</div>
-          <div style={{ fontSize: 11, color: "#f0f0f0" }}>Select a universe and click "Run Scan" to analyze {selectedLookback}-month momentum.</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f0", marginBottom: 6 }}>Strategy Scanner</div>
+          <div style={{ fontSize: 11, color: "#f0f0f0" }}>
+            Select a strategy and universe, then click "Run Scan" to rank stocks.
+          </div>
         </Box>
       )}
     </div>

@@ -261,63 +261,95 @@ function OverviewTab({ data }) {
           </div>
         </div>
         
-        {data.composite && data.composite.components && (
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>SCORE BREAKDOWN</span>
-              <InfoTip title={EDUCATION.compositeScore?.title || "Composite Score"}>{EDUCATION.compositeScore?.content || "Weighted combination of all analysis signals"}</InfoTip>
-            </div>
-            
-            <div style={{ height: 8, background: "rgba(255,255,255,0.05)", borderRadius: 4, overflow: "hidden", display: "flex", marginBottom: 12 }}>
-              {data.composite.components.map((comp, i) => {
-                const pct = (comp.weighted / (data.composite.rawScore || 1)) * 100;
-                const segColor = comp.score >= 60 ? "#22c55e" : comp.score >= 40 ? "#eab308" : "#ef4444";
-                return (
-                  <div key={i} style={{ width: `${pct}%`, background: segColor, height: "100%", minWidth: 2 }} title={`${comp.name}: ${comp.weighted.toFixed(1)} pts`} />
-                );
-              })}
-            </div>
-            
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-              {data.composite.components.map((comp, i) => {
-                const compColor = comp.score >= 60 ? "#22c55e" : comp.score >= 40 ? "#eab308" : "#ef4444";
-                return (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 2, background: compColor }} />
-                    <span style={{ color: "#f0f0f0" }}>{comp.name.split(" ")[0]}: {comp.weighted.toFixed(1)}</span>
+        {data.composite && data.composite.components && (() => {
+          const FACTOR_COLORS = {
+            "Quality": "#22c55e",
+            "Moat": "#a78bfa",
+            "Valuation": "#eab308",
+            "ROIC": "#06b6d4",
+            "Earnings Quality": "#f59e0b",
+            "Momentum": "#818cf8",
+            "Shareholder Yield": "#f87171",
+            "Quality Floor": "#4ade80"
+          };
+          const comps = data.composite.components;
+          const totalWeight = comps.reduce((s, c) => s + (c.adjustedWeight || c.weight), 0);
+
+          return (
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>SCORE BREAKDOWN</span>
+                <InfoTip title={EDUCATION.compositeScore?.title || "Composite Score"}>{EDUCATION.compositeScore?.content || "Weighted combination of all analysis signals"}</InfoTip>
+              </div>
+
+              <div style={{ display: "flex", height: 18, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
+                {comps.map((comp, i) => {
+                  const w = (comp.adjustedWeight || comp.weight) / totalWeight;
+                  const fc = FACTOR_COLORS[comp.name] || "#888";
+                  const score = Math.min(100, Math.max(0, comp.score));
+                  return (
+                    <div
+                      key={i}
+                      title={`${comp.name}: ${Math.round(score)}/100`}
+                      style={{
+                        width: `${w * 100}%`,
+                        background: fc + "25",
+                        position: "relative",
+                        borderRight: i < comps.length - 1 ? "1px solid rgba(0,0,0,0.4)" : "none"
+                      }}
+                    >
+                      <div style={{
+                        position: "absolute", left: 0, top: 0, bottom: 0,
+                        width: `${score}%`,
+                        background: fc,
+                        transition: "width 0.4s ease"
+                      }} />
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+                {comps.map((comp, i) => {
+                  const fc = FACTOR_COLORS[comp.name] || "#888";
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: fc, flexShrink: 0 }} />
+                      <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{comp.name}: {Math.round(comp.score)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {data.composite.strengths?.length > 0 && data.composite.weaknesses?.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 6, fontFamily: MONO }}>STRENGTHS</div>
+                    {data.composite.strengths.map((s, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
+                        <span style={{ color: "#22c55e", fontWeight: 700 }}>✓</span> {s.name}: {s.score}/100
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", marginBottom: 6, fontFamily: MONO }}>WEAKNESSES</div>
+                    {data.composite.weaknesses.map((w, i) => (
+                      <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
+                        <span style={{ color: "#ef4444", fontWeight: 700 }}>✗</span> {w.name}: {w.score}/100
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {data.composite.catalysts?.toReachBuy && (
+                <div style={{ marginTop: 12, fontSize: 12, color: "#f0f0f0", padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
+                  <span style={{ fontWeight: 700 }}>📈 CATALYST:</span> {data.composite.catalysts.toReachBuy}
+                </div>
+              )}
             </div>
-            
-            {data.composite.strengths?.length > 0 && data.composite.weaknesses?.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 6, fontFamily: MONO }}>STRENGTHS</div>
-                  {data.composite.strengths.map((s, i) => (
-                    <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
-                      <span style={{ color: "#22c55e", fontWeight: 700 }}>✓</span> {s.name}: {s.score}/100
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", marginBottom: 6, fontFamily: MONO }}>WEAKNESSES</div>
-                  {data.composite.weaknesses.map((w, i) => (
-                    <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
-                      <span style={{ color: "#ef4444", fontWeight: 700 }}>✗</span> {w.name}: {w.score}/100
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            
-            {data.composite.catalysts?.toReachBuy && (
-              <div style={{ marginTop: 12, fontSize: 12, color: "#f0f0f0", padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
-                <span style={{ fontWeight: 700 }}>📈 CATALYST:</span> {data.composite.catalysts.toReachBuy}
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </Box>
 
       <ScoreSection title="Buffett Checklist" score={data.buffettChecklist?.total || 0} max={100} infoTip={EDUCATION.buffettChecklist}>

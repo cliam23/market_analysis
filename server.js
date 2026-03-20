@@ -960,6 +960,245 @@ app.get('/api/momentum/:universeId', async (req, res) => {
   res.json(responseData);
 });
 
+// ── Strategy-aware scanner ──────────────────────────────────────────
+const SCAN_CACHE = new Map();
+
+function gradeFromScore(score) {
+  if (score >= 80) return { grade: "A", label: "STRONG BUY", color: "#22c55e" };
+  if (score >= 70) return { grade: "A-", label: "BUY", color: "#4ade80" };
+  if (score >= 60) return { grade: "B+", label: "ACCUMULATE", color: "#86efac" };
+  if (score >= 55) return { grade: "B", label: "LEAN BUY", color: "#eab308" };
+  if (score >= 45) return { grade: "C+", label: "HOLD", color: "#eab308" };
+  if (score >= 35) return { grade: "C", label: "LEAN SELL", color: "#f97316" };
+  if (score >= 25) return { grade: "D", label: "SELL", color: "#ef4444" };
+  return { grade: "F", label: "STRONG SELL", color: "#dc2626" };
+}
+
+function scoreMomentumOnly(momentum) {
+  const raw = parseFloat(momentum?.rawMomentum || 0);
+  const riskAdj = parseFloat(momentum?.riskAdjMomentum || 0);
+  const momentumScore = Math.min(100, Math.max(0, 50 + raw * 3));
+  const riskAdjScore = riskAdj >= 1 ? 80 : riskAdj >= 0.5 ? 60 : riskAdj >= 0 ? 40 : 20;
+  return Math.round(momentumScore * 0.6 + riskAdjScore * 0.4);
+}
+
+function scoreMomentumValue(momentum, quoteData) {
+  const momScore = scoreMomentumOnly(momentum);
+  const pe = safeNum(quoteData?.forwardPE || quoteData?.trailingPE, 0);
+  const pb = safeNum(quoteData?.priceToBook, 0);
+  let valScore = 50;
+  if (pe > 0) {
+    if (pe <= 12) valScore = 90;
+    else if (pe <= 18) valScore = 75;
+    else if (pe <= 25) valScore = 55;
+    else if (pe <= 35) valScore = 35;
+    else valScore = 15;
+  }
+  if (pb > 0) {
+    let pbScore = pb <= 2 ? 80 : pb <= 4 ? 55 : pb <= 8 ? 35 : 15;
+    valScore = Math.round(valScore * 0.6 + pbScore * 0.4);
+  }
+  return { total: Math.round(momScore * 0.6 + valScore * 0.4), components: { momentum: momScore, valuation: valScore } };
+}
+
+function scoreQualityMomentum(momentum, quoteData) {
+  const momScore = scoreMomentumOnly(momentum);
+  const roe = safeNum(quoteData?.returnOnEquity, 0) * 100;
+  const gm = safeNum(quoteData?.grossMargin || quoteData?.grossProfitMargin, 0);
+  const gmPct = gm > 1 ? gm : gm * 100;
+  const om = safeNum(quoteData?.operatingMargin, 0);
+  const omPct = om > 1 ? om : om * 100;
+
+  let qualScore = 0;
+  qualScore += roe >= 25 ? 35 : roe >= 18 ? 28 : roe >= 12 ? 20 : roe >= 5 ? 10 : 0;
+  qualScore += gmPct >= 50 ? 35 : gmPct >= 35 ? 25 : gmPct >= 20 ? 15 : 5;
+  qualScore += omPct >= 25 ? 30 : omPct >= 15 ? 22 : omPct >= 8 ? 12 : 3;
+  qualScore = Math.min(100, qualScore);
+
+  return { total: Math.round(momScore * 0.4 + qualScore * 0.6), components: { momentum: momScore, quality: qualScore } };
+}
+
+function scoreFullComposite(momentum, quoteData, enrichedData) {
+  const buffett = calcBuffettScore(enrichedData);
+  const roicAnalysis = calcROIC(enrichedData);
+  const entry = calcEntryTiming(enrichedData);
+  const iv = calcIntrinsicValue(enrichedData, buffett.wacc);
+  const moat = calcMoatAnalysis(enrichedData, null);
+  const aiDisruption = calcAIDisruption(enrichedData);
+  const constraints = calcGrowthConstraints(enrichedData, 0);
+  const earningsQuality = calcEarningsQuality({ ...enrichedData, roic: parseFloat(roicAnalysis.roic), wacc: buffett.wacc });
+  const tsy = calcTotalShareholderYield(enrichedData, iv);
+
+  const composite = calcComposite({
+    buffettChecklist: { total: buffett.total },
+    moatAnalysis: moat,
+    intrinsicValue: iv,
+    roicTree: roicAnalysis,
+    earningsQuality,
+    entryTiming: entry,
+    totalShareholderYield: tsy,
+    growthConstraints: constraints,
+    aiDisruption,
+    fundamentals: quoteData,
+    price: quoteData.price
+  });
+
+  return {
+    total: composite.score,
+    components: {
+      quality: buffett.total,
+      moat: moat.moat_score,
+      valuation: composite.components?.find(c => c.name === "Valuation")?.score || 0,
+      roic: composite.components?.find(c => c.name === "ROIC")?.score || 0,
+      momentum: composite.components?.find(c => c.name === "Momentum")?.score || 0
+    },
+    label: composite.label,
+    grade: composite.grade,
+    color: composite.color
+  };
+}
+
+function enrichQuoteData(data) {
+  const sharesOutstanding = safeNum(data.sharesOutstanding);
+  const price = safeNum(data.price);
+  const totalDebt = safeNum(data.totalDebt);
+  const shareholderEquity = safeNum(data.shareholderEquity);
+  const totalAssets = safeNum(data.totalAssets);
+  const netIncome = safeNum(data.netIncome);
+  const operatingIncome = safeNum(data.operatingIncome);
+  const totalRevenue = safeNum(data.totalRevenue);
+  const investedCapital = totalDebt + (shareholderEquity || netIncome * 10);
+  const roic = investedCapital > 0 ? (operatingIncome / investedCapital) * 100 :
+               (netIncome > 0 && totalAssets > 0 ? (netIncome / totalAssets) * 100 : 0);
+  const nopatMargin = totalRevenue > 0 ? (operatingIncome / totalRevenue) * 100 : safeNum(data.operatingMargin) * 100;
+  const assetTurnover = totalAssets > 0 ? totalRevenue / totalAssets :
+                       (totalRevenue > 0 && price > 0 ? totalRevenue / (sharesOutstanding * price) : 0);
+  return {
+    ...data,
+    roic,
+    nopatMargin,
+    assetTurnover,
+    wacc: data.beta < 0.8 ? 8 : data.beta > 1.2 ? 11 : 9.5,
+    gmTrend: 0
+  };
+}
+
+app.get('/api/scan/:universeId', async (req, res) => {
+  const { universeId } = req.params;
+  const { strategy = 'momentum', lookback = '6', smooth = 'true', fresh = 'false' } = req.query;
+  const strategyClean = (strategy || 'momentum').toLowerCase().trim();
+
+  const universe = getUniverse(universeId);
+  if (universe.error) return res.status(404).json(universe);
+
+  const cacheKey = `scan-${universeId}-${strategyClean}-${lookback}-${smooth}`;
+  const cached = SCAN_CACHE.get(cacheKey);
+  if (cached && fresh !== 'true' && Date.now() - cached.timestamp < CACHE_TTL) {
+    return res.json({ ...cached.data, cached: true });
+  }
+
+  const tickers = universe;
+  const lookbackMonths = parseInt(lookback);
+  const applySmooth = smooth === 'true';
+  const needsFundamentals = strategyClean !== 'momentum';
+
+  const results = [];
+  const errors = [];
+  const BATCH_SIZE = 5;
+
+  for (let i = 0; i < tickers.length; i += BATCH_SIZE) {
+    const batch = tickers.slice(i, i + BATCH_SIZE);
+    const settled = await Promise.allSettled(
+      batch.map(async (ticker) => {
+        const [quoteData, historicalData] = await Promise.all([
+          fetchQuoteData(ticker).catch(() => null),
+          fetchHistoricalData(ticker, 18).catch(() => [])
+        ]);
+        if (!quoteData) return null;
+        const momentum = calculateMomentum(historicalData, lookbackMonths, applySmooth);
+        if (!momentum) return null;
+
+        let strategyScore, components = {}, strategyLabel, strategyGrade;
+
+        if (strategyClean === 'momentum') {
+          strategyScore = scoreMomentumOnly(momentum);
+          components = { momentum: strategyScore };
+        } else if (strategyClean === 'momentum_value') {
+          const result = scoreMomentumValue(momentum, quoteData);
+          strategyScore = result.total;
+          components = result.components;
+        } else if (strategyClean === 'quality_momentum') {
+          const result = scoreQualityMomentum(momentum, quoteData);
+          strategyScore = result.total;
+          components = result.components;
+        } else if (strategyClean === 'full_composite') {
+          const enriched = enrichQuoteData(quoteData);
+          const result = scoreFullComposite(momentum, quoteData, enriched);
+          strategyScore = result.total;
+          components = result.components;
+          strategyLabel = result.label;
+          strategyGrade = result.grade;
+        } else {
+          strategyScore = scoreMomentumOnly(momentum);
+          components = { momentum: strategyScore };
+        }
+
+        if (!strategyGrade) {
+          const g = gradeFromScore(strategyScore);
+          strategyGrade = g.grade;
+          strategyLabel = g.label;
+        }
+
+        return {
+          rank: 0,
+          ticker,
+          name: quoteData?.name || ticker,
+          sector: quoteData?.sector || '',
+          currentPrice: quoteData?.price || 0,
+          ...momentum,
+          strategyScore,
+          strategyGrade,
+          strategyLabel,
+          components
+        };
+      })
+    );
+
+    for (let j = 0; j < settled.length; j++) {
+      if (settled[j].status === 'fulfilled' && settled[j].value) {
+        results.push(settled[j].value);
+      } else {
+        errors.push({ ticker: batch[j], error: settled[j].reason?.message || 'failed' });
+      }
+    }
+
+    if (i + BATCH_SIZE < tickers.length) await sleep(150);
+  }
+
+  results.sort((a, b) => b.strategyScore - a.strategyScore);
+  results.forEach((r, i) => r.rank = i + 1);
+
+  const responseData = {
+    success: true,
+    universeId,
+    strategy: strategyClean,
+    lookback: lookbackMonths,
+    smooth: applySmooth,
+    results,
+    errors,
+    summary: {
+      totalAssets: results.length,
+      avgMomentum: results.length > 0 ? (results.reduce((a, b) => a + parseFloat(b.rawMomentum || 0), 0) / results.length).toFixed(1) : '0',
+      percentUptrend: results.length > 0 ? ((results.filter(r => r.trendStatus === 'strong_uptrend').length / results.length) * 100).toFixed(0) : '0',
+      medianVolatility: results.length > 0 ? (results.reduce((a, b) => a + parseFloat(b.volatility || 0), 0) / results.length).toFixed(3) : '0',
+      avgStrategyScore: results.length > 0 ? Math.round(results.reduce((a, b) => a + b.strategyScore, 0) / results.length) : 0
+    }
+  };
+
+  SCAN_CACHE.set(cacheKey, { data: responseData, timestamp: Date.now() });
+  res.json(responseData);
+});
+
 app.get('/api/analysis/:ticker', async (req, res) => {
   try {
     const ticker = req.params.ticker.toUpperCase();
