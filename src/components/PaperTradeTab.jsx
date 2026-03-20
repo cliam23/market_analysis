@@ -105,6 +105,43 @@ const TOP_N_OPTIONS = [
   { id: "20", label: "20" }
 ];
 
+function fmtDate(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 9999,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)"
+    }}>
+      <div style={{
+        background: "#14141c", border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 12, padding: "28px 32px", maxWidth: 380, textAlign: "center"
+      }}>
+        <div style={{ fontSize: 14, color: "#f0f0f0", fontWeight: 600, marginBottom: 20, lineHeight: 1.6 }}>
+          {message}
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <button onClick={onCancel} style={{
+            padding: "8px 20px", background: "rgba(255,255,255,0.06)",
+            border: "1px solid rgba(255,255,255,0.12)", borderRadius: 6,
+            color: "#f0f0f0", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: MONO
+          }}>Cancel</button>
+          <button onClick={onConfirm} style={{
+            padding: "8px 20px", background: "rgba(239,68,68,0.15)",
+            border: "1px solid rgba(239,68,68,0.4)", borderRadius: 6,
+            color: "#ef4444", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: MONO
+          }}>Reset</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PaperTradeTab() {
   const [portfolio, setPortfolio] = useState(null);
   const [history, setHistory] = useState(null);
@@ -112,6 +149,7 @@ export default function PaperTradeTab() {
   const [rebalancing, setRebalancing] = useState(false);
   const [error, setError] = useState(null);
   const [expandedRebalance, setExpandedRebalance] = useState(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [initForm, setInitForm] = useState({
     initialCapital: "100000",
@@ -198,7 +236,7 @@ export default function PaperTradeTab() {
   };
 
   const resetPortfolio = async () => {
-    if (!confirm("Reset paper portfolio? All history will be lost.")) return;
+    setShowResetConfirm(false);
     try {
       await fetch("/api/paper-trade/reset", { method: "DELETE" });
       setPortfolio(null);
@@ -287,46 +325,13 @@ export default function PaperTradeTab() {
 
   return (
     <div>
-      {/* Status Bar */}
-      <Box style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
-          Paper trading since <span style={{ color: "#f0f0f0" }}>{createdAt}</span>
-          {" | "}{stratLabel}{" | "}{uniLabel}{" | Top "}{config.topN}
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {lastRebalance && (
-            <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
-              Last: {lastRebalance} {nextRebalance && `· Next: ~${nextRebalance}`}
-            </span>
-          )}
-          <button onClick={rebalance} disabled={rebalancing} style={{
-            padding: "6px 14px",
-            background: rebalancing ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-            border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 5,
-            color: rebalancing ? "#555" : "#f0f0f0",
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: rebalancing ? "wait" : "pointer",
-            fontFamily: MONO
-          }}>
-            {rebalancing ? "Running model..." : "Rebalance Now"}
-          </button>
-          <button onClick={resetPortfolio} style={{
-            padding: "6px 14px",
-            background: "rgba(239,68,68,0.1)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 5,
-            color: "#ef4444",
-            fontSize: 11,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: MONO
-          }}>
-            Reset
-          </button>
-        </div>
-      </Box>
+      {showResetConfirm && (
+        <ConfirmModal
+          message="Are you sure? You will lose the results of the current paper trade."
+          onConfirm={resetPortfolio}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      )}
 
       {rebalancing && autoRebalanced && (
         <Box>
@@ -373,8 +378,45 @@ export default function PaperTradeTab() {
 
       {/* S&P 500 Comparison */}
       <Box>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO }}>
-          PORTFOLIO vs S&P 500
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", rowGap: 4, columnGap: 16, alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", fontFamily: MONO }}>
+            PORTFOLIO vs S&P 500
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
+            <button onClick={rebalance} disabled={rebalancing} style={{
+              padding: "6px 14px",
+              background: rebalancing ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 5,
+              color: rebalancing ? "#555" : "#f0f0f0",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: rebalancing ? "wait" : "pointer",
+              fontFamily: MONO
+            }}>
+              {rebalancing ? "Running model..." : "Rebalance Now"}
+            </button>
+            <button onClick={() => setShowResetConfirm(true)} style={{
+              padding: "6px 14px",
+              background: "rgba(239,68,68,0.1)",
+              border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: 5,
+              color: "#ef4444",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}>
+              Reset
+            </button>
+          </div>
+          <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO, opacity: 0.7 }}>
+            Since {fmtDate(createdAt)}&nbsp;&nbsp;{stratLabel}&nbsp;&nbsp;{uniLabel}&nbsp;&nbsp;Top {config.topN}
+          </div>
+          <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO, opacity: 0.7, textAlign: "right" }}>
+            {lastRebalance && <>Last: {fmtDate(lastRebalance)}</>}
+            {nextRebalance && <>&nbsp;&nbsp;Next: {fmtDate(nextRebalance)}</>}
+          </div>
         </div>
         {chartData.length > 1 ? (
           <ResponsiveContainer width="100%" height={280}>
@@ -509,7 +551,7 @@ export default function PaperTradeTab() {
                   }}
                 >
                   <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                    <span style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, fontWeight: 600 }}>{rb.date}</span>
+                    <span style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, fontWeight: 600 }}>{fmtDate(rb.date)}</span>
                     <span style={{ fontSize: 11, color: "#22c55e", fontFamily: MONO }}>
                       +{rb.buys.length} buys
                     </span>
@@ -589,7 +631,7 @@ export default function PaperTradeTab() {
       {/* Disclaimer */}
       <Box>
         <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.8 }}>
-          <strong style={{ color: "#f0f0f0" }}>Forward Paper Trade</strong> — This tracks live model picks against the S&P 500 with real market data. No real money is involved.
+          <strong style={{ color: "#f0f0f0" }}>Forward Paper Trading</strong> — This tracks live model picks against the S&P 500 with real market data. No real money is involved.
           Fundamental scores use current data (point-in-time approximation). This is the honest out-of-sample test: the model can't overfit to data it hasn't seen yet.
         </div>
       </Box>
