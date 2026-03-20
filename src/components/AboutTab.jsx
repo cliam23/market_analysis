@@ -1,53 +1,53 @@
 import { useState } from "react";
 
-const MONO = "'IBM Plex Mono', monospace";
+import { MONO } from "../lib/theme.js";
 
 function Section({ title, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <div style={{ marginBottom: 12, border: "1px solid rgba(129,140,248,0.12)", borderRadius: 8, overflow: "hidden" }}>
+    <div style={{ marginBottom: 12, border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, overflow: "hidden" }}>
       <button
         onClick={() => setOpen(o => !o)}
         style={{
           width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "14px 18px", background: "rgba(255,255,255,0.02)", border: "none",
-          color: "#f0f0f0", fontFamily: MONO, fontSize: 12, fontWeight: 700, cursor: "pointer",
+          color: "#f0f0f0", fontFamily: MONO, fontSize: 13, fontWeight: 700, cursor: "pointer",
           letterSpacing: 0.5
         }}
       >
         {title}
-        <span style={{ fontSize: 10, color: "#818cf8" }}>{open ? "▲" : "▼"}</span>
+        <span style={{ fontSize: 11, color: "#f0f0f0" }}>{open ? "▲" : "▼"}</span>
       </button>
-      {open && <div style={{ padding: "16px 18px", fontSize: 12.5, lineHeight: 1.75, color: "#c0c0c0" }}>{children}</div>}
+      {open && <div style={{ padding: "16px 18px", fontSize: 13, lineHeight: 1.75, color: "#f0f0f0" }}>{children}</div>}
     </div>
   );
 }
 
-function PillarCard({ name, weight, color, children }) {
+function PillarCard({ name, weight, children }) {
   return (
     <div style={{
       flex: "1 1 180px", padding: 16, borderRadius: 8,
-      background: "rgba(255,255,255,0.02)", border: `1px solid ${color}22`
+      background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)"
     }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <span style={{ fontWeight: 700, color, fontSize: 12, fontFamily: MONO }}>{name}</span>
+        <span style={{ fontWeight: 700, color: "#f0f0f0", fontSize: 12, fontFamily: MONO }}>{name}</span>
         <span style={{
-          fontSize: 10, fontFamily: MONO, fontWeight: 700, color: "#111",
-          background: color, borderRadius: 4, padding: "2px 7px"
+          fontSize: 11, fontFamily: MONO, fontWeight: 700, color: "#f0f0f0",
+          background: "rgba(255,255,255,0.08)", borderRadius: 4, padding: "2px 8px"
         }}>{weight}</span>
       </div>
-      <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.65, color: "#999" }}>{children}</p>
+      <p style={{ margin: 0, fontSize: 12, lineHeight: 1.65, color: "#f0f0f0" }}>{children}</p>
     </div>
   );
 }
 
 export default function AboutTab() {
   return (
-    <div style={{ maxWidth: 820, margin: "0 auto" }}>
+    <div style={{ maxWidth: 760, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 4, color: "#818cf8", marginBottom: 6, fontFamily: MONO }}>ABOUT</div>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 4, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>ABOUT</div>
         <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0, color: "#f0f0f0" }}>How the Model Works</h2>
-        <p style={{ fontSize: 11, color: "#555", marginTop: 6, fontFamily: MONO }}>
+        <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 6, fontFamily: MONO }}>
           A multi-factor, rules-based investment analysis platform
         </p>
       </div>
@@ -76,8 +76,8 @@ export default function AboutTab() {
             <div key={tab} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
               <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 12, color: "#f0f0f0", fontFamily: MONO, marginBottom: 3 }}>{tab}</div>
-                <div style={{ fontSize: 11.5, color: "#999", lineHeight: 1.6 }}>{desc}</div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "#f0f0f0", fontFamily: MONO, marginBottom: 3 }}>{tab}</div>
+                <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6 }}>{desc}</div>
               </div>
             </div>
           ))}
@@ -90,35 +90,35 @@ export default function AboutTab() {
           it scores every stock on <strong style={{ color: "#f0f0f0" }}>five pillars</strong> and weights them as follows:
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-          <PillarCard name="FUNDAMENTAL" weight="25%" color="#818cf8">
+          <PillarCard name="FUNDAMENTAL" weight="25%">
             Composite of Buffett quality, moat width, ROIC spread, earnings quality,
             shareholder yield, growth constraints, and AI disruption signal. Measures
             whether the underlying business is high-quality.
           </PillarCard>
-          <PillarCard name="DCF" weight="15%" color="#34d399">
+          <PillarCard name="DCF" weight="15%">
             Simplified discounted cash flow model. Projects free cash flow 5 years forward
             with decaying growth, applies a WACC discount rate derived from beta, calculates
             terminal value, and compares the resulting intrinsic value to the current price.
             Stocks trading well below intrinsic value score higher.
           </PillarCard>
-          <PillarCard name="DYNAMIC VALUATION" weight="20%" color="#fbbf24">
+          <PillarCard name="DYNAMIC VALUATION" weight="20%">
             Real-time valuation signals that change at every rebalance: price vs. 52-week
             average, implied P/E from forward earnings, distance from 200-day MA, and a
             quality adjustment so high-quality businesses aren't penalized for deserved
             premium valuations.
           </PillarCard>
-          <PillarCard name="MOMENTUM" weight="25%" color="#f472b6">
+          <PillarCard name="MOMENTUM" weight="25%">
             6-month risk-adjusted momentum with trend confirmation. Captures the well-documented
             tendency for stocks with positive momentum to continue outperforming. Filtered
             for excessive volatility to avoid speculative blow-ups.
           </PillarCard>
-          <PillarCard name="PRICE VALUE" weight="15%" color="#fb923c">
+          <PillarCard name="PRICE VALUE" weight="15%">
             Mean-reversion overlay: rewards stocks pulling back from highs while maintaining
             positive short-term momentum. Complements the momentum signal by identifying
             favorable entry points within an uptrend.
           </PillarCard>
         </div>
-        <p style={{ margin: 0, fontSize: 11, color: "#666", fontFamily: MONO }}>
+        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
           Final score = (Fundamental × 0.25) + (DCF × 0.15) + (Dynamic Val × 0.20) + (Momentum × 0.25) + (Price Value × 0.15)
         </p>
       </Section>
@@ -133,7 +133,7 @@ export default function AboutTab() {
           <li><strong style={{ color: "#f0f0f0" }}>Intrinsic value:</strong> Sum of discounted projected FCFs + discounted terminal value + net cash (cash minus debt), divided by shares outstanding.</li>
           <li><strong style={{ color: "#f0f0f0" }}>Scoring:</strong> Converted to a 0–100 score based on the upside from intrinsic value to current price. &ge;40% upside = 100, &le;−25% downside = 10.</li>
         </ol>
-        <p style={{ margin: 0, fontSize: 11, color: "#666", fontFamily: MONO }}>
+        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
           This is a simplified single-scenario DCF. It does not model multiple scenarios, segment-level projections, or WACC refinements. Treat it as one signal among five, not a standalone valuation.
         </p>
       </Section>
@@ -169,9 +169,9 @@ export default function AboutTab() {
       <Section title="Disclaimer">
         <div style={{
           padding: 14, borderRadius: 8, background: "rgba(239,68,68,0.06)",
-          border: "1px solid rgba(239,68,68,0.15)", fontSize: 11.5, lineHeight: 1.7, color: "#999"
+          border: "1px solid rgba(239,68,68,0.15)", fontSize: 12, lineHeight: 1.7, color: "#f0f0f0"
         }}>
-          <p style={{ margin: "0 0 8px", color: "#ef4444", fontWeight: 700, fontFamily: MONO, fontSize: 11 }}>
+          <p style={{ margin: "0 0 8px", color: "#ef4444", fontWeight: 700, fontFamily: MONO, fontSize: 12 }}>
             THIS IS AN EDUCATIONAL TOOL — NOT FINANCIAL ADVICE
           </p>
           <p style={{ margin: "0 0 8px" }}>

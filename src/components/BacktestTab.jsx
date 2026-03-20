@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ComposedChart, Bar } from "recharts";
 
-const MONO = "'IBM Plex Mono', monospace";
-const SANS = "'DM Sans', sans-serif";
+import { MONO, SANS } from "../lib/theme.js";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -10,8 +9,8 @@ function Box({ border, children, style: sx = {} }) {
       background: "rgba(255,255,255,0.02)",
       border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
       borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
+      padding: 16,
+      marginBottom: 12,
       ...sx
     }}>
       {children}
@@ -22,7 +21,7 @@ function Box({ border, children, style: sx = {} }) {
 function Select({ value, onChange, options, label, style }) {
   return (
     <div style={style}>
-      {label && <div style={{ fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
+      {label && <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -32,7 +31,7 @@ function Select({ value, onChange, options, label, style }) {
           borderRadius: 6,
           padding: "8px 12px",
           color: "#f0f0f0",
-          fontSize: 12,
+          fontSize: 13,
           fontFamily: MONO,
           cursor: "pointer"
         }}
@@ -57,12 +56,12 @@ function MetricCard({ label, value, subValue, color, compareColor }) {
       textAlign: "center",
       flex: "1 1 120px"
     }}>
-      <div style={{ fontSize: 8, color: "#555", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>{label}</div>
+      <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 6, fontFamily: MONO }}>{label}</div>
       <div style={{ fontSize: 22, fontWeight: 800, color: displayColor, fontFamily: MONO }}>
         {value}
       </div>
       {subValue && (
-        <div style={{ fontSize: 10, color: compareColor || "#666", marginTop: 4, fontFamily: MONO }}>
+        <div style={{ fontSize: 11, color: compareColor || "#666", marginTop: 4, fontFamily: MONO }}>
           vs {subValue}
         </div>
       )}
@@ -80,9 +79,9 @@ function CustomTooltip({ active, payload, label }) {
       borderRadius: 8,
       padding: 12,
       fontFamily: MONO,
-      fontSize: 11
+      fontSize: 12
     }}>
-      <div style={{ color: "#888", marginBottom: 6 }}>{label}</div>
+      <div style={{ color: "#f0f0f0", marginBottom: 6 }}>{label}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, marginBottom: 2 }}>
           {p.name}: ${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
@@ -153,7 +152,7 @@ export default function BacktestTab() {
         topN: settings.topN,
         strategy: settings.strategy,
         initialCapital: settings.initialCapital,
-        _t: Date.now() // cache bust
+        _t: Date.now()
       });
       
       console.log('[Frontend] Running backtest with settings:', settings);
@@ -190,7 +189,7 @@ export default function BacktestTab() {
   return (
     <div style={{ animation: "fadeUp 0.3s ease-out" }}>
       {/* Controls */}
-      <Box border="rgba(129,140,248,0.1)" style={{ marginBottom: 16 }}>
+      <Box style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
           <Select
             label="UNIVERSE"
@@ -227,11 +226,11 @@ export default function BacktestTab() {
             disabled={loading}
             style={{
               padding: "10px 24px",
-              background: loading ? "rgba(129,140,248,0.1)" : "rgba(129,140,248,0.15)",
-              border: "1px solid rgba(129,140,248,0.3)",
+              background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: 6,
-              color: loading ? "#555" : "#818cf8",
-              fontSize: 12,
+              color: loading ? "#555" : "#f0f0f0",
+              fontSize: 13,
               fontWeight: 700,
               cursor: loading ? "not-allowed" : "pointer",
               fontFamily: MONO
@@ -243,11 +242,11 @@ export default function BacktestTab() {
       </Box>
       
       {settings.strategy === 'full_composite' && (
-        <Box border="rgba(250,204,21,0.15)" style={{ background: "rgba(250,204,21,0.03)", marginBottom: 16 }}>
-          <div style={{ fontSize: 10, color: "#facc15", fontWeight: 700, marginBottom: 6, fontFamily: MONO }}>
+        <Box style={{ background: "rgba(234,179,8,0.04)", marginBottom: 16, borderColor: "rgba(234,179,8,0.15)" }}>
+          <div style={{ fontSize: 11, color: "#eab308", fontWeight: 700, marginBottom: 6, fontFamily: MONO }}>
             FUNDAMENTAL DATA ASSUMPTION
           </div>
-          <div style={{ fontSize: 10, color: "#888", lineHeight: 1.6, fontFamily: "sans-serif" }}>
+          <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "sans-serif" }}>
             The Full Composite strategy uses fundamental scores (Buffett Quality, Moat, ROIC, Earnings Quality, Shareholder Yield) 
             that are point-in-time approximations. For this backtest, fundamental data is fetched once at the start and held 
             stable throughout the simulation period to prevent look-ahead bias. This is a conservative assumption — in reality, 
@@ -257,24 +256,24 @@ export default function BacktestTab() {
       )}
       
       {loading && (
-        <Box border="rgba(129,140,248,0.1)" style={{ textAlign: "center", padding: "40px" }}>
-          <div style={{ color: "#888", fontFamily: MONO, fontSize: 12 }}>
+        <Box style={{ textAlign: "center", padding: "40px" }}>
+          <div style={{ color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>
             Fetching historical data and running simulation...
           </div>
         </Box>
       )}
       
       {error && (
-        <Box border="rgba(239,68,68,0.3)" style={{ background: "rgba(239,68,68,0.05)" }}>
-          <div style={{ color: "#ef4444", fontSize: 12 }}>Error: {error}</div>
+        <Box style={{ background: "rgba(239,68,68,0.05)", borderColor: "rgba(239,68,68,0.2)" }}>
+          <div style={{ color: "#ef4444", fontSize: 13 }}>Error: {error}</div>
         </Box>
       )}
       
       {results && !loading && (
         <>
           {/* Performance Summary */}
-          <Box border="rgba(129,140,248,0.15)">
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+          <Box>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
               PERFORMANCE SUMMARY — {results.period} ({results.performance.years} years)
             </div>
             
@@ -333,8 +332,8 @@ export default function BacktestTab() {
           
           {/* Factor Attribution for Full Composite */}
           {results.strategy === 'full_composite' && results.factorAttribution && (
-            <Box border="rgba(129,140,248,0.15)">
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+            <Box>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
                 FACTOR ATTRIBUTION — {results.factorAttribution.periodsAnalyzed} PERIODS ANALYZED
               </div>
               
@@ -349,40 +348,40 @@ export default function BacktestTab() {
                       background: "rgba(255,255,255,0.02)",
                       borderRadius: 8,
                       padding: "12px 14px",
-                      borderLeft: `3px solid ${f.color}`
+                      borderLeft: "3px solid rgba(255,255,255,0.15)"
                     }}>
-                      <div style={{ fontSize: 9, color: "#666", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>
+                      <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>
                         {f.label.toUpperCase()}
                       </div>
                       
                       <div style={{ display: "flex", gap: 16, marginBottom: 8 }}>
                         <div>
-                          <div style={{ fontSize: 8, color: "#555", fontFamily: MONO }}>IC</div>
+                          <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>IC</div>
                           <div style={{ fontSize: 16, fontWeight: 800, color: icColor, fontFamily: MONO }}>
                             {f.ic >= 0 ? "+" : ""}{f.ic.toFixed(3)}
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: 8, color: "#555", fontFamily: MONO }}>SPREAD</div>
+                          <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>SPREAD</div>
                           <div style={{ fontSize: 16, fontWeight: 800, color: spreadColor, fontFamily: MONO }}>
                             {f.spread >= 0 ? "+" : ""}{f.spread.toFixed(1)}%
                           </div>
                         </div>
                         <div>
-                          <div style={{ fontSize: 8, color: "#555", fontFamily: MONO }}>$ CONTRIB</div>
+                          <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>$ CONTRIB</div>
                           <div style={{ fontSize: 16, fontWeight: 800, color: f.contribution >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
                             ${Math.abs(f.contribution) >= 1000 ? (f.contribution / 1000).toFixed(1) + "k" : f.contribution.toFixed(0)}
                           </div>
                         </div>
                       </div>
                       
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, fontFamily: MONO }}>
-                        <span style={{ color: "#555" }}>{(f.originalWeight * 100).toFixed(0)}%</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: MONO }}>
+                        <span style={{ color: "#f0f0f0" }}>{(f.originalWeight * 100).toFixed(0)}%</span>
                         <span style={{ color: deltaColor, fontWeight: 700 }}>
                           {weightDelta > 0.005 ? "\u2192" : weightDelta < -0.005 ? "\u2192" : "="} {(f.suggestedWeight * 100).toFixed(0)}%
                         </span>
                         {Math.abs(weightDelta) > 0.005 && (
-                          <span style={{ color: deltaColor, fontSize: 9 }}>
+                          <span style={{ color: deltaColor, fontSize: 10 }}>
                             ({weightDelta > 0 ? "+" : ""}{(weightDelta * 100).toFixed(0)})
                           </span>
                         )}
@@ -392,7 +391,7 @@ export default function BacktestTab() {
                         <div style={{
                           height: "100%",
                           width: `${Math.min(Math.max(f.ic * 500 + 50, 5), 100)}%`,
-                          background: f.color,
+                          background: "rgba(255,255,255,0.2)",
                           borderRadius: 2,
                           transition: "width 0.3s ease"
                         }} />
@@ -403,17 +402,17 @@ export default function BacktestTab() {
               </div>
               
               <div style={{
-                background: "rgba(129,140,248,0.05)",
-                border: "1px solid rgba(129,140,248,0.1)",
+                background: "rgba(255,255,255,0.03)",
+                border: "1px solid rgba(255,255,255,0.06)",
                 borderRadius: 6,
                 padding: "10px 14px",
-                fontSize: 11,
-                color: "#aaa",
+                fontSize: 12,
+                color: "#f0f0f0",
                 lineHeight: 1.6,
                 fontFamily: SANS
               }}>
                 {results.factorAttribution.insight}
-                <span style={{ color: "#555", fontSize: 10, display: "block", marginTop: 4 }}>
+                <span style={{ color: "#f0f0f0", fontSize: 11, display: "block", marginTop: 4 }}>
                   IC = rank correlation between factor score and realized return. Spread = avg return of top-half minus bottom-half stocks by factor. Based on {results.factorAttribution.avgStocksPerPeriod} eligible stocks per period.
                 </span>
               </div>
@@ -421,8 +420,8 @@ export default function BacktestTab() {
           )}
           
           {/* Equity Curve */}
-          <Box border="rgba(129,140,248,0.15)">
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+          <Box>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
               EQUITY CURVE — $10,000 INVESTED
             </div>
             <div style={{ height: 300 }}>
@@ -430,18 +429,22 @@ export default function BacktestTab() {
                 <ComposedChart data={results.equityCurve}>
                   <defs>
                     <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#818cf8" stopOpacity={0.3} />
-                      <stop offset="100%" stopColor="#818cf8" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#f0f0f0" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#f0f0f0" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis 
                     dataKey="date" 
-                    tick={{ fill: "#555", fontSize: 9, fontFamily: MONO }}
-                    tickFormatter={(v) => v.substring(5)}
-                    interval="preserveStartEnd"
+                    tick={{ fill: "#f0f0f0", fontSize: 10, fontFamily: MONO }}
+                    tickFormatter={(v) => {
+                      const d = new Date(v + "T00:00:00");
+                      const m = d.toLocaleString("en-US", { month: "short" });
+                      return `${m} '${String(d.getFullYear()).slice(2)}`;
+                    }}
+                    minTickGap={60}
                   />
                   <YAxis 
-                    tick={{ fill: "#555", fontSize: 9, fontFamily: MONO }}
+                    tick={{ fill: "#f0f0f0", fontSize: 10, fontFamily: MONO }}
                     tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`}
                     domain={['dataMin - 1000', 'dataMax + 1000']}
                   />
@@ -449,7 +452,7 @@ export default function BacktestTab() {
                   <Area 
                     type="monotone" 
                     dataKey="portfolio" 
-                    stroke="#818cf8" 
+                    stroke="#f0f0f0" 
                     fill="url(#portfolioGradient)" 
                     strokeWidth={2}
                     name="Portfolio"
@@ -457,7 +460,7 @@ export default function BacktestTab() {
                   <Line 
                     type="monotone" 
                     dataKey="benchmark" 
-                    stroke="#555" 
+                    stroke="#f0f0f0" 
                     strokeWidth={1}
                     dot={false}
                     name="Benchmark (SPY)"
@@ -467,19 +470,19 @@ export default function BacktestTab() {
             </div>
             <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 16, height: 3, background: "#818cf8", borderRadius: 2 }} />
-                <span style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Strategy</span>
+                <div style={{ width: 16, height: 3, background: "#f0f0f0", borderRadius: 2 }} />
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 16, height: 1, background: "#555" }} />
-                <span style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>SPY Benchmark</span>
+                <div style={{ width: 16, height: 1, background: "#f0f0f0" }} />
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>SPY Benchmark</span>
               </div>
             </div>
           </Box>
           
           {/* Monthly Returns Heatmap */}
-          <Box border="rgba(129,140,248,0.15)">
-            <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+          <Box>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
               MONTHLY RETURNS
             </div>
             <div style={{ overflowX: "auto" }}>
@@ -502,8 +505,8 @@ export default function BacktestTab() {
                       }}
                       title={`${m.month}: Portfolio ${m.portfolio.toFixed(1)}%, Benchmark ${m.benchmark.toFixed(1)}%`}
                     >
-                      <div style={{ fontSize: 8, color: "#666", fontFamily: MONO }}>{m.month.substring(5)}</div>
-                      <div style={{ fontSize: 10, fontWeight: 700, color, fontFamily: MONO }}>
+                      <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>{m.month.substring(5)}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color, fontFamily: MONO }}>
                         {portNum >= 0 ? "+" : ""}{portNum.toFixed(1)}%
                       </div>
                     </div>
@@ -514,7 +517,7 @@ export default function BacktestTab() {
           </Box>
           
           {/* Trade Log */}
-          <Box border="rgba(129,140,248,0.15)">
+          <Box>
             <div 
               onClick={() => setShowTrades(!showTrades)}
               style={{ 
@@ -525,31 +528,31 @@ export default function BacktestTab() {
                 marginBottom: showTrades ? 12 : 0
               }}
             >
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#818cf8", fontFamily: MONO, letterSpacing: 1 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1 }}>
                 TRADE LOG — {results.trades.length} TRADES
               </div>
-              <span style={{ color: "#555", fontSize: 12 }}>{showTrades ? "▲" : "▼"}</span>
+              <span style={{ color: "#f0f0f0", fontSize: 12 }}>{showTrades ? "▲" : "▼"}</span>
             </div>
             
             {showTrades && (
               <div style={{ overflowX: "auto", maxHeight: 400, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: MONO }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
                   <thead>
                     <tr style={{ background: "rgba(255,255,255,0.02)" }}>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#555" }}>Date</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#555" }}>Action</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#555" }}>Ticker</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#555" }}>Shares</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#555" }}>Price</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#555" }}>Value</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#555" }}>Return</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#555" }}>Days</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Date</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Action</th>
+                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Ticker</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Shares</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Price</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Value</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Return</th>
+                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Days</th>
                     </tr>
                   </thead>
                   <tbody>
                     {results.trades.slice(0, 100).map((t, i) => (
                       <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
-                        <td style={{ padding: "8px 10px", color: "#888" }}>{t.date}</td>
+                        <td style={{ padding: "8px 10px", color: "#f0f0f0" }}>{t.date}</td>
                         <td style={{ 
                           padding: "8px 10px", 
                           color: t.type === "BUY" ? "#60a5fa" : t.holdingReturn > 0 ? "#22c55e" : "#ef4444",
@@ -558,9 +561,9 @@ export default function BacktestTab() {
                           {t.type}
                         </td>
                         <td style={{ padding: "8px 10px", color: "#f0f0f0", fontWeight: 600 }}>{t.ticker}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#888" }}>{t.shares}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#888" }}>${t.price?.toFixed(2)}</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#888" }}>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>{t.shares}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>${t.price?.toFixed(2)}</td>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>
                           ${(t.cost || t.proceeds)?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </td>
                         <td style={{ 
@@ -570,7 +573,7 @@ export default function BacktestTab() {
                         }}>
                           {t.holdingReturn != null ? `${(t.holdingReturn * 100).toFixed(1)}%` : "-"}
                         </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#888" }}>
+                        <td style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>
                           {t.holdingDays || "-"}
                         </td>
                       </tr>
@@ -578,7 +581,7 @@ export default function BacktestTab() {
                   </tbody>
                 </table>
                 {results.trades.length > 100 && (
-                  <div style={{ textAlign: "center", color: "#555", fontSize: 10, padding: 8 }}>
+                  <div style={{ textAlign: "center", color: "#f0f0f0", fontSize: 11, padding: 8 }}>
                     Showing 100 of {results.trades.length} trades
                   </div>
                 )}
@@ -587,11 +590,11 @@ export default function BacktestTab() {
           </Box>
           
           {/* Disclaimer */}
-          <Box border="rgba(250,204,21,0.15)" style={{ background: "rgba(250,204,21,0.03)" }}>
-            <div style={{ fontSize: 10, color: "#facc15", fontWeight: 700, marginBottom: 8, fontFamily: MONO }}>
+          <Box style={{ background: "rgba(234,179,8,0.04)", borderColor: "rgba(234,179,8,0.15)" }}>
+            <div style={{ fontSize: 11, color: "#eab308", fontWeight: 700, marginBottom: 8, fontFamily: MONO }}>
               DISCLAIMER
             </div>
-            <div style={{ fontSize: 10, color: "#888", lineHeight: 1.6, fontFamily: "sans-serif" }}>
+            <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "sans-serif" }}>
               Past performance does not predict future results. This backtest uses historical data with adjusted prices 
               and simulated execution. Real trading involves slippage, commissions, taxes, and liquidity constraints 
               not modeled here. This is an educational tool for understanding strategy behavior, not a guarantee of 
@@ -602,10 +605,10 @@ export default function BacktestTab() {
       )}
       
       {!results && !loading && !error && (
-        <Box border="rgba(129,140,248,0.1)" style={{ textAlign: "center", padding: "60px 20px" }}>
+        <Box style={{ textAlign: "center", padding: "60px 20px" }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>Backtest</div>
-          <div style={{ fontSize: 12, color: "#555", marginBottom: 8 }}>Run a walk-forward backtest to measure strategy performance</div>
-          <div style={{ fontSize: 10, color: "#444" }}>Configure settings above and click "Run Backtest" to begin</div>
+          <div style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 8 }}>Run a walk-forward backtest to measure strategy performance</div>
+          <div style={{ fontSize: 12, color: "#f0f0f0" }}>Configure settings above and click "Run Backtest" to begin</div>
         </Box>
       )}
     </div>

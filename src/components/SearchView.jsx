@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Box, SH } from "./shared.jsx";
 
-const MONO = "'IBM Plex Mono', monospace";
+import { MONO } from "../lib/theme.js";
 
 export default function SearchView({ onSelectTicker }) {
   const [query, setQuery] = useState("");
@@ -14,8 +14,8 @@ export default function SearchView({ onSelectTicker }) {
 
   return (
     <div>
-      <Box border="rgba(129,140,248,0.1)" style={{ marginBottom: 16 }}>
-        <SH color="#818cf8">Search</SH>
+      <Box style={{ marginBottom: 16 }}>
+        <SH>Search</SH>
         <form onSubmit={handleSearch} style={{ display: "flex", gap: 8, maxWidth: 500 }}>
           <input
             type="text"
@@ -40,11 +40,11 @@ export default function SearchView({ onSelectTicker }) {
             disabled={!query.trim()}
             style={{
               padding: "10px 20px",
-              background: "rgba(129,140,248,0.15)",
-              border: "1px solid rgba(129,140,248,0.3)",
+              background: !query.trim() ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: 6,
-              color: !query.trim() ? "#555" : "#818cf8",
-              fontSize: 12,
+              color: !query.trim() ? "#f0f0f0" : "#f0f0f0",
+              fontSize: 13,
               fontWeight: 700,
               cursor: !query.trim() ? "not-allowed" : "pointer",
               fontFamily: MONO

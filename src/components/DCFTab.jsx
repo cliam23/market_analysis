@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback } from "react";
 import { InfoTip } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 
-const MONO = "'IBM Plex Mono', monospace";
+import { MONO } from "../lib/theme.js";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -10,8 +10,8 @@ function Box({ border, children, style: sx = {} }) {
       background: "rgba(255,255,255,0.02)",
       border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
       borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
+      padding: 16,
+      marginBottom: 12,
       ...sx
     }}>
       {children}
@@ -22,7 +22,7 @@ function Box({ border, children, style: sx = {} }) {
 function SH({ color, children }) {
   return (
     <div style={{
-      fontSize: 9,
+      fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
       color,
@@ -63,7 +63,7 @@ function EditableInput({ value, onChange, min, max, step = 0.001, suffix = "%", 
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <span style={{ fontSize: 9, color: "#666", fontFamily: MONO, textTransform: "uppercase" }}>{label}</span>
+      <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, textTransform: "uppercase" }}>{label}</span>
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
         <input
           type="text"
@@ -73,18 +73,18 @@ function EditableInput({ value, onChange, min, max, step = 0.001, suffix = "%", 
           onBlur={handleBlur}
           onKeyDown={e => e.key === "Enter" && handleBlur()}
           style={{
-            background: editing ? "rgba(129,140,248,0.1)" : "transparent",
-            border: editing ? "1px solid #818cf8" : "1px dashed #444",
+            background: editing ? "rgba(255,255,255,0.06)" : "transparent",
+            border: editing ? "1px solid rgba(255,255,255,0.2)" : "1px dashed #444",
             borderRadius: 4,
             padding: "4px 8px",
             color: "#f0f0f0",
-            fontSize: 12,
+            fontSize: 13,
             fontFamily: MONO,
             width: 60,
             outline: "none"
           }}
         />
-        <span style={{ fontSize: 10, color: "#666" }}>{suffix}</span>
+        <span style={{ fontSize: 12, color: "#f0f0f0" }}>{suffix}</span>
       </div>
     </div>
   );
@@ -96,10 +96,10 @@ function WACCBreakdown({ components }) {
   
   return (
     <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: 10, marginTop: 8 }}>
-      <div style={{ fontSize: 9, color: "#818cf8", marginBottom: 6, fontFamily: MONO }}>WACC COMPONENTS</div>
-      <div style={{ fontSize: 10, color: "#888", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 11, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>WACC COMPONENTS</div>
+      <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6 }}>
         <div>Cost of Equity: {(costOfEquity * 100).toFixed(1)}%</div>
-        <div style={{ fontSize: 9, color: "#555", marginLeft: 10 }}>Rf {riskFreeRate * 100}% + β {adjustedBeta.toFixed(2)} × ERP {equityRiskPremium * 100}%</div>
+        <div style={{ fontSize: 11, color: "#f0f0f0", marginLeft: 10 }}>Rf {riskFreeRate * 100}% + β {adjustedBeta.toFixed(2)} × ERP {equityRiskPremium * 100}%</div>
         <div>Cost of Debt: {(costOfDebt * 100).toFixed(1)}% → {(costOfDebtAfterTax * 100).toFixed(1)}% after tax</div>
         <div>Capital: {(equityWeight * 100).toFixed(0)}% equity / {(debtWeight * 100).toFixed(0)}% debt</div>
       </div>
@@ -275,25 +275,25 @@ export default function DCFTab({ data }) {
     <div>
       {/* Warnings */}
       {(data.warnings?.terminalHeavy || data.warnings?.financialSector || data.warnings?.highGrowth || data.warnings?.acquisitionGrowth) && (
-        <Box border="rgba(250,204,21,0.3)">
+        <Box border="rgba(234,179,8,0.2)">
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {data.warnings.terminalHeavy && (
-              <div style={{ fontSize: 10, color: "#facc15", padding: "4px 8px", background: "rgba(250,204,21,0.1)", borderRadius: 4 }}>
+              <div style={{ fontSize: 12, color: "#eab308", padding: "4px 8px", background: "rgba(234,179,8,0.1)", borderRadius: 4 }}>
                 ⚠️ Terminal value is {(data.terminalValue?.terminalAsPercentOfTotal * 100).toFixed(0)}% of total — model is sensitive to long-term assumptions
               </div>
             )}
             {data.warnings.financialSector && (
-              <div style={{ fontSize: 10, color: "#facc15", padding: "4px 8px", background: "rgba(250,204,21,0.1)", borderRadius: 4 }}>
+              <div style={{ fontSize: 12, color: "#eab308", padding: "4px 8px", background: "rgba(234,179,8,0.1)", borderRadius: 4 }}>
                 ℹ️ DCF less applicable for financial sector companies
               </div>
             )}
             {data.warnings.highGrowth && (
-              <div style={{ fontSize: 10, color: "#a78bfa", padding: "4px 8px", background: "rgba(167,139,250,0.1)", borderRadius: 4 }}>
+              <div style={{ fontSize: 12, color: "#eab308", padding: "4px 8px", background: "rgba(234,179,8,0.1)", borderRadius: 4 }}>
                 High growth assumptions — verify sustainability
               </div>
             )}
             {data.warnings.acquisitionGrowth && (
-              <div style={{ fontSize: 10, color: "#f97316", padding: "4px 8px", background: "rgba(249,115,22,0.1)", borderRadius: 4 }}>
+              <div style={{ fontSize: 12, color: "#f97316", padding: "4px 8px", background: "rgba(249,115,22,0.1)", borderRadius: 4 }}>
                 📈 {data.warnings.acquisitionGrowth}
               </div>
             )}
@@ -302,13 +302,13 @@ export default function DCFTab({ data }) {
       )}
 
       {/* Assumptions Panel */}
-      <Box border="rgba(129,140,248,0.15)">
+      <Box border="rgba(255,255,255,0.06)">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SH color="#818cf8">ASSUMPTIONS</SH>
+            <SH color="#f0f0f0">ASSUMPTIONS</SH>
             <InfoTip title={EDUCATION.dcf.title}>{EDUCATION.dcf.content}</InfoTip>
           </div>
-          <button onClick={resetToDefaults} style={{ fontSize: 9, padding: "4px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, color: "#666", cursor: "pointer", fontFamily: MONO }}>
+          <button onClick={resetToDefaults} style={{ fontSize: 11, padding: "4px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, color: "#f0f0f0", cursor: "pointer", fontFamily: MONO }}>
             RESET
           </button>
         </div>
@@ -316,12 +316,12 @@ export default function DCFTab({ data }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
           {/* Growth */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
               Growth
               <InfoTip title={EDUCATION.phaseGrowth.title}>{EDUCATION.phaseGrowth.content}</InfoTip>
             </div>
-            <div style={{ fontSize: 11, color: "#888" }}>Base Revenue: <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{fmtBillions(data.inputs.baseRevenue)}</span></div>
-            <div style={{ fontSize: 9, color: "#a78bfa", fontFamily: MONO }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0" }}>Base Revenue: <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{fmtBillions(data.inputs.baseRevenue)}</span></div>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
               {data.dataSources?.growthSource === "manual_yoy" 
                 ? `YoY (manual): ${(data.dataSources.manualRevenueGrowth * 100).toFixed(1)}%` 
                 : data.dataSources?.growthSource === "yahoo_revenueGrowth" 
@@ -341,7 +341,7 @@ export default function DCFTab({ data }) {
               min={0} max={0.15}
             />
             {phase2Warning && (
-              <div style={{ fontSize: 9, color: "#facc15", marginTop: -4 }}>{phase2Warning}</div>
+              <div style={{ fontSize: 11, color: "#eab308", marginTop: -4 }}>{phase2Warning}</div>
             )}
             <EditableInput
               label="Terminal Growth"
@@ -350,17 +350,17 @@ export default function DCFTab({ data }) {
               min={0} max={0.05}
             />
             {terminalWarning && (
-              <div style={{ fontSize: 9, color: "#facc15", marginTop: -4 }}>{terminalWarning}</div>
+              <div style={{ fontSize: 11, color: "#eab308", marginTop: -4 }}>{terminalWarning}</div>
             )}
           </div>
           
           {/* Margins */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
               Margins
               <InfoTip title={EDUCATION.fcfMargin.title}>{EDUCATION.fcfMargin.content}</InfoTip>
             </div>
-            <div style={{ fontSize: 11, color: "#888" }}>Current FCF Margin: <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{(data.inputs.fcfMargin * 100).toFixed(1)}%</span></div>
+            <div style={{ fontSize: 11, color: "#f0f0f0" }}>Current FCF Margin: <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{(data.inputs.fcfMargin * 100).toFixed(1)}%</span></div>
             <EditableInput
               label="Terminal FCF Margin"
               value={inputs.terminalFCFMargin}
@@ -371,7 +371,7 @@ export default function DCFTab({ data }) {
           
           {/* WACC */}
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, textTransform: "uppercase", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
               Discount Rate
               <InfoTip title={EDUCATION.wacc.title}>{EDUCATION.wacc.content}</InfoTip>
             </div>
@@ -381,7 +381,7 @@ export default function DCFTab({ data }) {
               onChange={v => setInputs(i => ({ ...i, wacc: v }))}
               min={0.05} max={0.15}
             />
-            <div style={{ fontSize: 9, color: "#666", cursor: "pointer" }} onClick={() => setShowWACC(!showWACC)}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", cursor: "pointer" }} onClick={() => setShowWACC(!showWACC)}>
               {showWACC ? "▼ Hide" : "▶ Show"} breakdown
             </div>
             {showWACC && <WACCBreakdown components={data.inputs.waccComponents} />}
@@ -393,14 +393,14 @@ export default function DCFTab({ data }) {
       <Box border="rgba(34,197,94,0.2)">
         <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginBottom: 4 }}>INTRINSIC VALUE</div>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 4 }}>INTRINSIC VALUE</div>
             <div style={{ fontSize: 36, fontWeight: 900, color: calc.valuation.upside >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
               ${calc.valuation.ivPerShare.toFixed(2)}
             </div>
             {data.valuation?.buybackAdjustedIV && (
               <div style={{ marginTop: 4 }}>
-                <div style={{ fontSize: 9, color: "#a78bfa", fontFamily: MONO }}>BUYBACK ADJ</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: "#a78bfa", fontFamily: MONO }}>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>BUYBACK ADJ</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>
                   ${data.valuation.buybackAdjustedIV.toFixed(2)}
                 </div>
               </div>
@@ -409,29 +409,29 @@ export default function DCFTab({ data }) {
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 8 }}>
               <div>
-                <div style={{ fontSize: 9, color: "#555", fontFamily: MONO }}>CURRENT PRICE</div>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>CURRENT PRICE</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>${data.currentPrice.toFixed(2)}</div>
               </div>
               <div>
-                <div style={{ fontSize: 9, color: "#555", fontFamily: MONO }}>BASE UPSIDE</div>
+                <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>BASE UPSIDE</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: calc.valuation.upside >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
                   {calc.valuation.upside >= 0 ? "+" : ""}{(calc.valuation.upside * 100).toFixed(1)}%
                 </div>
               </div>
               {data.valuation?.buybackAdjustedIV && data.valuation.buybackAdjustedUpside != null && (
                 <div>
-                  <div style={{ fontSize: 9, color: "#a78bfa", fontFamily: MONO }}>ADJ UPSIDE</div>
+                  <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>ADJ UPSIDE</div>
                   <div style={{ fontSize: 18, fontWeight: 700, color: data.valuation.buybackAdjustedUpside >= 0 ? "#22c55e" : "#ef4444", fontFamily: MONO }}>
                     {data.valuation.buybackAdjustedUpside >= 0 ? "+" : ""}{(data.valuation.buybackAdjustedUpside * 100).toFixed(1)}%
                   </div>
                 </div>
               )}
             </div>
-            <div style={{ fontSize: 10, color: "#666" }}>
+            <div style={{ fontSize: 12, color: "#f0f0f0" }}>
               Enterprise Value: {fmtBillions(calc.valuation.enterpriseValue)} | 
               {fmtBillions(data.inputs.netCash)} net {data.inputs.netCash >= 0 ? "cash" : "debt"}
               {data.valuation?.buybackYield > 0.01 && (
-                <span style={{ color: "#a78bfa" }}> | {(data.valuation.buybackYield * 100).toFixed(1)}% buyback yield</span>
+                <span style={{ color: "#f0f0f0" }}> | {(data.valuation.buybackYield * 100).toFixed(1)}% buyback yield</span>
               )}
             </div>
           </div>
@@ -439,12 +439,12 @@ export default function DCFTab({ data }) {
       </Box>
 
       {/* Projection Table */}
-      <Box border="rgba(129,140,248,0.1)">
-        <SH color="#818cf8">10-YEAR PROJECTIONS</SH>
+      <Box border="rgba(255,255,255,0.06)">
+        <SH color="#f0f0f0">10-YEAR PROJECTIONS</SH>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: MONO }}>
             <thead>
-              <tr style={{ color: "#555", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+              <tr style={{ color: "#f0f0f0", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
                 <th style={{ padding: "8px 6px", textAlign: "left" }}>Yr</th>
                 <th style={{ padding: "8px 6px", textAlign: "right" }}>Revenue</th>
                 <th style={{ padding: "8px 6px", textAlign: "right" }}>Growth</th>
@@ -460,20 +460,20 @@ export default function DCFTab({ data }) {
                   <td style={{ padding: "8px 6px", color: p.year > 5 ? "#888" : "#f0f0f0" }}>{p.year}</td>
                   <td style={{ padding: "8px 6px", textAlign: "right", color: "#f0f0f0" }}>{fmtBillions(p.revenue)}</td>
                   <td style={{ padding: "8px 6px", textAlign: "right", color: p.growth >= 0.08 ? "#4ade80" : "#888" }}>{(p.growth * 100).toFixed(1)}%</td>
-                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#a78bfa" }}>{(p.fcfMargin * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#f0f0f0" }}>{(p.fcfMargin * 100).toFixed(1)}%</td>
                   <td style={{ padding: "8px 6px", textAlign: "right", color: "#f0f0f0" }}>{fmtBillions(p.fcf)}</td>
-                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#666" }}>{p.discountFactor.toFixed(3)}</td>
-                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#818cf8" }}>{fmtBillions(p.presentValue)}</td>
+                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#f0f0f0" }}>{p.discountFactor.toFixed(3)}</td>
+                  <td style={{ padding: "8px 6px", textAlign: "right", color: "#f0f0f0" }}>{fmtBillions(p.presentValue)}</td>
                 </tr>
               ))}
-              <tr style={{ background: "rgba(129,140,248,0.08)", fontWeight: 600 }}>
-                <td style={{ padding: "10px 6px", color: "#818cf8" }}>TV</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#888" }}>—</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#888" }}>—</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#888" }}>—</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#888" }}>—</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#888" }}>—</td>
-                <td style={{ padding: "10px 6px", textAlign: "right", color: "#818cf8" }}>{fmtBillions(calc.terminal.pvOfTerminal)}</td>
+              <tr style={{ background: "rgba(255,255,255,0.04)", fontWeight: 600 }}>
+                <td style={{ padding: "10px 6px", color: "#f0f0f0" }}>TV</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>—</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>—</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>—</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>—</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>—</td>
+                <td style={{ padding: "10px 6px", textAlign: "right", color: "#f0f0f0" }}>{fmtBillions(calc.terminal.pvOfTerminal)}</td>
               </tr>
             </tbody>
           </table>
@@ -481,28 +481,28 @@ export default function DCFTab({ data }) {
       </Box>
 
       {/* Sensitivity Table */}
-      <Box border="rgba(250,204,21,0.15)">
+      <Box border="rgba(234,179,8,0.15)">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <SH color="#facc15">SENSITIVITY ANALYSIS</SH>
+          <SH color="#eab308">SENSITIVITY ANALYSIS</SH>
           <InfoTip title={EDUCATION.sensitivityTable.title}>{EDUCATION.sensitivityTable.content}</InfoTip>
         </div>
-        <div style={{ fontSize: 10, color: "#666", marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 10 }}>
           Intrinsic value per share at different WACC × Terminal Growth assumptions
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 10, fontFamily: MONO }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
             <thead>
               <tr>
-                <th style={{ padding: "6px", color: "#555" }}></th>
+                <th style={{ padding: "6px", color: "#f0f0f0" }}></th>
                 {calc.sensitivity.tgValues.map(tg => (
-                  <th key={tg} style={{ padding: "6px 10px", textAlign: "center", color: "#555" }}>TG {(tg * 100).toFixed(1)}%</th>
+                  <th key={tg} style={{ padding: "6px 10px", textAlign: "center", color: "#f0f0f0" }}>TG {(tg * 100).toFixed(1)}%</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {calc.sensitivity.matrix.map((row, wi) => (
                 <tr key={wi}>
-                  <td style={{ padding: "6px 10px", color: "#555", textAlign: "right" }}>WACC {(calc.sensitivity.waccValues[wi] * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "6px 10px", color: "#f0f0f0", textAlign: "right" }}>WACC {(calc.sensitivity.waccValues[wi] * 100).toFixed(1)}%</td>
                   {row.map((iv, ti) => {
                     const isCurrent = Math.abs(inputs.wacc - calc.sensitivity.waccValues[wi]) < 0.003 &&
                                      Math.abs(inputs.terminalGrowth - calc.sensitivity.tgValues[ti]) < 0.003;
@@ -516,7 +516,7 @@ export default function DCFTab({ data }) {
                         background: isMarket ? "rgba(250,204,21,0.25)" : cellColor(iv),
                         color: isMarket ? "#eab308" : cellTextColor(iv),
                         fontWeight: isCurrent || isMarket ? 700 : 400,
-                        border: isCurrent ? "2px solid #818cf8" : (isMarket ? "2px dashed #eab308" : "1px solid rgba(255,255,255,0.05)"),
+                        border: isCurrent ? "2px solid #f0f0f0" : (isMarket ? "2px dashed #eab308" : "1px solid rgba(255,255,255,0.05)"),
                         borderRadius: 4,
                         minWidth: 60
                       }}>
@@ -530,7 +530,7 @@ export default function DCFTab({ data }) {
           </table>
         </div>
         {data.marketImplied && (
-          <div style={{ marginTop: 10, fontSize: 10, color: "#888" }}>
+          <div style={{ marginTop: 10, fontSize: 12, color: "#f0f0f0" }}>
             Market price implies ~{(data.marketImplied.wacc * 100).toFixed(1)}% WACC and {(data.marketImplied.terminalGrowth * 100).toFixed(1)}% terminal growth
           </div>
         )}
@@ -538,9 +538,9 @@ export default function DCFTab({ data }) {
 
       {/* Data Source */}
       <Box border="rgba(255,255,255,0.05)">
-        <div style={{ fontSize: 9, color: "#444", fontFamily: MONO }}>
+        <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
           <div style={{ marginBottom: 4 }}>DATA SOURCE: {data.dataSources?.fcfSource?.toUpperCase()?.replace("_", " ")}</div>
-          <div style={{ color: "#333", fontSize: 8 }}>
+          <div style={{ color: "#f0f0f0", fontSize: 10 }}>
             This DCF uses a two-phase growth model. Phase 1 (years 1-5) uses near-term growth estimates, 
             Phase 2 (6-10) fades toward the terminal rate. Terminal value uses Gordon Growth Model.
           </div>

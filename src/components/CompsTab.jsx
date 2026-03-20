@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { InfoTip } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 
-const MONO = "'IBM Plex Mono', monospace";
+import { MONO } from "../lib/theme.js";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -10,8 +10,8 @@ function Box({ border, children, style: sx = {} }) {
       background: "rgba(255,255,255,0.02)",
       border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
       borderRadius: 10,
-      padding: 14,
-      marginBottom: 10,
+      padding: 16,
+      marginBottom: 12,
       ...sx
     }}>
       {children}
@@ -22,7 +22,7 @@ function Box({ border, children, style: sx = {} }) {
 function SH({ color, children }) {
   return (
     <div style={{
-      fontSize: 9,
+      fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
       color,
@@ -50,7 +50,7 @@ function ScoreRing({ score }) {
       <div style={{ position: "relative", width: 90, height: 90 }}>
         <svg width="90" height="90">
           <circle cx="45" cy="45" r="35" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
-          <text x="45" y="50" textAnchor="middle" fill="#666" fontSize="14" fontFamily="IBM Plex Mono, monospace">N/A</text>
+          <text x="45" y="50" textAnchor="middle" fill="#666" fontSize="16" fontFamily="IBM Plex Mono, monospace">N/A</text>
         </svg>
       </div>
     );
@@ -117,7 +117,6 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
     return "#f87171";
   };
   
-  // Excluded metric (buyback distortion)
   if (excluded) {
     return (
       <div style={{
@@ -127,15 +126,15 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
         flex: "1 1 200px",
         border: "1px dashed rgba(255,255,255,0.1)"
       }}>
-        <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
           {label}
           {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 20, fontWeight: 700, color: "#666", fontFamily: MONO }}>{targetValue?.toFixed(1)}</span>
-          <span style={{ fontSize: 9, color: "#888", padding: "2px 6px", background: "rgba(255,255,255,0.05)", borderRadius: 3 }}>EXCLUDED</span>
+          <span style={{ fontSize: 20, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>{targetValue?.toFixed(1)}</span>
+          <span style={{ fontSize: 11, color: "#f0f0f0", padding: "2px 6px", background: "rgba(255,255,255,0.05)", borderRadius: 3 }}>EXCLUDED</span>
         </div>
-        <div style={{ fontSize: 9, color: "#666", marginTop: 6, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 6, lineHeight: 1.4 }}>
           {excludedReason || "Distorted by share buybacks"}
         </div>
       </div>
@@ -151,11 +150,11 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
         flex: "1 1 200px",
         opacity: 0.5
       }}>
-        <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
           {label}
           {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
         </div>
-        <div style={{ fontSize: 14, color: "#666", fontFamily: MONO, textAlign: "center", padding: "12px 0" }}>
+        <div style={{ fontSize: 14, color: "#f0f0f0", fontFamily: MONO, textAlign: "center", padding: "12px 0" }}>
           Data unavailable
         </div>
       </div>
@@ -169,7 +168,7 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
       padding: 12,
       flex: "1 1 200px"
     }}>
-      <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 8, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
         {label}
         {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
       </div>
@@ -179,7 +178,7 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
             <span style={{ fontSize: 20, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>
               {targetValue.toFixed(1)}
             </span>
-            <span style={{ fontSize: 11, color: "#666", fontFamily: MONO }}>
+            <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
               median: {peerMedian.toFixed(1)}
             </span>
           </div>
@@ -193,11 +192,11 @@ function MetricCard({ label, targetValue, peerMedian, percentile, verdict, exclu
           </div>
         </div>
       </div>
-      <div style={{ fontSize: 9, color: getVerdictColor(verdict), marginTop: 6, fontFamily: MONO, textTransform: "capitalize" }}>
+      <div style={{ fontSize: 11, color: getVerdictColor(verdict), marginTop: 6, fontFamily: MONO, textTransform: "capitalize" }}>
         {verdict.replace("_", " ")}
       </div>
       {softCapped && (
-        <div style={{ fontSize: 8, color: "#888", marginTop: 4 }}>
+        <div style={{ fontSize: 10, color: "#f0f0f0", marginTop: 4 }}>
           * P/B elevated by high ROE
         </div>
       )}
@@ -222,9 +221,9 @@ function ComparisonTable({ comps }) {
   
   return (
     <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: MONO }}>
         <thead>
-          <tr style={{ color: "#555", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
+          <tr style={{ color: "#f0f0f0", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
             <th style={{ padding: "8px 10px", textAlign: "left" }}>Ticker</th>
             <th style={{ padding: "8px 10px", textAlign: "right" }}>Mkt Cap</th>
             <th style={{ padding: "8px 10px", textAlign: "right" }}>P/E</th>
@@ -240,15 +239,15 @@ function ComparisonTable({ comps }) {
           {comps.compTable.map((stock, i) => (
             <tr key={stock.ticker} style={{
               borderBottom: "1px solid rgba(255,255,255,0.03)",
-              background: stock.isTarget ? "rgba(129,140,248,0.08)" : "transparent"
+              background: stock.isTarget ? "rgba(255,255,255,0.04)" : "transparent"
             }}>
               <td style={{ padding: "10px 10px" }}>
-                <span style={{ fontWeight: stock.isTarget ? 700 : 400, color: stock.isTarget ? "#818cf8" : "#f0f0f0" }}>
+                <span style={{ fontWeight: stock.isTarget ? 700 : 400, color: "#f0f0f0" }}>
                   {stock.ticker}
                 </span>
-                {stock.isTarget && <span style={{ fontSize: 8, color: "#818cf8", marginLeft: 6 }}>TARGET</span>}
+                {stock.isTarget && <span style={{ fontSize: 10, color: "#f0f0f0", marginLeft: 6 }}>TARGET</span>}
               </td>
-              <td style={{ padding: "10px 10px", textAlign: "right", color: "#888" }}>{formatMC(stock.marketCap)}</td>
+              <td style={{ padding: "10px 10px", textAlign: "right", color: "#f0f0f0" }}>{formatMC(stock.marketCap)}</td>
               <td style={{ padding: "10px 10px", textAlign: "right", color: stock.trailingPE ? "#f0f0f0" : "#444" }}>
                 {formatVal(stock.trailingPE)}
               </td>
@@ -304,7 +303,7 @@ export default function CompsTab({ ticker }) {
 
   if (loading) {
     return (
-      <div style={{ textAlign: "center", padding: 40, color: "#666" }}>
+      <div style={{ textAlign: "center", padding: 40, color: "#f0f0f0" }}>
         Loading peer comparison...
       </div>
     );
@@ -334,38 +333,38 @@ export default function CompsTab({ ticker }) {
   return (
     <div>
       {/* Summary Card */}
-      <Box border="rgba(129,140,248,0.2)">
+      <Box border="rgba(255,255,255,0.06)">
         {hasInsufficientData && (
-          <div style={{ fontSize: 10, color: "#facc15", background: "rgba(250,204,21,0.1)", border: "1px solid rgba(250,204,21,0.3)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: "#eab308", background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
             Limited valuation data ({validMetricCount} of 7 metrics) — comparison may be unreliable
           </div>
         )}
         <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
           <ScoreRing score={hasInsufficientData ? null : composite.relativeValueScore} />
           <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 11, color: "#666", marginBottom: 6, fontFamily: MONO, display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO, display: "flex", alignItems: "center", gap: 6 }}>
               RELATIVE VALUE SCORE
               <InfoTip title={EDUCATION.relativeValueScore.title}>{EDUCATION.relativeValueScore.content}</InfoTip>
             </div>
             <div style={{ fontSize: 24, fontWeight: 700, color: hasInsufficientData ? "#666" : getVerdictColor(composite.verdict), marginBottom: 8 }}>
               {hasInsufficientData ? "N/A" : composite.verdict.replace("_", " ").toUpperCase()}
             </div>
-            <div style={{ fontSize: 12, color: "#888", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.5 }}>
               {composite.summary}
             </div>
             {composite.growthContext !== "fairly_priced" && (
-              <div style={{ marginTop: 8, fontSize: 11, color: "#a78bfa" }}>
+              <div style={{ marginTop: 8, fontSize: 11, color: "#f0f0f0" }}>
                 Growth context: {composite.growthContext.replace("_", " ")}
               </div>
             )}
             {composite.growthDifferentialNote && (
-              <div style={{ marginTop: 10, fontSize: 10, color: "#888", background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "10px 12px", lineHeight: 1.5 }}>
+              <div style={{ marginTop: 10, fontSize: 12, color: "#f0f0f0", background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "10px 12px", lineHeight: 1.5 }}>
                 {composite.growthDifferentialNote}
               </div>
             )}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginBottom: 4, display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+            <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 4, display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
               IMPLIED FAIR VALUE
               <InfoTip title={EDUCATION.impliedFairValue.title}>{EDUCATION.impliedFairValue.content}</InfoTip>
             </div>
@@ -378,22 +377,22 @@ export default function CompsTab({ ticker }) {
                   {impliedFairValue.upside >= 0 ? "+" : ""}{impliedFairValue.upside.toFixed(1)}% from ${target.currentPrice?.toFixed(2)}
                 </div>
                 {impliedFairValue.methodCount > 1 && (
-                  <div style={{ fontSize: 9, color: "#555", marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 2 }}>
                     Based on {impliedFairValue.methodCount} methods
                   </div>
                 )}
                 {impliedFairValue.pbExcluded && (
-                  <div style={{ fontSize: 9, color: "#666", marginTop: 2 }}>
+                  <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 2 }}>
                     P/B excluded (buyback distortion)
                   </div>
                 )}
               </>
             ) : (
-              <div style={{ fontSize: 14, color: "#666" }}>Insufficient data</div>
+              <div style={{ fontSize: 14, color: "#f0f0f0" }}>Insufficient data</div>
             )}
           </div>
         </div>
-        <div style={{ marginTop: 12, fontSize: 9, color: "#444", fontFamily: MONO }}>
+        <div style={{ marginTop: 12, fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
           Peer source: {data.peerSource?.replace("_", " ")} | {data.peers?.length || 0} peers
         </div>
       </Box>
@@ -401,7 +400,7 @@ export default function CompsTab({ ticker }) {
       {/* Valuation Metrics */}
       <Box border="rgba(255,255,255,0.05)">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <SH color="#818cf8">VALUATION METRICS</SH>
+          <SH color="#f0f0f0">VALUATION METRICS</SH>
           <InfoTip title={EDUCATION.comps.title}>{EDUCATION.comps.content}</InfoTip>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -485,7 +484,7 @@ export default function CompsTab({ ticker }) {
             {Object.entries(metrics)
               .filter(([k, v]) => v?.explanation)
               .map(([key, m]) => (
-                <div key={key} style={{ fontSize: 11, color: "#999", lineHeight: 1.5 }}>
+                <div key={key} style={{ fontSize: 13, color: "#f0f0f0", lineHeight: 1.5 }}>
                   <span style={{ color: "#f0f0f0", fontWeight: 600 }}>{key.replace(/([A-Z])/g, ' $1').toUpperCase()}:</span> {m.explanation}
                 </div>
               ))}

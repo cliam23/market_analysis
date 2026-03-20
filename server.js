@@ -3127,8 +3127,6 @@ app.delete('/api/paper-trade/reset', (req, res) => {
 async function takeNavSnapshot(portfolio) {
   const today = new Date().toISOString().split('T')[0];
 
-  if (portfolio.lastNavUpdate === today) return portfolio;
-
   const tickers = [...new Set([
     ...portfolio.holdings.map(h => h.ticker),
     'SPY'
@@ -3161,11 +3159,14 @@ async function takeNavSnapshot(portfolio) {
     spyValue = portfolio.navHistory[portfolio.navHistory.length - 1].spyValue;
   }
 
-  portfolio.navHistory.push({
-    date: today,
-    portfolioValue: parseFloat(portfolioValue.toFixed(2)),
-    spyValue: parseFloat(spyValue.toFixed(2))
-  });
+  const todayEntry = { date: today, portfolioValue: parseFloat(portfolioValue.toFixed(2)), spyValue: parseFloat(spyValue.toFixed(2)) };
+  const existingIdx = portfolio.navHistory.findIndex(n => n.date === today);
+
+  if (existingIdx >= 0) {
+    portfolio.navHistory[existingIdx] = todayEntry;
+  } else {
+    portfolio.navHistory.push(todayEntry);
+  }
   portfolio.lastNavUpdate = today;
   savePortfolio(portfolio);
   return portfolio;
@@ -3191,8 +3192,7 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
     let portfolio = loadPortfolio();
     if (!portfolio) return res.json({ success: true, portfolio: null });
 
-    const today = new Date().toISOString().split('T')[0];
-    if (portfolio.lastNavUpdate !== today && portfolio.holdings.length > 0) {
+    if (portfolio.holdings.length > 0) {
       portfolio = await takeNavSnapshot(portfolio);
     }
 

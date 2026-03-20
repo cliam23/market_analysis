@@ -6,8 +6,7 @@ import AboutTab from "./components/AboutTab.jsx";
 const RankingsView = lazy(() => import("./components/RankingsView.jsx"));
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
 
-const MONO = "'IBM Plex Mono', monospace";
-const SANS = "'DM Sans', sans-serif";
+import { MONO, SANS } from "./lib/theme.js";
 
 export default function App() {
   const [tab, setTab] = useState("search");
@@ -47,11 +46,11 @@ export default function App() {
       }}
       style={{
         padding: "10px 20px",
-        background: tab === id ? "rgba(129,140,248,0.15)" : "transparent",
+        background: tab === id ? "rgba(255,255,255,0.08)" : "transparent",
         border: "none",
         borderRadius: 6,
-        color: tab === id ? "#f0f0f0" : "#555",
-        fontSize: 12,
+        color: tab === id ? "#f0f0f0" : "#f0f0f0",
+        fontSize: 13,
         fontWeight: 700,
         cursor: "pointer",
         fontFamily: MONO,
@@ -77,17 +76,17 @@ export default function App() {
         body { margin: 0; }
       `}</style>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 16px" }}>
+      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 32px" }}>
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 5, color: "#818cf8", marginBottom: 5, fontFamily: MONO }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 5, color: "#f0f0f0", marginBottom: 5, fontFamily: MONO }}>
             VALUE SIGNAL PRO
           </div>
           <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>
             Buffett-Grade Analysis Engine
           </h1>
-          <p style={{ fontSize: 10, color: "#444", marginTop: 5, fontFamily: MONO }}>
-            Real-time Analysis · Momentum Rankings · Backtest · Paper Trade · About
+          <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 5, fontFamily: MONO }}>
+            Real Time Analysis · Momentum Rankings · Backtest · Paper Trade · About
           </p>
         </div>
 
@@ -98,7 +97,7 @@ export default function App() {
             border: "1px solid rgba(239,68,68,0.3)",
             borderRadius: 6,
             marginBottom: 16,
-            fontSize: 11,
+            fontSize: 12,
             color: "#ef4444",
             fontFamily: MONO
           }}>
@@ -107,7 +106,7 @@ export default function App() {
         )}
 
         {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 4, width: "fit-content" }}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 4, width: "fit-content", margin: "0 auto 20px" }}>
           {tabBtn("search", <><span>🔍</span> Search</>)}
           {tabBtn("backtest", "Backtest")}
           {tabBtn("rankings", <><span>📊</span> Momentum Rankings</>)}
@@ -121,7 +120,7 @@ export default function App() {
             <SearchView onSelectTicker={handleSelectTicker} />
           </div>
           {selectedTicker && (
-            <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#555", fontFamily: MONO, fontSize: 11 }}>Loading analysis...</div>}>
+            <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>Loading analysis...</div>}>
               <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
             </Suspense>
           )}
@@ -134,7 +133,7 @@ export default function App() {
 
         {/* Rankings tab — remounts fresh each time */}
         {tab === "rankings" && (
-          <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#555", fontFamily: MONO, fontSize: 11 }}>Loading...</div>}>
+          <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>Loading...</div>}>
             <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
           </Suspense>
         )}
@@ -156,7 +155,7 @@ export default function App() {
           borderTop: "1px solid rgba(255,255,255,0.05)",
           textAlign: "center"
         }}>
-          <div style={{ fontSize: 9, color: "#333", fontFamily: MONO, lineHeight: 1.8 }}>
+          <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.8 }}>
             <p style={{ margin: "0 0 5px" }}>Educational tool · Not financial advice · Verify independently</p>
             <p style={{ margin: 0 }}>
               Powered by Yahoo Finance · Analysis algorithms from Buffett methodology
