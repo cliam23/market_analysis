@@ -92,7 +92,9 @@ const UNIVERSE_OPTIONS = [
 ];
 
 const STRATEGY_OPTIONS = [
-  { id: "full_composite", label: "Full Composite (Buffett)" },
+  { id: "full_composite", label: "Full Composite" },
+  { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
+  { id: "full_composite_turbo", label: "Full Composite (Turbo — max risk)" },
   { id: "quality_momentum", label: "Quality + Momentum" },
   { id: "momentum_value", label: "Momentum + Value" },
   { id: "momentum", label: "Momentum Only" }

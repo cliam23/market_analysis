@@ -6,6 +6,8 @@ const STRATEGIES = [
   { id: "momentum", label: "Momentum Only" },
   { id: "momentum_value", label: "Momentum + Value" },
   { id: "full_composite", label: "Full Composite" },
+  { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
+  { id: "full_composite_turbo", label: "Full Composite (Turbo)" },
   { id: "quality_momentum", label: "Quality + Momentum" }
 ];
 
@@ -33,7 +35,9 @@ const METHODOLOGY = {
   momentum: "Ranks by risk-adjusted momentum (annualized return / volatility) with optional trend filter bonus. Pure price-based signal.",
   momentum_value: "Combines momentum (60%) with valuation metrics like P/E and P/B (40%). Balances price trend with value attractiveness.",
   quality_momentum: "Weights quality fundamentals (60%) — ROE, gross margin, operating margin — alongside momentum (40%).",
-  full_composite: "Runs the full Buffett-grade analysis engine: quality, moat, valuation, ROIC, earnings quality, momentum, shareholder yield, with constraint penalties."
+  full_composite: "Runs the full Buffett-grade analysis engine: quality, moat, valuation, ROIC, earnings quality, momentum, shareholder yield, with constraint penalties.",
+  full_composite_aggressive: "Aggressive variant: higher momentum with momentum-quality blend, inverse-vol sizing, tighter sector cap (30%), faster regime de-risking, daily stop checks.",
+  full_composite_turbo: "Maximum risk: minimal quality filters, very wide vol allowance, momentum + momentum-quality blend. For experimentation only."
 };
 
 const selectStyle = {
