@@ -91,11 +91,17 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
+const COMPOSITE_FAMILY = ["full_composite", "full_composite_aggressive", "full_composite_turbo"];
+function isCompositeFamily(s) {
+  return COMPOSITE_FAMILY.includes(s);
+}
+
 export default function BacktestTab() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [showTrades, setShowTrades] = useState(false);
+  const [compareSnaps, setCompareSnaps] = useState({ full_composite: null, full_composite_aggressive: null });
   
   const [settings, setSettings] = useState({
     universe: "sp500_top50",
@@ -142,7 +148,9 @@ export default function BacktestTab() {
   const strategyOptions = [
     { id: "momentum", label: "Momentum Only" },
     { id: "momentum_value", label: "Momentum + Value" },
-    { id: "full_composite", label: "Full Composite (Buffett)" },
+    { id: "full_composite", label: "Full Composite" },
+    { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
+    { id: "full_composite_turbo", label: "Full Composite (Turbo — max risk)" },
     { id: "quality_momentum", label: "Quality + Momentum" }
   ];
   
@@ -172,6 +180,18 @@ export default function BacktestTab() {
       }
       
       setResults(data);
+      const strat = (data.strategy || "").toLowerCase().trim();
+      if (strat === "full_composite" || strat === "full_composite_aggressive") {
+        setCompareSnaps((prev) => ({
+          ...prev,
+          [strat]: {
+            performance: data.performance,
+            strategy: strat,
+            universe: data.universe,
+            period: data.period
+          }
+        }));
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -264,7 +284,7 @@ export default function BacktestTab() {
           >
             {loading ? "RUNNING..." : "RUN BACKTEST"}
           </button>
-          {settings.strategy === 'full_composite' && (
+          {isCompositeFamily(settings.strategy) && (
             <button
               onClick={() => runBacktest(true)}
               disabled={loading || optimizing || (results?.optimizationStatus?.frozen)}
@@ -286,16 +306,26 @@ export default function BacktestTab() {
         </div>
       </Box>
       
-      {settings.strategy === 'full_composite' && (
+      {isCompositeFamily(settings.strategy) && (
         <Box style={{ background: "rgba(234,179,8,0.04)", marginBottom: 16, borderColor: "rgba(234,179,8,0.15)" }}>
           <div style={{ fontSize: 11, color: "#eab308", fontWeight: 700, marginBottom: 6, fontFamily: MONO }}>
             FUNDAMENTAL DATA ASSUMPTION
           </div>
           <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "sans-serif" }}>
-            The Full Composite strategy uses fundamental scores (Buffett Quality, Moat, ROIC, Earnings Quality, Shareholder Yield) 
-            that are point-in-time approximations. For this backtest, fundamental data is fetched once at the start and held 
-            stable throughout the simulation period to prevent look-ahead bias. This is a conservative assumption — in reality, 
-            fundamentals evolve and quality signals shift over time.
+            {settings.strategy === "full_composite_turbo" ? (
+              <>
+                Turbo is maximum risk: almost no quality floor, wide volatility allowance, and faster stop/regime reactions.
+                Fundamentals are still loaded for scoring weights where used, but filters are largely disabled. Not suitable
+                for capital you cannot afford to lose.
+              </>
+            ) : (
+              <>
+                The Full Composite strategy uses fundamental scores (Buffett Quality, Moat, ROIC, Earnings Quality, Shareholder Yield)
+                that are point-in-time approximations. For this backtest, fundamental data is fetched once at the start and held
+                stable throughout the simulation period to prevent look-ahead bias. This is a conservative assumption — in reality,
+                fundamentals evolve and quality signals shift over time.
+              </>
+            )}
           </div>
         </Box>
       )}
@@ -373,7 +403,88 @@ export default function BacktestTab() {
                 color={parseFloat(results.performance.hitRate) >= 50 ? "#22c55e" : "#888"}
               />
             </div>
+
+            {results.performance.aggressiveMetrics && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 10, fontFamily: MONO, letterSpacing: 1 }}>
+                  AGGRESSIVE / TURBO RISK METRICS
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <MetricCard label="BETA VS BENCHMARK" value={String(results.performance.aggressiveMetrics.betaVsBenchmark)} subValue="1.00 = market" color="#60a5fa" />
+                  <MetricCard label="UP CAPTURE" value={results.performance.aggressiveMetrics.captureRatioUp + "%"} subValue="vs up months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioUp) >= 100 ? "#22c55e" : "#eab308"} />
+                  <MetricCard label="DOWN CAPTURE" value={results.performance.aggressiveMetrics.captureRatioDown + "%"} subValue="vs down months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioDown) <= 100 ? "#22c55e" : "#ef4444"} />
+                  <MetricCard label="TURNOVER" value={results.performance.aggressiveMetrics.turnoverPct + "%"} subValue="trades / (rebal × N)" color="#888" />
+                  <MetricCard label="AVG HOLDING" value={results.performance.aggressiveMetrics.avgHoldingPeriod + " d"} subValue="exit trades" color="#888" />
+                </div>
+              </div>
+            )}
           </Box>
+
+          {compareSnaps.full_composite && compareSnaps.full_composite_aggressive
+            && compareSnaps.full_composite.universe === compareSnaps.full_composite_aggressive.universe
+            && compareSnaps.full_composite.period === compareSnaps.full_composite_aggressive.period && (
+            <Box>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+                STRATEGY COMPARISON (last conservative vs aggressive runs, same universe and period)
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: MONO, fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.1)", color: "#888" }}>
+                      <th style={{ textAlign: "left", padding: "8px 6px" }}>Metric</th>
+                      <th style={{ textAlign: "right", padding: "8px 6px" }}>Conservative</th>
+                      <th style={{ textAlign: "right", padding: "8px 6px" }}>Aggressive</th>
+                      <th style={{ textAlign: "right", padding: "8px 6px" }}>Benchmark</th>
+                    </tr>
+                  </thead>
+                  <tbody style={{ color: "#f0f0f0" }}>
+                    {[
+                      ["Total return %", "totalReturn", "totalReturn", "benchmarkReturn"],
+                      ["Annualized %", "annualizedReturn", "annualizedReturn", "benchmarkAnnualized"],
+                      ["Alpha %", "alpha", "alpha", null],
+                      ["Sharpe", "sharpe", "sharpe", "benchmarkSharpe"],
+                      ["Max DD %", "maxDrawdown", "maxDrawdown", "benchmarkMaxDD"],
+                      ["Win rate %", "winRate", "winRate", null],
+                      ["Hit rate %", "hitRate", "hitRate", null]
+                    ].map(([label, cKey, aKey, bKey]) => {
+                      const c = compareSnaps.full_composite.performance;
+                      const a = compareSnaps.full_composite_aggressive.performance;
+                      return (
+                        <tr key={label} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                          <td style={{ padding: "6px" }}>{label}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{c[cKey]}{cKey !== "sharpe" ? "%" : ""}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{a[aKey]}{aKey !== "sharpe" ? "%" : ""}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{bKey ? `${c[bKey]}${bKey !== "benchmarkSharpe" ? "%" : ""}` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                    {compareSnaps.full_composite_aggressive.performance.aggressiveMetrics && (
+                      <>
+                        <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                          <td style={{ padding: "6px" }}>Beta</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>—</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{compareSnaps.full_composite_aggressive.performance.aggressiveMetrics.betaVsBenchmark}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>1.00</td>
+                        </tr>
+                        <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                          <td style={{ padding: "6px" }}>Up capture %</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>—</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{compareSnaps.full_composite_aggressive.performance.aggressiveMetrics.captureRatioUp}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>100</td>
+                        </tr>
+                        <tr>
+                          <td style={{ padding: "6px" }}>Down capture %</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>—</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>{compareSnaps.full_composite_aggressive.performance.aggressiveMetrics.captureRatioDown}</td>
+                          <td style={{ textAlign: "right", padding: "6px" }}>100</td>
+                        </tr>
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Box>
+          )}
           
           {/* Risk Management Summary */}
           {results.riskManagement && (results.riskManagement.regimeSummary || results.riskManagement.totalStopsTriggered > 0) && (
@@ -416,7 +527,7 @@ export default function BacktestTab() {
           )}
 
           {/* Optimization Dashboard for Full Composite */}
-          {results.strategy === 'full_composite' && results.optimizationStatus && (() => {
+          {isCompositeFamily(results.strategy) && results.optimizationStatus && (() => {
             const os = results.optimizationStatus;
             const opt = results.optimization;
             const frozen = os.frozen;
@@ -557,7 +668,7 @@ export default function BacktestTab() {
             );
           })()}
 
-          {results.strategy === 'full_composite' && results.factorAttribution && (
+          {isCompositeFamily(results.strategy) && results.factorAttribution && (
             <Box>
               <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
                 FACTOR ATTRIBUTION — {results.factorAttribution.periodsAnalyzed} PERIODS ANALYZED
@@ -781,7 +892,7 @@ export default function BacktestTab() {
                         <td style={{ padding: "8px 10px", color: "#f0f0f0" }}>{t.date}</td>
                         <td style={{ 
                           padding: "8px 10px", 
-                          color: t.type === "BUY" ? "#60a5fa" : t.type === "STOP" ? "#f97316" : t.holdingReturn > 0 ? "#22c55e" : "#ef4444",
+                          color: t.type === "BUY" ? "#60a5fa" : t.type === "STOP" ? "#f97316" : t.type === "REENTRY" ? "#a78bfa" : t.holdingReturn > 0 ? "#22c55e" : "#ef4444",
                           fontWeight: 700
                         }}>
                           {t.type}
