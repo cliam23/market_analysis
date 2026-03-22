@@ -166,11 +166,11 @@ export default function PaperTradeTab() {
 
   useEffect(() => {
     if (!portfolio || autoRebalanced || rebalancing) return;
-    const { lastRebalance, holdings } = portfolio;
+    const { lastRebalance, holdings, nextRebalance } = portfolio;
     if (holdings.length === 0 && portfolio.rebalanceCount === 0) return;
-    if (!lastRebalance) return;
-    const daysSince = Math.floor((Date.now() - new Date(lastRebalance).getTime()) / 86400000);
-    if (daysSince >= 30) {
+    if (!lastRebalance || !nextRebalance) return;
+    const todayStr = new Date().toISOString().split("T")[0];
+    if (todayStr >= nextRebalance) {
       setAutoRebalanced(true);
       rebalance();
     }
@@ -313,7 +313,7 @@ export default function PaperTradeTab() {
     );
   }
 
-  const { summary, holdings, config, createdAt, lastRebalance, nextRebalance, cash, navHistory } = portfolio;
+  const { summary, holdings, config, createdAt, lastRebalance, nextRebalance, cash, navHistory, monthlyEventsSummary } = portfolio;
   const rebalanceHistory = history?.rebalanceHistory || [];
 
   const chartData = (navHistory || []).map(n => ({
@@ -338,7 +338,7 @@ export default function PaperTradeTab() {
       {rebalancing && autoRebalanced && (
         <Box>
           <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
-            Auto-rebalancing — it's been 30+ days since last rebalance. Running the model on live data...
+            Auto-rebalancing — calendar date reached the next scheduled rebalance (15th-aligned, same rule as backtest). Running the model on live data...
           </div>
         </Box>
       )}
@@ -420,6 +420,36 @@ export default function PaperTradeTab() {
             {nextRebalance && <>&nbsp;&nbsp;Next: {fmtDate(nextRebalance)}</>}
           </div>
         </div>
+        {monthlyEventsSummary && monthlyEventsSummary.length > 0 && (
+          <div style={{
+            marginBottom: 12,
+            padding: "10px 12px",
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(255,255,255,0.06)",
+            borderRadius: 8,
+            fontFamily: MONO,
+            fontSize: 10
+          }}>
+            <div style={{ fontWeight: 700, letterSpacing: 1, color: "#f0f0f0", marginBottom: 8 }}>
+              MONTHLY EVENTS — correlate dips with rebalances
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "#c8c8c8", lineHeight: 1.5 }}>
+              {monthlyEventsSummary.slice().reverse().map((row) => (
+                <span key={row.month}>
+                  <strong style={{ color: "#f0f0f0" }}>{row.month}</strong>
+                  {": "}
+                  {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""}
+                  {row.stops > 0 ? (
+                    <span style={{ color: "#f97316" }}>{`, ${row.stops} stop exit${row.stops !== 1 ? "s" : ""}`}</span>
+                  ) : null}
+                </span>
+              ))}
+            </div>
+            <div style={{ marginTop: 8, color: "#888", fontSize: 9, lineHeight: 1.5 }}>
+              Paper trade records full rebalance runs. Stop exits appear here only if a sell is tagged STOP (model rotations use reason ROTATION). For stop-loss clusters vs the benchmark, use Backtest → trade log and the monthly events under the equity curve.
+            </div>
+          </div>
+        )}
         {chartData.length > 1 ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 30, bottom: 5, left: 5 }}>

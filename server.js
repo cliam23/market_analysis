@@ -73,7 +73,7 @@ const CACHE_TTL = 15 * 60 * 1000;
 const COMPS_CACHE_TTL = 30 * 60 * 1000;
 const QUOTE_CACHE_TTL = 15 * 60 * 1000;
 const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const BACKTEST_CACHE_VERSION = 'v3';
+const BACKTEST_CACHE_VERSION = 'v15';
 
 function calcBuffettScore(data) {
   const scores = {};
@@ -2220,7 +2220,7 @@ function calculateDynamicValuation(currentPrice, fundData, priceData, asOfDate) 
   const available = priceData.filter(p => p.date <= asOfDate);
   const last252 = available.slice(-252);
 
-  // Price vs 252-day average
+  // Signal 1: Price vs 252-day average (mean-reversion signal)
   if (last252.length >= 200) {
     const avgPrice = last252.reduce((s, p) => s + p.close, 0) / last252.length;
     const priceVsAvg = (currentPrice - avgPrice) / avgPrice;
@@ -2233,17 +2233,7 @@ function calculateDynamicValuation(currentPrice, fundData, priceData, asOfDate) 
     else { totalSignal += 15; signals++; }
   }
 
-  // Forward P/E signal
-  if (fundData.forwardEps && fundData.forwardEps > 0) {
-    const impliedPE = currentPrice / fundData.forwardEps;
-    if (impliedPE < 15) { totalSignal += 90; signals++; }
-    else if (impliedPE < 22) { totalSignal += 70; signals++; }
-    else if (impliedPE < 30) { totalSignal += 50; signals++; }
-    else if (impliedPE < 40) { totalSignal += 30; signals++; }
-    else { totalSignal += 15; signals++; }
-  }
-
-  // Price vs 200-day MA
+  // Signal 2: Price vs 200-day MA (trend-following signal)
   const last200 = available.slice(-200);
   if (last200.length >= 180) {
     const ma200 = last200.reduce((s, p) => s + p.close, 0) / last200.length;
@@ -2256,6 +2246,45 @@ function calculateDynamicValuation(currentPrice, fundData, priceData, asOfDate) 
     else { totalSignal += 15; signals++; }
   }
 
+  // Signal 3: TREND QUALITY — reward smooth, consistent uptrends (PRO-MOMENTUM)
+  // This adds unique information: not WHERE the price is, but HOW it got there
+  if (available.length >= 126) {
+    const last126 = available.slice(-126);
+
+    // Count positive months out of last 6
+    let positiveMonths = 0;
+    for (let m = 0; m < 6; m++) {
+      const startIdx = m * 21;
+      const endIdx = Math.min((m + 1) * 21, last126.length - 1);
+      if (startIdx < last126.length && endIdx < last126.length) {
+        if (last126[endIdx].close > last126[startIdx].close) positiveMonths++;
+      }
+    }
+
+    // Volatility of returns (lower = smoother trend)
+    const rets = [];
+    for (let i = 1; i < last126.length; i++) {
+      if (last126[i - 1].close > 0) rets.push(Math.log(last126[i].close / last126[i - 1].close));
+    }
+    const vol = standardDeviation(rets) * Math.sqrt(252);
+
+    // 6-month return
+    const mom6m = (last126[last126.length - 1].close - last126[0].close) / last126[0].close;
+
+    // Trend quality: consistent direction + low volatility + positive return
+    let trendQuality = 30; // baseline
+    if (positiveMonths >= 5 && mom6m > 0.05 && vol < 0.25) trendQuality = 80;
+    else if (positiveMonths >= 4 && mom6m > 0.03 && vol < 0.30) trendQuality = 65;
+    else if (positiveMonths >= 4 && mom6m > 0) trendQuality = 55;
+    else if (positiveMonths >= 3 && mom6m > 0) trendQuality = 45;
+    else if (positiveMonths <= 2 && mom6m < 0) trendQuality = 20;
+    else if (mom6m < -0.10) trendQuality = 10;
+
+    totalSignal += trendQuality;
+    signals++;
+  }
+
+  // Quality adjustment
   const qualityAdjustment = (fundData.fundamentalComposite - 50) * 0.15;
   score = signals > 0 ? (totalSignal / signals) + qualityAdjustment : 50;
   score = Math.max(0, Math.min(100, score));
@@ -2276,7 +2305,7 @@ async function fetchFundamentals(ticker) {
 }
 
 function bt_rankFullComposite(universe, priceHistory, fundamentals, asOfDate) {
-  const scores = [];
+  const candidates = [];
 
   for (const ticker of universe) {
     if (ticker === 'SPY' || !ticker) continue;
@@ -2292,45 +2321,48 @@ function bt_rankFullComposite(universe, priceHistory, fundamentals, asOfDate) {
     const priceValue = bt_calculateValueSignal(prices, asOfDate);
     if (!priceValue) continue;
 
-    const dynamicVal = calculateDynamicValuation(momentum.currentPrice, fundData, prices, asOfDate);
-
-    const momNormalized = Math.max(0, Math.min(100, (momentum.finalMomentumScore + 1) * 33));
-
-    const dcf = fundData.dcfScore || 50;
-    const fullComposite = (
-      fundData.fundamentalComposite * 0.25 +
-      dcf * 0.15 +
-      dynamicVal.score * 0.20 +
-      momNormalized * 0.25 +
-      priceValue.valueScore * 0.15
-    );
-
-    // Filters
     if (momentum.trendBonus <= -1 && priceValue.valueScore < 40) continue;
     if (momentum.annualizedVol > 0.80) continue;
     if (fundData.fundamentalComposite < 30) continue;
     if (fundData.constraintPenalty <= -7) continue;
 
+    const dynamicVal = calculateDynamicValuation(momentum.currentPrice, fundData, prices, asOfDate);
+    candidates.push({ ticker, mom: momentum, priceValue, dynamicVal, fundData });
+  }
+
+  const scores = [];
+
+  for (const c of candidates) {
+    const momNormalized = Math.max(0, Math.min(100, (c.mom.finalMomentumScore + 1) * 33));
+    const dcf = c.fundData.dcfScore || 50;
+    const fullComposite = (
+      c.fundData.fundamentalComposite * 0.25 +
+      dcf * 0.15 +
+      c.dynamicVal.score * 0.20 +
+      momNormalized * 0.25 +
+      c.priceValue.valueScore * 0.15
+    );
+
     scores.push({
-      ticker,
-      name: fundData.name,
-      sector: fundData.sector,
-      fundamentalScore: fundData.fundamentalComposite,
+      ticker: c.ticker,
+      name: c.fundData.name,
+      sector: c.fundData.sector,
+      fundamentalScore: c.fundData.fundamentalComposite,
       dcfScore: dcf,
-      dcfUpside: fundData.dcfUpside,
+      dcfUpside: c.fundData.dcfUpside,
       momentumScore: momNormalized,
-      valuationScore: dynamicVal.score,
-      priceValueScore: priceValue.valueScore,
-      buffettScore: fundData.buffettScore,
-      moatScore: fundData.moatScore,
-      roicSpread: fundData.roicSpread,
-      eqScore: fundData.eqScore,
-      aiImpact: fundData.aiBonus > 0 ? 'up' : fundData.aiBonus < 0 ? 'down' : 'neutral',
+      valuationScore: c.dynamicVal.score,
+      priceValueScore: c.priceValue.valueScore,
+      buffettScore: c.fundData.buffettScore,
+      moatScore: c.fundData.moatScore,
+      roicSpread: c.fundData.roicSpread,
+      eqScore: c.fundData.eqScore,
+      aiImpact: c.fundData.aiBonus > 0 ? 'up' : c.fundData.aiBonus < 0 ? 'down' : 'neutral',
       compositeScore: parseFloat(fullComposite.toFixed(1)),
-      price: momentum.currentPrice,
-      volatility: momentum.annualizedVol,
-      momentum6m: momentum.rawMomentum,
-      distFromHigh: priceValue.distFromHigh
+      price: c.mom.currentPrice,
+      volatility: c.mom.annualizedVol,
+      momentum6m: c.mom.rawMomentum,
+      distFromHigh: c.priceValue.distFromHigh
     });
   }
 
@@ -2406,9 +2438,9 @@ function spearmanCorrelation(xs, ys) {
   return 1 - (6 * sumD2) / (n * (n * n - 1));
 }
 
-const DEFAULT_COMPOSITE_WEIGHTS = { fundamental: 0.30, dcf: 0.15, valuation: 0.20, momentum: 0.25, value: 0.10 };
-const AGGRESSIVE_COMPOSITE_WEIGHTS = { fundamental: 0.20, dcf: 0.05, valuation: 0.10, momentum: 0.45, value: 0.20 };
-const TURBO_COMPOSITE_WEIGHTS = { fundamental: 0, dcf: 0, valuation: 0.05, momentum: 0.75, value: 0.20 };
+const DEFAULT_COMPOSITE_WEIGHTS = { fundamental: 0.35, dcf: 0.10, valuation: 0.15, momentum: 0.25, value: 0.15 };
+const AGGRESSIVE_COMPOSITE_WEIGHTS = { fundamental: 0.25, dcf: 0.00, valuation: 0.10, momentum: 0.40, value: 0.25 };
+const TURBO_COMPOSITE_WEIGHTS = { fundamental: 0.10, dcf: 0.00, valuation: 0.05, momentum: 0.55, value: 0.30 };
 const FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value'];
 const FACTOR_LABELS = { fundamental: 'Quality', dcf: 'DCF', valuation: 'Valuation', momentum: 'Momentum', value: 'Value' };
 
@@ -2421,11 +2453,11 @@ const MAX_WEIGHT_DELTA_PER_ROUND = 0.03;
 const MIN_SHARPE_IMPROVEMENT = 0.05;
 
 const WEIGHT_BOUNDS = {
-  fundamental: { min: 0.10, max: 0.40 },
-  dcf:         { min: 0.05, max: 0.25 },
-  valuation:   { min: 0.10, max: 0.35 },
-  momentum:    { min: 0.05, max: 0.35 },
-  value:       { min: 0.05, max: 0.25 }
+  fundamental: { min: 0.02, max: 0.70 },
+  dcf:         { min: 0.02, max: 0.25 },
+  valuation:   { min: 0.02, max: 0.35 },
+  momentum:    { min: 0.02, max: 0.60 },
+  value:       { min: 0.02, max: 0.30 }
 };
 
 function constrainWeightChanges(currentWeights, suggestedWeights) {
@@ -2472,6 +2504,12 @@ function checkWeightStability(weightHistory) {
 }
 
 function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, rebalanceDates, topN, capital, strategyClean, weights) {
+  if (strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
+    const defaults = strategyClean === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
+      : strategyClean === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS
+        : DEFAULT_COMPOSITE_WEIGHTS;
+    weights = { ...defaults, ...(weights && typeof weights === 'object' ? weights : {}) };
+  }
   let cash = capital;
   const holdings = {};
   const tradeLog = [];
@@ -2485,7 +2523,7 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
   const spyShares = spyStartPrice ? capital / spyStartPrice : 0;
   const startDate = rebalanceDates[0];
   const usesFundamentals = strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo' || strategyClean === 'quality_momentum';
-  const stopCheckInterval = (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') ? 1 : 5;
+  const stopCheckInterval = (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') ? 3 : 5;
 
   holdingsSnapshots.push({ date: startDate, cash, holdings: {} });
 
@@ -2529,6 +2567,9 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
         if (p) portfolioValueForReentry += h.shares * p;
       }
 
+      const isAggressive = strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
+      const minWaitDays = isAggressive ? 3 : 5;
+
       for (const [ticker, stopInfo] of Object.entries(recentStops)) {
         const prices = priceHistory[ticker];
         if (!prices) continue;
@@ -2539,9 +2580,9 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
         const ma20 = average(avail.slice(-20).map(p => p.close));
         const daysSinceExit = daysBetween(stopInfo.exitDate, date);
 
-        if (daysSinceExit >= 5 && curPrice > ma20 && curPrice > stopInfo.exitPrice * 1.02) {
-          const halfPosition = portfolioValueForReentry / (topN * 2);
-          const shares = Math.floor(halfPosition / curPrice);
+        if (daysSinceExit >= minWaitDays && curPrice > ma20) {
+          const fullPosition = portfolioValueForReentry / topN;
+          const shares = Math.floor(fullPosition / curPrice);
           if (shares > 0 && cash >= shares * curPrice) {
             const cost = shares * curPrice;
             cash -= cost;
@@ -2552,7 +2593,7 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
           }
         }
 
-        if (daysSinceExit > 30) delete recentStops[ticker];
+        if (daysSinceExit > 60) delete recentStops[ticker];
       }
     }
 
@@ -2572,7 +2613,10 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
       const exposure = getStrategyRegimeExposure(regimeMeta.regime, strategyClean);
       regimeLog.push({ date, regime: regimeMeta.regime, exposure });
 
-      const adjustedTopN = Math.max(3, Math.round(topN * exposure));
+      const isAggressiveStrategy = strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
+      const adjustedTopN = isAggressiveStrategy
+        ? Math.max(Math.ceil(topN * 0.7), Math.round(topN * exposure))
+        : Math.max(3, Math.round(topN * exposure));
 
       let rankings;
       if (strategyClean === 'momentum') rankings = bt_rankMomentumOnly(universe, priceHistory, date);
@@ -2591,6 +2635,51 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
           blendMomentumWithQuality: { raw: 0.55, quality: 0.20 }
         });
       } else rankings = bt_rankMomentumValue(universe, priceHistory, date);
+
+      // --- ADAPTIVE WEIGHTS: shift weights based on factor performance in previous period ---
+      if (rebalanceLog.length >= 2 && (strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo')) {
+        const prevSnap = factorSnapshots.length > 0 ? factorSnapshots[factorSnapshots.length - 1] : null;
+
+        if (prevSnap && prevSnap.allRanked && prevSnap.allRanked.length >= 6) {
+          const withReturns = [];
+          for (const ranked of prevSnap.allRanked) {
+            const ph = priceHistory[ranked.ticker];
+            if (!ph) continue;
+            const prevPrice = getPrice(ph, prevSnap.date);
+            const curPrice = getPrice(ph, date);
+            if (prevPrice && curPrice && prevPrice > 0) {
+              withReturns.push({ ...ranked, realized: (curPrice - prevPrice) / prevPrice });
+            }
+          }
+
+          if (withReturns.length >= 6) {
+            const returns = withReturns.map(r => r.realized);
+            const factorKeys = { fundamental: 'fundamental', dcf: 'dcf', valuation: 'valuation', momentum: 'momentum', value: 'value' };
+            const periodICs = {};
+
+            for (const [factor, key] of Object.entries(factorKeys)) {
+              const scores = withReturns.map(r => r[key] ?? 0);
+              const ic = spearmanCorrelation(scores, returns);
+              periodICs[factor] = isFinite(ic) ? ic : 0;
+            }
+
+            const transformed = {};
+            for (const f of FACTOR_NAMES) transformed[f] = Math.exp((periodICs[f] || 0) * 15);
+            const total = FACTOR_NAMES.reduce((s, f) => s + transformed[f], 0);
+            const targetW = {};
+            for (const f of FACTOR_NAMES) targetW[f] = transformed[f] / total;
+
+            const currentW = weights || DEFAULT_COMPOSITE_WEIGHTS;
+            for (const f of FACTOR_NAMES) {
+              weights[f] = currentW[f] * 0.60 + targetW[f] * 0.40;
+            }
+
+            for (const f of FACTOR_NAMES) weights[f] = Math.max(weights[f], 0.02);
+            const wSum = FACTOR_NAMES.reduce((s, f) => s + weights[f], 0);
+            for (const f of FACTOR_NAMES) weights[f] = parseFloat((weights[f] / wSum).toFixed(4));
+          }
+        }
+      }
 
       if (strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
         factorSnapshots.push({
@@ -3069,27 +3158,95 @@ function getPrice(priceData, date) {
   return priceData[priceData.length - 1]?.close || null;
 }
 
+/** Next calendar 15th strictly after `isoDateStr` (YYYY-MM-DD), matching backtest monthly/quarterly anchors. */
+function nextMidMonthRebalanceAfter(isoDateStr) {
+  if (!isoDateStr || typeof isoDateStr !== 'string') return null;
+  const parts = isoDateStr.split('-').map(Number);
+  if (parts.length < 3 || parts.some((n) => Number.isNaN(n))) return null;
+  const [y, m, d] = parts;
+  const last = Date.UTC(y, m - 1, d);
+  let cy = y;
+  let cm = m;
+  let fifteenUtc = Date.UTC(cy, cm - 1, 15);
+  if (fifteenUtc > last) {
+    return `${cy}-${String(cm).padStart(2, '0')}-15`;
+  }
+  cm += 1;
+  if (cm > 12) {
+    cm = 1;
+    cy += 1;
+  }
+  return `${cy}-${String(cm).padStart(2, '0')}-15`;
+}
+
+/** Per-month counts for correlating equity steps with scheduled rebalances vs stop exits (backtest). */
+function buildMonthlyEventsSummary(rebalanceLog, tradeLog) {
+  const map = Object.create(null);
+  const ensure = (ym) => {
+    if (!map[ym]) map[ym] = { month: ym, rebalances: 0, stops: 0 };
+    return map[ym];
+  };
+  for (const r of rebalanceLog || []) {
+    if (r.date) ensure(r.date.slice(0, 7)).rebalances += 1;
+  }
+  for (const t of tradeLog || []) {
+    if (t.type === 'STOP' && t.date) ensure(t.date.slice(0, 7)).stops += 1;
+  }
+  return Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/** Paper portfolio: rebalance rows + optional stop-tagged sells (`reason: 'STOP'`). */
+function buildPaperMonthlyEventsSummary(rebalanceHistory) {
+  const map = Object.create(null);
+  for (const rb of rebalanceHistory || []) {
+    if (!rb.date) continue;
+    const ym = rb.date.slice(0, 7);
+    if (!map[ym]) map[ym] = { month: ym, rebalances: 0, stops: 0 };
+    map[ym].rebalances += 1;
+    for (const s of rb.sells || []) {
+      if (s.reason === 'STOP') map[ym].stops += 1;
+    }
+  }
+  return Object.values(map).sort((a, b) => a.month.localeCompare(b.month));
+}
+
 function getRebalanceDates(startDate, endDate, frequency) {
   const dates = [];
+  const end = new Date(endDate);
+
+  if (frequency === 'weekly' || frequency === 'biweekly') {
+    const stepDays = frequency === 'weekly' ? 7 : 14;
+    const cur = new Date(`${startDate}T12:00:00`);
+    while (true) {
+      cur.setDate(cur.getDate() + stepDays);
+      const ds = cur.toISOString().split('T')[0];
+      if (!(ds < endDate)) break;
+      dates.push(ds);
+    }
+    return dates;
+  }
+
   let current = new Date(startDate);
-  
-  while (current < new Date(endDate)) {
+
+  while (current < end) {
     if (frequency === 'monthly') {
       current.setMonth(current.getMonth() + 1);
-    } else {
+    } else if (frequency === 'quarterly') {
       current.setMonth(current.getMonth() + 3);
+    } else {
+      current.setMonth(current.getMonth() + 1);
     }
     current.setDate(15);
-    
+
     const year = current.getFullYear();
     const month = String(current.getMonth() + 1).padStart(2, '0');
     const dateStr = `${year}-${month}-15`;
-    
+
     if (dateStr < endDate) {
       dates.push(dateStr);
     }
   }
-  
+
   return dates;
 }
 
@@ -3148,31 +3305,84 @@ function bt_calculateMomentum(priceData, asOfDate, lookbackMonths = 6, spyPrices
 function bt_calculateValueSignal(priceData, asOfDate) {
   const available = priceData.filter(p => p.date <= asOfDate);
   if (available.length < 252) return null;
-  
+
   const currentPrice = available[available.length - 1].close;
-  
   const last252 = available.slice(-252);
+  const last63 = available.slice(-63);
+  const last21 = available.slice(-21);
+
   const high52w = Math.max(...last252.map(p => p.close));
   const distFromHigh = (currentPrice - high52w) / high52w;
-  
-  let valueScore;
-  if (distFromHigh > -0.05) valueScore = 20;
-  else if (distFromHigh > -0.15) valueScore = 40;
-  else if (distFromHigh > -0.25) valueScore = 70;
-  else if (distFromHigh > -0.35) valueScore = 60;
-  else valueScore = 30;
-  
-  const last21 = available.slice(-21);
-  const monthAgoPrice = last21[0]?.close;
-  const recentMomentum = monthAgoPrice ? (currentPrice - monthAgoPrice) / monthAgoPrice : 0;
-  
-  if (recentMomentum > 0.02) valueScore += 15;
-  else if (recentMomentum > 0) valueScore += 5;
-  else valueScore -= 10;
-  
+
+  // 200-day MA
+  const last200 = available.slice(-200);
+  const ma200 = last200.length >= 200 ? last200.reduce((s, p) => s + p.close, 0) / last200.length : null;
+  const aboveMA200 = ma200 ? currentPrice > ma200 : false;
+
+  // 6-month momentum
+  const price6mAgo = available.length >= 126 ? available[available.length - 126].close : available[0].close;
+  const mom6m = (currentPrice - price6mAgo) / price6mAgo;
+
+  // 3-month momentum
+  const price3mAgo = available.length >= 63 ? available[available.length - 63].close : available[0].close;
+  const mom3m = (currentPrice - price3mAgo) / price3mAgo;
+
+  // 1-month momentum
+  const monthAgoPrice = last21[0]?.close || currentPrice;
+  const recentMomentum = (currentPrice - monthAgoPrice) / monthAgoPrice;
+
+  // Volatility
+  const rets63 = [];
+  for (let i = 1; i < last63.length; i++) {
+    if (last63[i - 1].close > 0) rets63.push(Math.log(last63[i].close / last63[i - 1].close));
+  }
+  const vol63 = standardDeviation(rets63) * Math.sqrt(252);
+
+  // CONTINUOUS SCORING: build score from multiple sub-signals, each 0-20 pts
+  let valueScore = 0;
+
+  // Sub-signal A (0-25): Trend strength — reward strong, multi-timeframe momentum
+  if (mom6m > 0.15 && mom3m > 0.05 && recentMomentum > 0) valueScore += 25;
+  else if (mom6m > 0.10 && mom3m > 0) valueScore += 20;
+  else if (mom6m > 0.05 && mom3m > 0) valueScore += 15;
+  else if (mom6m > 0) valueScore += 10;
+  else if (mom6m > -0.10) valueScore += 5;
+  else valueScore += 0;
+
+  // Sub-signal B (0-25): Trend position — above MA200 with room to run
+  if (aboveMA200 && distFromHigh > -0.15 && distFromHigh < -0.03) valueScore += 25; // pullback in uptrend
+  else if (aboveMA200 && distFromHigh > -0.05) valueScore += 18; // near highs, uptrend
+  else if (aboveMA200 && distFromHigh > -0.25) valueScore += 15; // further pullback, still uptrend
+  else if (aboveMA200) valueScore += 10;
+  else if (distFromHigh > -0.15) valueScore += 8; // near highs but below MA
+  else valueScore += 3; // downtrend
+
+  // Sub-signal C (0-25): Momentum acceleration — is the trend getting STRONGER?
+  const accel = recentMomentum - (mom3m / 3); // 1-month vs monthly avg of 3-month
+  if (accel > 0.02) valueScore += 25;
+  else if (accel > 0.01) valueScore += 20;
+  else if (accel > 0) valueScore += 15;
+  else if (accel > -0.01) valueScore += 10;
+  else if (accel > -0.03) valueScore += 5;
+  else valueScore += 0;
+
+  // Sub-signal D (0-25): Risk efficiency — reward low-vol momentum
+  const riskAdj = vol63 > 0 ? mom6m / vol63 : 0;
+  if (riskAdj > 1.0) valueScore += 25;
+  else if (riskAdj > 0.6) valueScore += 20;
+  else if (riskAdj > 0.3) valueScore += 15;
+  else if (riskAdj > 0) valueScore += 10;
+  else if (riskAdj > -0.3) valueScore += 5;
+  else valueScore += 0;
+
+  // 21-day pullback detection as described in the prompt:
+  const high21d = Math.max(...last21.map(p => p.close));
+  const recentPullback = (currentPrice - high21d) / high21d;
+
   return {
     distFromHigh,
     recentMomentum,
+    recentPullback,
     valueScore: Math.max(0, Math.min(100, valueScore))
   };
 }
@@ -3189,8 +3399,16 @@ function getMaxSectorConcentration(strategyClean) {
 }
 
 function getStrategyRegimeExposure(regimeName, strategyClean) {
-  const conservative = { strong_bull: 1.0, normal: 1.0, pullback: 0.90, correction: 0.85, caution: 0.80, bear: 0.65 };
-  const aggressive = { strong_bull: 1.0, normal: 1.0, pullback: 0.85, correction: 0.70, caution: 0.65, bear: 0.50 };
+  // Conservative: original values that produced -10.47% max drawdown
+  const conservative = {
+    strong_bull: 1.0, normal: 1.0, pullback: 0.90,
+    correction: 0.85, caution: 0.80, bear: 0.65
+  };
+  // Aggressive: softer cuts — momentum ranking handles rotation naturally
+  const aggressive = {
+    strong_bull: 1.0, normal: 1.0, pullback: 0.95,
+    correction: 0.90, caution: 0.85, bear: 0.75
+  };
   if (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
     return aggressive[regimeName] ?? 1.0;
   }
@@ -3276,15 +3494,16 @@ function calculateMomentumQuality(priceData, asOfDate) {
 
 function checkStopLosses(holdings, priceHistory, currentDate, fundamentals, strategyClean = 'full_composite') {
   const exits = [];
+  const isAggressive = strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
+
   for (const [ticker, holding] of Object.entries(holdings)) {
     const prices = priceHistory[ticker];
     if (!prices) continue;
 
     const available = prices.filter(p => p.date <= currentDate);
-    if (available.length < 3) continue;
+    if (available.length < 5) continue;
 
     const today = available[available.length - 1];
-    const yesterday = available[available.length - 2];
 
     const last60 = available.slice(-60);
     const rets = [];
@@ -3293,32 +3512,35 @@ function checkStopLosses(holdings, priceHistory, currentDate, fundamentals, stra
     }
     const annualizedVol = standardDeviation(rets) * Math.sqrt(252);
     const monthlyVol = annualizedVol / Math.sqrt(12);
-    const volStop = -Math.max(monthlyVol * 2.5, 0.10);
-    const adjustedStop = Math.max(volStop, -0.30);
+
+    const volMultiplier = isAggressive ? 3.5 : 2.5;
+    const minStop = isAggressive ? 0.15 : 0.10;
+    const maxStop = isAggressive ? 0.35 : 0.30;
+    const volStop = -Math.max(monthlyVol * volMultiplier, minStop);
+    const adjustedStop = Math.max(volStop, -maxStop);
 
     const fund = fundamentals?.[ticker];
     const qualityScore = fund?.fundamentalComposite || 50;
     let qualityBuffer = 0;
-    if (strategyClean === 'full_composite') {
-      if (qualityScore >= 75) qualityBuffer = -0.05;
-      else if (qualityScore >= 60) qualityBuffer = -0.03;
-    } else if (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
-      if (qualityScore >= 75) qualityBuffer = -0.03;
-      else if (qualityScore >= 60) qualityBuffer = -0.01;
-    } else {
-      if (qualityScore >= 75) qualityBuffer = -0.05;
-      else if (qualityScore >= 60) qualityBuffer = -0.03;
-    }
+    if (qualityScore >= 75) qualityBuffer = -0.05;
+    else if (qualityScore >= 60) qualityBuffer = -0.03;
+
     const finalStop = adjustedStop + qualityBuffer;
 
     const sinceEntry = available.filter(p => p.date >= holding.entryDate);
-    if (sinceEntry.length < 2) continue;
+    if (sinceEntry.length < 5) continue;
     const peakSinceEntry = Math.max(...sinceEntry.map(p => p.close));
 
     const todayDD = (today.close - peakSinceEntry) / peakSinceEntry;
-    const yesterdayDD = (yesterday.close - peakSinceEntry) / peakSinceEntry;
 
-    if (todayDD < finalStop && yesterdayDD < finalStop) {
+    const confirmDays = isAggressive ? 3 : 2;
+    let confirmedBelow = 0;
+    for (let i = available.length - 1; i >= Math.max(0, available.length - confirmDays); i--) {
+      const dd = (available[i].close - peakSinceEntry) / peakSinceEntry;
+      if (dd < finalStop) confirmedBelow++;
+    }
+
+    if (confirmedBelow >= confirmDays) {
       exits.push({
         ticker, exitPrice: today.close, peakPrice: peakSinceEntry,
         drawdown: todayDD, stopLevel: finalStop
@@ -3329,30 +3551,57 @@ function checkStopLosses(holdings, priceHistory, currentDate, fundamentals, stra
 }
 
 function calculatePositionWeights(topPicks) {
-  const totalScore = topPicks.reduce((s, p) => s + (p.compositeScore || p.combinedScore || 50), 0);
-  if (totalScore <= 0) return topPicks.map(p => ({ ticker: p.ticker, weight: 1 / topPicks.length }));
+  if (!topPicks.length) return [];
+  const scores = topPicks.map(p => p.compositeScore || p.combinedScore || 50);
+  const maxScore = Math.max(...scores);
+  const minScore = Math.min(...scores);
+  const range = maxScore - minScore;
 
-  const weights = topPicks.map(pick => {
-    let raw = (pick.compositeScore || pick.combinedScore || 50) / totalScore;
-    raw = Math.max(0.03, Math.min(0.15, raw));
-    return { ticker: pick.ticker, weight: raw };
+  const weights = topPicks.map((pick, i) => {
+    const normalized = range > 0 ? (scores[i] - minScore) / range : 0.5;
+    const multiplier = 0.5 + normalized * 1.0;
+    return { ticker: pick.ticker, weight: multiplier };
   });
-  const total = weights.reduce((s, w) => s + w.weight, 0);
+
+  let total = weights.reduce((s, w) => s + w.weight, 0);
   weights.forEach(w => w.weight = w.weight / total);
+
+  let capped = false;
+  weights.forEach(w => {
+    if (w.weight > 0.20) { w.weight = 0.20; capped = true; }
+  });
+  if (capped) {
+    total = weights.reduce((s, w) => s + w.weight, 0);
+    weights.forEach(w => w.weight = w.weight / total);
+  }
+
   return weights;
 }
 
-/** Risk-parity lite: inverse-vol weights, 20% cap, renormalized (aggressive / turbo). */
+/** Blend 50% inverse-vol and 50% score-proportional; 25% cap per name (aggressive / turbo). */
 function calculateAggressiveVolatilityWeights(topPicks) {
   if (!topPicks.length) return [];
+
   const invVols = topPicks.map(p => 1 / Math.max(p.volatility != null ? p.volatility : 0.2, 0.10));
   const totalInv = invVols.reduce((s, v) => s + v, 0);
-  if (totalInv <= 0) return topPicks.map(p => ({ ticker: p.ticker, weight: 1 / topPicks.length }));
-  let w = invVols.map(v => v / totalInv);
-  w = w.map(x => Math.min(x, 0.20));
-  const t = w.reduce((s, x) => s + x, 0);
-  if (t <= 0) return topPicks.map(p => ({ ticker: p.ticker, weight: 1 / topPicks.length }));
-  return topPicks.map((p, i) => ({ ticker: p.ticker, weight: w[i] / t }));
+
+  const scores = topPicks.map(p => p.compositeScore || 50);
+  const totalScore = scores.reduce((s, v) => s + v, 0);
+
+  const weights = topPicks.map((p, i) => {
+    const volW = totalInv > 0 ? invVols[i] / totalInv : 1 / topPicks.length;
+    const scoreW = totalScore > 0 ? scores[i] / totalScore : 1 / topPicks.length;
+    return { ticker: p.ticker, weight: volW * 0.5 + scoreW * 0.5 };
+  });
+
+  let total = weights.reduce((s, w) => s + w.weight, 0);
+  weights.forEach(w => w.weight = w.weight / total);
+
+  weights.forEach(w => { if (w.weight > 0.25) w.weight = 0.25; });
+  total = weights.reduce((s, w) => s + w.weight, 0);
+  weights.forEach(w => w.weight = w.weight / total);
+
+  return weights;
 }
 
 function applySectorLimits(rankings, fundamentals, topN, maxSectorFrac = MAX_SECTOR_CONCENTRATION) {
@@ -3384,127 +3633,154 @@ function dynamicLookback(spyPrices, asOfDate) {
   return 6;
 }
 
+/** Percentile rank 0–100 of finalMomentumScore within candidate set (min→0, max→100). */
+function bt_momentumPercentilesForCandidates(candidates) {
+  const momPercentiles = {};
+  if (!candidates.length) return momPercentiles;
+  const sorted = [...candidates.map((c) => c.mom.finalMomentumScore)].sort((a, b) => a - b);
+  candidates.forEach((c) => {
+    const rank = sorted.filter((s) => s < c.mom.finalMomentumScore).length;
+    momPercentiles[c.ticker] = sorted.length > 1 ? (rank / (sorted.length - 1)) * 100 : 50;
+  });
+  return momPercentiles;
+}
+
 // ============================================
 // BACKTEST RANKING FUNCTIONS (4 DISTINCT STRATEGIES)
 // ============================================
 
 function bt_rankMomentumOnly(universe, priceHistory, asOfDate) {
   const spyPrices = priceHistory['SPY'];
-  const results = [];
-  
+  const candidates = [];
+
   for (const ticker of universe) {
     if (ticker === 'SPY' || !ticker) continue;
     const prices = priceHistory[ticker];
     if (!prices || prices.length < 120) continue;
-    
+
     const mom = bt_calculateMomentum(prices, asOfDate, 6, spyPrices);
     if (!mom) continue;
     if (mom.annualizedVol > 0.80) continue;
-    
-    const score = (mom.finalMomentumScore + 2) * 25;
+
+    candidates.push({ ticker, mom });
+  }
+
+  const results = [];
+  for (const c of candidates) {
+    const momNorm = Math.max(0, Math.min(100, (c.mom.finalMomentumScore + 2) * 25));
     results.push({
-      ticker,
-      compositeScore: score,
-      momentumScore: mom.finalMomentumScore,
-      price: mom.currentPrice,
-      volatility: mom.annualizedVol,
+      ticker: c.ticker,
+      compositeScore: momNorm,
+      momentumScore: momNorm,
+      price: c.mom.currentPrice,
+      volatility: c.mom.annualizedVol,
       strategy: 'momentum_only'
     });
   }
-  
+
   results.sort((a, b) => b.compositeScore - a.compositeScore);
   return results;
 }
 
 function bt_rankMomentumValue(universe, priceHistory, asOfDate) {
   const spyPrices = priceHistory['SPY'];
-  const results = [];
-  
+  const candidates = [];
+
   for (const ticker of universe) {
     if (ticker === 'SPY' || !ticker) continue;
     const prices = priceHistory[ticker];
     if (!prices || prices.length < 120) continue;
-    
+
     const mom = bt_calculateMomentum(prices, asOfDate, 6, spyPrices);
     const val = bt_calculateValueSignal(prices, asOfDate);
     if (!mom || !val) continue;
     if (mom.annualizedVol > 0.80) continue;
     if (mom.trendBonus < 0 && val.valueScore < 40) continue;
-    
-    const momNorm = Math.max(0, Math.min(100, (mom.finalMomentumScore + 1) * 33));
-    const combined = momNorm * 0.60 + val.valueScore * 0.40;
-    
+
+    candidates.push({ ticker, mom, val });
+  }
+
+  const results = [];
+  for (const c of candidates) {
+    const momNorm = Math.max(0, Math.min(100, (c.mom.finalMomentumScore + 1) * 33));
+    const combined = momNorm * 0.60 + c.val.valueScore * 0.40;
     results.push({
-      ticker,
+      ticker: c.ticker,
       compositeScore: combined,
       momentumScore: momNorm,
-      valueScore: val.valueScore,
-      price: mom.currentPrice,
-      volatility: mom.annualizedVol,
+      valueScore: c.val.valueScore,
+      price: c.mom.currentPrice,
+      volatility: c.mom.annualizedVol,
       strategy: 'momentum_value'
     });
   }
-  
+
   results.sort((a, b) => b.compositeScore - a.compositeScore);
   return results;
 }
 
 function bt_rankQualityMomentumV2(universe, priceHistory, fundamentals, asOfDate) {
   const spyPrices = priceHistory['SPY'];
-  const results = [];
-  
+  const candidates = [];
+
   for (const ticker of universe) {
     if (ticker === 'SPY' || !ticker) continue;
     const prices = priceHistory[ticker];
     if (!prices || prices.length < 120) continue;
-    
+
     const fund = fundamentals?.[ticker];
     if (!fund) continue;
     if (fund.fundamentalComposite < 50) continue;
-    
+
     const mom = bt_calculateMomentum(prices, asOfDate, 6, spyPrices);
     if (!mom) continue;
     if (mom.annualizedVol > 0.80) continue;
 
     const momQ = calculateMomentumQuality(prices, asOfDate);
     if (momQ && momQ.score < 25) continue;
-    
-    const score = (mom.finalMomentumScore + 2) * 25;
+
+    candidates.push({ ticker, mom, fund, momQ });
+  }
+
+  const results = [];
+  for (const c of candidates) {
+    const momNorm = Math.max(0, Math.min(100, (c.mom.finalMomentumScore + 2) * 25));
     results.push({
-      ticker,
-      compositeScore: score,
-      momentumScore: mom.finalMomentumScore,
-      fundamentalScore: fund.fundamentalComposite,
-      price: mom.currentPrice,
-      volatility: mom.annualizedVol,
+      ticker: c.ticker,
+      compositeScore: momNorm,
+      momentumScore: momNorm,
+      fundamentalScore: c.fund.fundamentalComposite,
+      price: c.mom.currentPrice,
+      volatility: c.mom.annualizedVol,
       strategy: 'quality_momentum'
     });
   }
-  
+
   results.sort((a, b) => b.compositeScore - a.compositeScore);
   return results;
 }
 
 function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, dynWeights, opts = {}) {
   const spyPrices = priceHistory['SPY'];
-  const results = [];
   const momQThreshold = opts.momQThreshold ?? 25;
   const fundamentalFloor = opts.fundamentalFloor ?? 20;
   const maxVol = opts.maxVol ?? 0.80;
   const strategyLabel = opts.strategyLabel || 'full_composite';
   const skipConstraintPenalty = !!opts.skipConstraintPenalty;
   const blendMQ = opts.blendMomentumWithQuality;
-  
+
+  // PASS 1: collect candidates (percentiles computed only for aggressive/turbo)
+  const candidates = [];
   for (const ticker of universe) {
     if (ticker === 'SPY' || !ticker) continue;
     const prices = priceHistory[ticker];
     if (!prices || prices.length < 120) continue;
-    
+
     const fund = fundamentals?.[ticker];
     if (!fund) continue;
     if (fundamentalFloor > 0 && fund.fundamentalComposite < fundamentalFloor) continue;
     if (!skipConstraintPenalty && fund.constraintPenalty <= -7) continue;
-    
+
     const mom = bt_calculateMomentum(prices, asOfDate, 6, spyPrices);
     const val = bt_calculateValueSignal(prices, asOfDate);
     if (!mom || !val) continue;
@@ -3512,45 +3788,57 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
 
     const momQ = calculateMomentumQuality(prices, asOfDate);
     if (momQThreshold > 0 && momQ && momQ.score < momQThreshold) continue;
-    
-    const momNorm = Math.max(0, Math.min(100, (mom.finalMomentumScore + 1) * 33));
-    const mqScore = momQ?.score ?? 50;
+
+    candidates.push({ ticker, mom, val, fund, momQ, prices });
+  }
+
+  const usePercentileMom = strategyLabel === 'full_composite_aggressive' || strategyLabel === 'full_composite_turbo';
+  const momPercentiles = usePercentileMom ? bt_momentumPercentilesForCandidates(candidates) : {};
+
+  // PASS 2: build final composite scores using percentile-normalized momentum
+  const results = [];
+  for (const c of candidates) {
+    // Use percentile for aggressive (wide candidate set), linear for conservative (preserves absolute magnitude)
+    const momNorm = usePercentileMom
+      ? (momPercentiles[c.ticker] ?? 50)
+      : Math.max(0, Math.min(100, (c.mom.finalMomentumScore + 1) * 33));
+    const mqScore = c.momQ?.score ?? 50;
     let momentumTerm = momNorm;
     if (blendMQ && blendMQ.raw != null && blendMQ.quality != null) {
       const sum = blendMQ.raw + blendMQ.quality;
       momentumTerm = sum > 0 ? momNorm * (blendMQ.raw / sum) + mqScore * (blendMQ.quality / sum) : momNorm;
     }
-    const dynVal = calculateDynamicValuation(mom.currentPrice, fund, prices, asOfDate);
-    
-    const w = dynWeights || DEFAULT_COMPOSITE_WEIGHTS;
-    const dcf = fund.dcfScore || 50;
+    const dynVal = calculateDynamicValuation(c.mom.currentPrice, c.fund, c.prices, asOfDate);
 
-    const momQBonus = blendMQ ? 0 : (momQ ? (momQ.score - 50) * 0.1 : 0);
+    const w = dynWeights || DEFAULT_COMPOSITE_WEIGHTS;
+    const dcf = c.fund.dcfScore || 50;
+
+    const momQBonus = blendMQ ? 0 : (c.momQ ? (c.momQ.score - 50) * 0.1 : 0);
     const fullScore = (
-      fund.fundamentalComposite * w.fundamental +
+      c.fund.fundamentalComposite * w.fundamental +
       dcf * w.dcf +
       dynVal.score * w.valuation +
       momentumTerm * w.momentum +
-      val.valueScore * w.value
+      c.val.valueScore * w.value
     ) + momQBonus;
-    
+
     results.push({
-      ticker,
+      ticker: c.ticker,
       compositeScore: fullScore,
-      fundamentalScore: fund.fundamentalComposite,
+      fundamentalScore: c.fund.fundamentalComposite,
       dcfScore: dcf,
-      dcfUpside: fund.dcfUpside,
+      dcfUpside: c.fund.dcfUpside,
       momentumScore: momentumTerm,
-      momentumQuality: momQ?.score || 50,
+      momentumQuality: c.momQ?.score || 50,
       valuationScore: dynVal.score,
-      valueScore: val.valueScore,
-      price: mom.currentPrice,
-      volatility: mom.annualizedVol,
-      lookbackUsed: mom.lookbackUsed,
+      valueScore: c.val.valueScore,
+      price: c.mom.currentPrice,
+      volatility: c.mom.annualizedVol,
+      lookbackUsed: c.mom.lookbackUsed,
       strategy: strategyLabel
     });
   }
-  
+
   results.sort((a, b) => b.compositeScore - a.compositeScore);
   return results;
 }
@@ -3624,12 +3912,18 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const { universeId } = req.params;
   const { 
     period = '3y',
-    rebalanceFreq = 'monthly',
+    rebalanceFreq: rebalanceFreqRaw = 'monthly',
     topN = 10,
     strategy = 'momentum_value',
     initialCapital = 10000,
     optimize = 'false'
   } = req.query;
+
+  const rebalanceFreq = String(rebalanceFreqRaw || 'monthly').toLowerCase().trim();
+  const allowedFreq = ['monthly', 'quarterly', 'weekly', 'biweekly'];
+  if (!allowedFreq.includes(rebalanceFreq)) {
+    return res.status(400).json({ success: false, error: `Invalid rebalanceFreq (use ${allowedFreq.join(', ')})` });
+  }
 
   const strategyClean = (strategy || 'momentum_value').toLowerCase().trim();
   const capital = parseFloat(initialCapital) || 10000;
@@ -3801,6 +4095,8 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       benchmark: ((m.benchEnd - m.benchStart) / m.benchStart) * 100
     })).filter(m => !isNaN(m.portfolio) && isFinite(m.portfolio));
 
+    const monthlyEventsSummary = buildMonthlyEventsSummary(rebalanceLog, tradeLog);
+
     const monthsBeating = monthlyWithReturns.filter(m => m.portfolio > m.benchmark).length;
     const hitRate = monthlyWithReturns.length > 0 ? (monthsBeating / monthlyWithReturns.length) * 100 : 0;
 
@@ -3894,6 +4190,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
 
       equityCurve: dailyValues,
       monthlyReturns: monthlyWithReturns,
+      monthlyEventsSummary,
       trades: tradeLog,
       rebalances: rebalanceLog,
       currentHoldings
@@ -3956,6 +4253,7 @@ app.post('/api/optimization/reset', (req, res) => {
     : portfolio.config?.strategy === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS
       : DEFAULT_COMPOSITE_WEIGHTS;
   portfolio.config.weights = { ...defaultW };
+  portfolio.config._weightsVersion = 2;
   delete portfolio.optimizationRound;
   delete portfolio.weightHistory;
   delete portfolio.lastOptimized;
@@ -4019,7 +4317,8 @@ app.post('/api/paper-trade/init', (req, res) => {
   const { initialCapital = 100000, strategy = 'full_composite', universe = 'sp500_top50', topN = 10 } = req.body || {};
   const config = {
     initialCapital: parseFloat(initialCapital), strategy, universe, topN: parseInt(topN),
-    weights: strategy === 'full_composite' ? { ...DEFAULT_COMPOSITE_WEIGHTS } : strategy === 'full_composite_aggressive' ? { ...AGGRESSIVE_COMPOSITE_WEIGHTS } : strategy === 'full_composite_turbo' ? { ...TURBO_COMPOSITE_WEIGHTS } : null
+    weights: strategy === 'full_composite' ? { ...DEFAULT_COMPOSITE_WEIGHTS } : strategy === 'full_composite_aggressive' ? { ...AGGRESSIVE_COMPOSITE_WEIGHTS } : strategy === 'full_composite_turbo' ? { ...TURBO_COMPOSITE_WEIGHTS } : null,
+    _weightsVersion: (strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo') ? 2 : undefined
   };
   if (!UNIVERSE_TICKERS[config.universe]) {
     return res.status(400).json({ success: false, error: `Unknown universe: ${config.universe}` });
@@ -4148,10 +4447,12 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
 
     let nextRebalance = null;
     if (portfolio.lastRebalance) {
-      const lr = new Date(portfolio.lastRebalance);
-      lr.setMonth(lr.getMonth() + 1);
-      nextRebalance = lr.toISOString().split('T')[0];
+      nextRebalance = nextMidMonthRebalanceAfter(portfolio.lastRebalance);
+    } else if (portfolio.createdAt) {
+      nextRebalance = nextMidMonthRebalanceAfter(portfolio.createdAt);
     }
+
+    const monthlyEventsSummary = buildPaperMonthlyEventsSummary(portfolio.rebalanceHistory);
 
     res.json({
       success: true,
@@ -4171,7 +4472,8 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
           holdingsCount: portfolio.holdings.length
         },
         navHistory: portfolio.navHistory,
-        rebalanceCount: portfolio.rebalanceHistory.length
+        rebalanceCount: portfolio.rebalanceHistory.length,
+        monthlyEventsSummary
       }
     });
   } catch (e) {
@@ -4343,22 +4645,28 @@ function generateRebalanceReport(portfolio, sells, rankings, priceHistory, curre
   }
 
   // --- Short-term spread weights (current period) ---
+  // KEY FIX: Use actual spread values including negatives, not floored at 0.1
   const shortTermSpreadWeights = {};
   if (factorPerformance.length === FACTOR_NAMES.length) {
-    const spreads = {};
-    for (const fp of factorPerformance) spreads[fp.name] = Math.max(fp.spread, 0.1);
-    const spreadTotal = FACTOR_NAMES.reduce((s, f) => s + spreads[f], 0);
-    for (const f of FACTOR_NAMES) shortTermSpreadWeights[f] = spreads[f] / spreadTotal;
+    const transformedSpreads = {};
+    for (const fp of factorPerformance) {
+      transformedSpreads[fp.name] = Math.exp(fp.spread / 5);
+    }
+    const spreadTotal = FACTOR_NAMES.reduce((s, f) => s + (transformedSpreads[f] || 1), 0);
+    for (const f of FACTOR_NAMES) shortTermSpreadWeights[f] = (transformedSpreads[f] || 1) / spreadTotal;
   }
 
   // --- Long-term IC weights ---
+  // KEY FIX: Use softmax on IC values so negative IC → small weight, positive IC → large weight
   const longTermICWeights = {};
-  const positiveICs = {};
-  for (const f of FACTOR_NAMES) positiveICs[f] = Math.max(longTermIC[f], 0.01);
-  const icTotal = FACTOR_NAMES.reduce((s, f) => s + positiveICs[f], 0);
-  for (const f of FACTOR_NAMES) longTermICWeights[f] = positiveICs[f] / icTotal;
+  const transformedICs = {};
+  for (const f of FACTOR_NAMES) {
+    transformedICs[f] = Math.exp(longTermIC[f] * 20);
+  }
+  const icTotal = FACTOR_NAMES.reduce((s, f) => s + transformedICs[f], 0);
+  for (const f of FACTOR_NAMES) longTermICWeights[f] = transformedICs[f] / icTotal;
 
-  // --- Blend: 50% long-term IC + 50% short-term spreads → target weights ---
+  // --- Blend: 60% long-term IC + 40% short-term spreads → target weights ---
   let newWeights = { ...currentWeights };
   const hasShortTerm = Object.keys(shortTermSpreadWeights).length === FACTOR_NAMES.length;
   const hasLongTerm = longTermPeriods >= 2;
@@ -4366,7 +4674,7 @@ function generateRebalanceReport(portfolio, sells, rankings, priceHistory, curre
   if (hasShortTerm || hasLongTerm) {
     const targetWeights = {};
     if (hasShortTerm && hasLongTerm) {
-      for (const f of FACTOR_NAMES) targetWeights[f] = longTermICWeights[f] * 0.5 + shortTermSpreadWeights[f] * 0.5;
+      for (const f of FACTOR_NAMES) targetWeights[f] = longTermICWeights[f] * 0.60 + shortTermSpreadWeights[f] * 0.40;
     } else if (hasLongTerm) {
       for (const f of FACTOR_NAMES) targetWeights[f] = longTermICWeights[f];
     } else {
@@ -4375,7 +4683,7 @@ function generateRebalanceReport(portfolio, sells, rankings, priceHistory, curre
 
     const blended = {};
     for (const f of FACTOR_NAMES) {
-      blended[f] = currentWeights[f] * 0.70 + targetWeights[f] * 0.30;
+      blended[f] = currentWeights[f] * 0.50 + targetWeights[f] * 0.50;
     }
 
     const bSum = FACTOR_NAMES.reduce((s, f) => s + blended[f], 0);
@@ -4383,12 +4691,12 @@ function generateRebalanceReport(portfolio, sells, rankings, priceHistory, curre
 
     for (const f of FACTOR_NAMES) {
       const diff = blended[f] - currentWeights[f];
-      if (Math.abs(diff) > 0.05) {
-        blended[f] = currentWeights[f] + 0.05 * Math.sign(diff);
+      if (Math.abs(diff) > 0.10) {
+        blended[f] = currentWeights[f] + 0.10 * Math.sign(diff);
       }
     }
 
-    for (const f of FACTOR_NAMES) blended[f] = Math.max(blended[f], 0.05);
+    for (const f of FACTOR_NAMES) blended[f] = Math.max(blended[f], 0.02);
 
     const finalSum = FACTOR_NAMES.reduce((s, f) => s + blended[f], 0);
     for (const f of FACTOR_NAMES) {
@@ -4506,15 +4814,24 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
       }
     }
 
-    // Ensure weights exist for existing portfolios
-    if (strategy === 'full_composite' && !portfolio.config.weights) {
-      portfolio.config.weights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+    // Ensure weights exist; reset to new defaults when schema version bumps
+    if (strategy === 'full_composite') {
+      if (!portfolio.config.weights || !portfolio.config._weightsVersion || portfolio.config._weightsVersion < 2) {
+        portfolio.config.weights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+        portfolio.config._weightsVersion = 2;
+      }
     }
-    if (strategy === 'full_composite_aggressive' && !portfolio.config.weights) {
-      portfolio.config.weights = { ...AGGRESSIVE_COMPOSITE_WEIGHTS };
+    if (strategy === 'full_composite_aggressive') {
+      if (!portfolio.config.weights || !portfolio.config._weightsVersion || portfolio.config._weightsVersion < 2) {
+        portfolio.config.weights = { ...AGGRESSIVE_COMPOSITE_WEIGHTS };
+        portfolio.config._weightsVersion = 2;
+      }
     }
-    if (strategy === 'full_composite_turbo' && !portfolio.config.weights) {
-      portfolio.config.weights = { ...TURBO_COMPOSITE_WEIGHTS };
+    if (strategy === 'full_composite_turbo') {
+      if (!portfolio.config.weights || !portfolio.config._weightsVersion || portfolio.config._weightsVersion < 2) {
+        portfolio.config.weights = { ...TURBO_COMPOSITE_WEIGHTS };
+        portfolio.config._weightsVersion = 2;
+      }
     }
 
     // Run ranking
@@ -4574,7 +4891,8 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
           entryPrice: h.entryPrice,
           sellPrice,
           pnl: parseFloat(((sellPrice - h.entryPrice) * h.shares).toFixed(2)),
-          pnlPct: parseFloat((((sellPrice / h.entryPrice) - 1) * 100).toFixed(2))
+          pnlPct: parseFloat((((sellPrice / h.entryPrice) - 1) * 100).toFixed(2)),
+          reason: 'ROTATION'
         });
       } else {
         remainingHoldings.push(h);
