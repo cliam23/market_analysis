@@ -134,8 +134,10 @@ export default function BacktestTab() {
   ];
   
   const freqOptions = [
-    { id: "monthly", label: "Monthly" },
-    { id: "quarterly", label: "Quarterly" }
+    { id: "monthly", label: "Monthly (15th)" },
+    { id: "quarterly", label: "Quarterly (15th)" },
+    { id: "weekly", label: "Weekly (+7 calendar days)" },
+    { id: "biweekly", label: "Biweekly (+14 calendar days)" }
   ];
   
   const topNOptions = [
@@ -815,6 +817,36 @@ export default function BacktestTab() {
                 <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>SPY Benchmark</span>
               </div>
             </div>
+            {results.monthlyEventsSummary && results.monthlyEventsSummary.length > 0 && (
+              <div style={{
+                marginTop: 14,
+                padding: "10px 12px",
+                background: "rgba(255,255,255,0.02)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                borderRadius: 8,
+                fontFamily: MONO,
+                fontSize: 10
+              }}>
+                <div style={{ fontWeight: 700, letterSpacing: 1, color: "#f0f0f0", marginBottom: 8 }}>
+                  MONTHLY EVENTS — rebalances vs stop exits
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "#c8c8c8", lineHeight: 1.5 }}>
+                  {results.monthlyEventsSummary.map((row) => (
+                    <span key={row.month}>
+                      <strong style={{ color: "#f0f0f0" }}>{row.month}</strong>
+                      {": "}
+                      {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""}
+                      {row.stops > 0 ? (
+                        <span style={{ color: "#f97316" }}>{`, ${row.stops} STOP${row.stops !== 1 ? "s" : ""}`}</span>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8, color: "#888", fontSize: 9, lineHeight: 1.5 }}>
+                  Sharp single-day steps on the curve often line up with <strong style={{ color: "#f0f0f0" }}>STOP</strong> rows in the trade log (especially composite aggressive/turbo), not only rebalance days. Expand the trade log and filter by type to verify.
+                </div>
+              </div>
+            )}
           </Box>
           
           {/* Monthly Returns Heatmap */}

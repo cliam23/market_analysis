@@ -71,7 +71,7 @@ export default function AboutTab() {
             { tab: "Search", icon: "🔍", desc: "Look up any ticker for a deep-dive analysis: Buffett checklist, moat assessment, ROIC, earnings quality, DCF valuation, comparables, total shareholder yield, and entry timing." },
             { tab: "Backtest", icon: "📈", desc: "Simulate trading strategies on historical data with four modes: Momentum Only, Momentum + Value, Quality Momentum, and Full Composite. Compare risk-adjusted returns, drawdowns, and factor attribution." },
             { tab: "Momentum Rankings", icon: "📊", desc: "Scan the universe for the strongest momentum stocks with configurable lookback, trend filters, and universe selection. See real-time rankings with volatility-adjusted scores." },
-            { tab: "Paper Trade", icon: "💼", desc: "Forward-test the model by running it live. The system auto-rebalances every 30 days, tracking portfolio value, trades, and performance vs. S&P 500." },
+            { tab: "Paper Trade", icon: "💼", desc: "Forward-test the model by running it live. Suggested next rebalance follows the same mid-month (15th) anchor as the backtest; optional auto-run triggers once the calendar reaches that date. Tracks portfolio value, trades, and performance vs. S&P 500." },
           ].map(({ tab, icon, desc }) => (
             <div key={tab} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
               <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
@@ -147,6 +147,18 @@ export default function AboutTab() {
           <li><strong style={{ color: "#f0f0f0" }}>Trend confirmation:</strong> Stocks in strong downtrends with weak value scores are filtered out.</li>
           <li><strong style={{ color: "#f0f0f0" }}>Minimum data:</strong> At least 120 trading days of price history required for reliable signal calculation.</li>
         </ul>
+      </Section>
+
+      <Section title="Drawdowns, stops & rebalance cadence">
+        <p style={{ margin: "0 0 10px" }}>
+          Short-term NAV moves in backtests are often driven by <strong style={{ color: "#f0f0f0" }}>stop-loss exits</strong> (vol-adaptive trailing stops with confirmation)
+          firing on one or a few days, not by stale chart data. Those events can dominate the equity curve even when rebalance dates are unchanged.
+        </p>
+        <p style={{ margin: 0 }}>
+          Changing <strong style={{ color: "#f0f0f0" }}>rebalance frequency</strong> mainly changes how often rankings rotate into new names; it does not remove mid-period stops.
+          Monthly backtest rebalances are anchored to the <strong style={{ color: "#f0f0f0" }}>15th</strong>; weekly/biweekly modes step by calendar weeks from the period start.
+          Use the monthly event summary and trade log (STOP vs rebalance) to line up drawdowns with what actually happened.
+        </p>
       </Section>
 
       <Section title="Data Source & Limitations">
