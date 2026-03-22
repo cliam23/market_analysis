@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Box, SH, Pill, LoadingSpinner, TrendBadge } from "./shared.jsx";
 import { MONO } from "../lib/theme.js";
+import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 const STRATEGIES = [
   { id: "momentum", label: "Momentum Only" },
@@ -70,25 +71,49 @@ export default function RankingsView({ onSelectTicker }) {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [scanBtnHover, setScanBtnHover] = useState(false);
+  const { abortInFlight, beginRequest, clearIfCurrent } = useAbortableApi();
+
+  // Changing strategy/universe/etc. while a scan is running cancels the in-flight request.
+  useEffect(() => {
+    if (!loading) return;
+    abortInFlight();
+    setLoading(false);
+    setResults(null);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStrategy, selectedUniverse, selectedLookback, smooth]);
 
   const runScan = async () => {
+    const ac = beginRequest();
     setLoading(true);
     setError(null);
-    setResults(null);
 
     try {
       const response = await fetch(
-        `/api/scan/${selectedUniverse}?strategy=${selectedStrategy}&lookback=${selectedLookback}&smooth=${smooth}&fresh=true`
+        `/api/scan/${selectedUniverse}?strategy=${selectedStrategy}&lookback=${selectedLookback}&smooth=${smooth}&fresh=true`,
+        { signal: ac.signal }
       );
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const data = await response.json();
       if (!data.success) throw new Error(data.error || "Scan failed");
       setResults(data);
     } catch (err) {
+      if (isAbortError(err)) return;
       setError(err.message);
     } finally {
+      clearIfCurrent(ac);
       setLoading(false);
     }
+  };
+
+  const onScanClick = () => {
+    if (loading) {
+      abortInFlight();
+      setLoading(false);
+      return;
+    }
+    runScan();
   };
 
   const sortRows = (rows) => {
@@ -120,7 +145,6 @@ export default function RankingsView({ onSelectTicker }) {
             <select
               value={selectedStrategy}
               onChange={(e) => setSelectedStrategy(e.target.value)}
-              disabled={loading}
               style={{ ...selectStyle, minWidth: 170 }}
             >
               {STRATEGIES.map((s) => (
@@ -134,7 +158,6 @@ export default function RankingsView({ onSelectTicker }) {
             <select
               value={selectedUniverse}
               onChange={(e) => setSelectedUniverse(e.target.value)}
-              disabled={loading}
               style={{ ...selectStyle, minWidth: 160 }}
             >
               {UNIVERSES.map((u) => (
@@ -148,7 +171,6 @@ export default function RankingsView({ onSelectTicker }) {
             <select
               value={selectedLookback}
               onChange={(e) => setSelectedLookback(e.target.value)}
-              disabled={loading}
               style={selectStyle}
             >
               {LOOKBACKS.map((l) => (
@@ -162,7 +184,6 @@ export default function RankingsView({ onSelectTicker }) {
             <select
               value={smooth ? "on" : "off"}
               onChange={(e) => setSmooth(e.target.value === "on")}
-              disabled={loading}
               style={selectStyle}
             >
               <option value="on">On</option>
@@ -175,7 +196,6 @@ export default function RankingsView({ onSelectTicker }) {
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
-              disabled={loading}
               style={selectStyle}
             >
               {SORT_OPTIONS.map((o) => (
@@ -187,26 +207,50 @@ export default function RankingsView({ onSelectTicker }) {
           <div style={{ marginLeft: "auto" }}>
             <label style={labelStyle}>&nbsp;</label>
             <button
-              onClick={runScan}
-              disabled={loading}
+              type="button"
+              onClick={onScanClick}
+              onMouseEnter={() => setScanBtnHover(true)}
+              onMouseLeave={() => setScanBtnHover(false)}
               style={{
                 padding: "8px 20px",
-                background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-                border: "1px solid rgba(255,255,255,0.12)",
+                background:
+                  loading && scanBtnHover
+                    ? "rgba(239,68,68,0.15)"
+                    : loading
+                      ? "rgba(255,255,255,0.04)"
+                      : "rgba(255,255,255,0.08)",
+                border:
+                  loading && scanBtnHover
+                    ? "1px solid rgba(239,68,68,0.45)"
+                    : "1px solid rgba(255,255,255,0.12)",
                 borderRadius: 6,
-                color: loading ? "#555" : "#818cf8",
+                color:
+                  loading && scanBtnHover
+                    ? "#fca5a5"
+                    : loading
+                      ? "#888"
+                      : "#818cf8",
                 fontSize: 12,
                 fontWeight: 700,
-                cursor: loading ? "not-allowed" : "pointer",
+                cursor: "pointer",
                 fontFamily: MONO
               }}
             >
-              {loading ? "SCANNING..." : "RUN SCAN"}
+              {loading && scanBtnHover
+                ? "CANCEL"
+                : loading
+                  ? "SCANNING..."
+                  : "RUN SCAN"}
             </button>
           </div>
         </div>
 
-        {loading && (
+        {loading && results && (
+          <div style={{ textAlign: "center", padding: "10px 12px", fontSize: 11, fontFamily: MONO, color: "#888" }}>
+            Updating scan…
+          </div>
+        )}
+        {loading && !results && (
           <Box border="rgba(255,255,255,0.06)" style={{ textAlign: "center", padding: "40px 20px" }}>
             <LoadingSpinner size={32} />
             <div style={{ marginTop: 16, color: "#f0f0f0", fontSize: 12, fontFamily: MONO }}>
@@ -224,6 +268,7 @@ export default function RankingsView({ onSelectTicker }) {
 
       {/* Results */}
       {results && (
+        <div style={{ opacity: loading ? 0.72 : 1, transition: "opacity 0.2s ease" }}>
         <>
           {/* Summary */}
           <Box border="rgba(255,255,255,0.06)" style={{ marginBottom: 16 }}>
@@ -339,6 +384,7 @@ export default function RankingsView({ onSelectTicker }) {
             </div>
           </Box>
         </>
+        </div>
       )}
 
       {!results && !loading && !error && (

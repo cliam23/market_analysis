@@ -222,7 +222,7 @@ export function InfoTip({ title, children }) {
             width: 340, maxWidth: '85vw',
             background: '#141420', border: '1px solid rgba(255,255,255,0.12)',
             borderRadius: 10, padding: 18, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            animation: 'fadeUp 0.2s ease-out', textTransform: 'none'
+            textTransform: 'none'
           }}
         >
           {title && (
