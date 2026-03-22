@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import yf from 'yahoo-finance2';
@@ -9,7 +10,7 @@ import {
 } from './analysis-engine.js';
 
 const app = express();
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
 app.use(cors());
 app.use(express.json());
 
@@ -73,7 +74,18 @@ const CACHE_TTL = 15 * 60 * 1000;
 const COMPS_CACHE_TTL = 30 * 60 * 1000;
 const QUOTE_CACHE_TTL = 15 * 60 * 1000;
 const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const BACKTEST_CACHE_VERSION = 'v15';
+const BACKTEST_CACHE_VERSION = 'v20';
+
+/**
+ * Fallback when FRED CPI is unavailable (~3%/yr compound, not official CPI).
+ * Primary baseline uses FRED series CPIAUCSL (BLS CPI via St. Louis Fed).
+ */
+const INFLATION_BASELINE_ANNUAL = 0.03;
+
+const FRED_CPI_SERIES_ID = 'CPIAUCSL';
+const FRED_OBSERVATIONS_URL = 'https://api.stlouisfed.org/fred/series/observations';
+const CPI_OBSERVATIONS_CACHE = new Map();
+const CPI_OBSERVATIONS_TTL_MS = 6 * 60 * 60 * 1000;
 
 function calcBuffettScore(data) {
   const scores = {};
@@ -2503,7 +2515,7 @@ function checkWeightStability(weightHistory) {
   };
 }
 
-function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, rebalanceDates, topN, capital, strategyClean, weights) {
+function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, rebalanceDates, topN, capital, strategyClean, weights, getCashInflationMultiplier = null) {
   if (strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
     const defaults = strategyClean === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
       : strategyClean === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS
@@ -2522,6 +2534,10 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
   const spyStartPrice = getPrice(spyPrices, rebalanceDates[0]);
   const spyShares = spyStartPrice ? capital / spyStartPrice : 0;
   const startDate = rebalanceDates[0];
+  const cashInflMult =
+    typeof getCashInflationMultiplier === 'function'
+      ? getCashInflationMultiplier
+      : (iso) => Math.pow(1 + INFLATION_BASELINE_ANNUAL, daysBetween(startDate, iso) / 365.25);
   const usesFundamentals = strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo' || strategyClean === 'quality_momentum';
   const stopCheckInterval = (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') ? 3 : 5;
 
@@ -2790,7 +2806,17 @@ function runBacktestSimulation(universe, priceHistory, fundamentals, spyPrices, 
       if (price) dayValue += holding.shares * price;
     }
     const spyPrice = getPrice(spyPrices, date);
-    dailyValues.push({ date, portfolio: dayValue, benchmark: spyShares * spyPrice });
+    let mult = cashInflMult(date);
+    if (mult == null || !Number.isFinite(mult) || mult <= 0) {
+      mult = Math.pow(1 + INFLATION_BASELINE_ANNUAL, daysBetween(startDate, date) / 365.25);
+    }
+    const cashInflationAdjusted = capital * mult;
+    dailyValues.push({
+      date,
+      portfolio: dayValue,
+      benchmark: spyShares * spyPrice,
+      cashInflationAdjusted
+    });
   }
 
   return { dailyValues, tradeLog, rebalanceLog, holdingsSnapshots, factorSnapshots, holdings, cash, regimeLog, totalStopsTriggered };
@@ -3138,6 +3164,87 @@ function daysBetween(date1, date2) {
   const d1 = new Date(date1);
   const d2 = new Date(date2);
   return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+}
+
+/** Latest CPI index for calendar month of isoDate (YYYY-MM-DD); FRED uses month-start dates (e.g. 2024-01-01). */
+function cpiIndexForTradeDate(sortedObs, isoDate) {
+  if (!sortedObs.length) return null;
+  const monthAnchor = `${isoDate.slice(0, 7)}-01`;
+  let best = null;
+  for (let i = 0; i < sortedObs.length; i++) {
+    const o = sortedObs[i];
+    if (o.date <= monthAnchor) best = o.value;
+    else break;
+  }
+  return best != null ? best : sortedObs[0].value;
+}
+
+/**
+ * FRED CPI observations (monthly). Free API key: https://fred.stlouisfed.org/docs/api/api_key.html
+ * Data: U.S. BLS Consumer Price Index — All Urban Consumers, All Items, Seasonally Adjusted (CPIAUCSL).
+ */
+async function fetchFredCpiObservations(observationStart, observationEnd, apiKey) {
+  const key = (apiKey && String(apiKey).trim()) || '';
+  if (!key) return [];
+
+  const cacheKey = `${observationStart}|${observationEnd}|${FRED_CPI_SERIES_ID}`;
+  const hit = CPI_OBSERVATIONS_CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.ts < CPI_OBSERVATIONS_TTL_MS) return hit.observations;
+
+  try {
+    const url = new URL(FRED_OBSERVATIONS_URL);
+    url.searchParams.set('series_id', FRED_CPI_SERIES_ID);
+    url.searchParams.set('api_key', key);
+    url.searchParams.set('file_type', 'json');
+    url.searchParams.set('observation_start', observationStart);
+    url.searchParams.set('observation_end', observationEnd);
+
+    const res = await fetch(url.toString());
+    const json = await res.json();
+    if (json.error_code != null || json.error_message) {
+      console.warn('FRED CPI:', json.error_message || json.error_code);
+      return [];
+    }
+    const observations = (json.observations || [])
+      .map((o) => ({ date: o.date, value: parseFloat(o.value) }))
+      .filter((o) => o.date && Number.isFinite(o.value) && o.value > 0);
+    observations.sort((a, b) => a.date.localeCompare(b.date));
+    CPI_OBSERVATIONS_CACHE.set(cacheKey, { observations, ts: Date.now() });
+    return observations;
+  } catch (e) {
+    console.warn('FRED CPI fetch failed:', e.message || e);
+    return [];
+  }
+}
+
+/**
+ * Multiplier vs backtest start (1.0 on start day) for inflation-adjusted cash baseline.
+ * Uses CPI ratio when FRED data is usable; otherwise constant compound fallback.
+ */
+function buildCashInflationMultiplierFn(observations, startDateStr, fallbackAnnual) {
+  const sorted = (observations || [])
+    .filter((o) => o && o.date && Number.isFinite(o.value) && o.value > 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const compound = (iso) => Math.pow(1 + fallbackAnnual, daysBetween(startDateStr, iso) / 365.25);
+
+  if (sorted.length < 2) {
+    return { multiplierFn: compound, usedFred: false };
+  }
+
+  const cpiStart = cpiIndexForTradeDate(sorted, startDateStr);
+  if (!cpiStart || cpiStart <= 0) {
+    return { multiplierFn: compound, usedFred: false };
+  }
+
+  return {
+    multiplierFn(iso) {
+      const c = cpiIndexForTradeDate(sorted, iso);
+      if (c && c > 0) return c / cpiStart;
+      return compound(iso);
+    },
+    usedFred: true
+  };
 }
 
 function standardDeviation(arr) {
@@ -3948,8 +4055,9 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     if (!tradingWeights) tradingWeights = { ...TURBO_COMPOSITE_WEIGHTS };
   }
   const weightsKey = tradingWeights ? JSON.stringify(tradingWeights) : 'default';
-  
-  const cacheKey = `${BACKTEST_CACHE_VERSION}-${universeId}-${period}-${rebalanceFreq}-${topN}-${strategyClean}-${capital}-${weightsKey}`;
+  const cpiCacheTag = process.env.FRED_API_KEY && String(process.env.FRED_API_KEY).trim() ? 'fred' : 'const';
+
+  const cacheKey = `${BACKTEST_CACHE_VERSION}-${universeId}-${period}-${rebalanceFreq}-${topN}-${strategyClean}-${capital}-${weightsKey}-${cpiCacheTag}`;
   const cached = BACKTEST_CACHE.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < BACKTEST_CACHE_TTL) {
     return res.json({ success: true, ...cached.data, cached: true });
@@ -4022,9 +4130,37 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       return res.status(500).json({ success: false, error: 'Could not fetch SPY benchmark data. Try again.' });
     }
 
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+    const { multiplierFn: cashInflationMult, usedFred: inflationFromFred } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const inflationBaselineMeta = inflationFromFred
+      ? {
+          source: 'fred_cpiaucsl',
+          seriesId: FRED_CPI_SERIES_ID,
+          publisher: 'Federal Reserve Economic Data (FRED), Federal Reserve Bank of St. Louis',
+          detail: 'U.S. CPI All Urban Consumers, All Items, Seasonally Adjusted (BLS via FRED). Baseline = nominal dollars with same purchasing power as the backtest start month (monthly CPI ratio).'
+        }
+      : {
+          source: 'constant_fallback',
+          seriesId: null,
+          publisher: null,
+          detail: fredKey
+            ? 'FRED returned no usable CPI for this range — using ~3%/yr compound fallback.'
+            : 'Set FRED_API_KEY for official U.S. CPI (free key: fred.stlouisfed.org/docs/api/api_key.html). Using ~3%/yr compound fallback.'
+        };
+
     const sim = runBacktestSimulation(
       universe, priceHistory, fundamentals, spyPrices, rebalanceDates,
-      parseInt(topN), capital, strategyClean, tradingWeights
+      parseInt(topN), capital, strategyClean, tradingWeights,
+      cashInflationMult
     );
 
     const { dailyValues, tradeLog, rebalanceLog, factorSnapshots, holdings, regimeLog, totalStopsTriggered } = sim;
@@ -4164,6 +4300,12 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         totalStopsTriggered,
         stopsDetail: stops.length > 0 ? stops.slice(0, 20).map(s => ({ date: s.date, ticker: s.ticker, return: ((s.holdingReturn || 0) * 100).toFixed(1) + '%' })) : []
       },
+
+      inflationSource: inflationBaselineMeta.source,
+      inflationSeriesId: inflationBaselineMeta.seriesId,
+      inflationPublisher: inflationBaselineMeta.publisher,
+      inflationDetail: inflationBaselineMeta.detail,
+      inflationBaselineAnnualPct: inflationFromFred ? null : Math.round(INFLATION_BASELINE_ANNUAL * 1000) / 10,
 
       performance: {
         totalReturn: (totalReturn * 100).toFixed(2),

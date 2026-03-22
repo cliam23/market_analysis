@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ComposedChart, Bar } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
+import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -71,7 +72,47 @@ function MetricCard({ label, value, subValue, color, compareColor }) {
 
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
-  
+
+  const stratGreen = payload.find((p) => p.dataKey === "portfolioGreen" && p.value != null);
+  const stratRed = payload.find((p) => p.dataKey === "portfolioRed" && p.value != null);
+  const bench = payload.find((p) => p.dataKey === "benchmark" && p.value != null);
+  const cashNom = payload.find((p) => p.dataKey === "cashInflationAdjusted" && p.value != null && Number.isFinite(Number(p.value)));
+
+  const rows = [];
+  if (stratGreen || stratRed) {
+    const v = stratGreen?.value ?? stratRed?.value;
+    const color =
+      stratGreen && stratRed && stratGreen.value === stratRed.value
+        ? "#e5e5e5"
+        : stratGreen
+          ? C_VS_SPY_WIN
+          : C_VS_SPY_LOSE;
+    rows.push({ key: "strat", color, text: `Strategy: $${Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` });
+  }
+  if (bench) {
+    rows.push({
+      key: "bench",
+      color: bench.color,
+      text: `${bench.name}: $${Number(bench.value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+    });
+  }
+  if (cashNom) {
+    rows.push({
+      key: "cash",
+      color: cashNom.color,
+      text: `${cashNom.name}: $${Number(cashNom.value).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+    });
+  }
+  for (let i = 0; i < payload.length; i++) {
+    const p = payload[i];
+    if (p.dataKey === "portfolioGreen" || p.dataKey === "portfolioRed" || p.dataKey === "benchmark" || p.dataKey === "cashInflationAdjusted") continue;
+    rows.push({
+      key: `o-${i}`,
+      color: p.color,
+      text: `${p.name}: $${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+    });
+  }
+
   return (
     <div style={{ 
       background: "rgba(20,20,20,0.95)", 
@@ -82,9 +123,9 @@ function CustomTooltip({ active, payload, label }) {
       fontSize: 12
     }}>
       <div style={{ color: "#f0f0f0", marginBottom: 6 }}>{label}</div>
-      {payload.map((p, i) => (
-        <div key={i} style={{ color: p.color, marginBottom: 2 }}>
-          {p.name}: ${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+      {rows.map((r) => (
+        <div key={r.key} style={{ color: r.color, marginBottom: 2 }}>
+          {r.text}
         </div>
       ))}
     </div>
@@ -94,6 +135,127 @@ function CustomTooltip({ active, payload, label }) {
 const COMPOSITE_FAMILY = ["full_composite", "full_composite_aggressive", "full_composite_turbo"];
 function isCompositeFamily(s) {
   return COMPOSITE_FAMILY.includes(s);
+}
+
+/** Green = beating S&P, red = trailing S&P (for headline metrics). */
+const C_VS_SPY_WIN = "#22c55e";
+const C_VS_SPY_LOSE = "#ef4444";
+const C_SPY_LINE = "#94a3b8";
+const C_CASH_LINE = "#38bdf8";
+
+function finiteNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Nominal $ with same purchasing power as day-1 capital (flat ~3%/yr compound if API omits series — stale cache). */
+function cashInflationBaselineForRow(row, firstRow, initialCapital, annualPct) {
+  const fromApi = finiteNum(row.cashInflationAdjusted);
+  if (fromApi != null) return fromApi;
+  const cap = finiteNum(initialCapital);
+  const start = firstRow?.date;
+  if (cap == null || !start || !row?.date) return null;
+  const pct = finiteNum(annualPct);
+  const r = pct != null && pct > 0 ? pct / 100 : 0.03;
+  const t0 = new Date(start + "T12:00:00").getTime();
+  const t1 = new Date(row.date + "T12:00:00").getTime();
+  const years = (t1 - t0) / (365.25 * 86400000);
+  return cap * Math.pow(1 + r, years);
+}
+
+/** Split equity vs benchmark into green (above) / red (below) series; inserts crossover points so segments meet cleanly. */
+function buildSegmentedEquityChartData(curve, initialCapital, inflationBaselineAnnualPct) {
+  if (!curve || curve.length === 0) return [];
+
+  const first = curve[0];
+  const out = [];
+
+  const push = (date, benchmark, portfolio, above, cashBaseline) => {
+    const b = Number(benchmark);
+    const p = Number(portfolio);
+    out.push({
+      date,
+      benchmark: b,
+      portfolioGreen: above ? p : null,
+      portfolioRed: above ? null : p,
+      cashInflationAdjusted: finiteNum(cashBaseline)
+    });
+  };
+
+  push(
+    first.date,
+    first.benchmark,
+    first.portfolio,
+    Number(first.portfolio) >= Number(first.benchmark),
+    cashInflationBaselineForRow(first, first, initialCapital, inflationBaselineAnnualPct)
+  );
+
+  for (let i = 1; i < curve.length; i++) {
+    const prev = curve[i - 1];
+    const curr = curve[i];
+    const p0 = Number(prev.portfolio);
+    const b0 = Number(prev.benchmark);
+    const p1 = Number(curr.portfolio);
+    const b1 = Number(curr.benchmark);
+    const c0 = cashInflationBaselineForRow(prev, first, initialCapital, inflationBaselineAnnualPct);
+    const c1 = cashInflationBaselineForRow(curr, first, initialCapital, inflationBaselineAnnualPct);
+    const a0 = p0 >= b0;
+    const a1 = p1 >= b1;
+
+    if (a0 === a1) {
+      push(curr.date, b1, p1, a1, c1);
+      continue;
+    }
+
+    const dp = p1 - p0;
+    const db = b1 - b0;
+    const denom = dp - db;
+    let t = 0.5;
+    if (Math.abs(denom) > 1e-12) {
+      t = (b0 - p0) / denom;
+    }
+    t = Math.max(0, Math.min(1, t));
+
+    const crossP = p0 + t * dp;
+    const crossB = b0 + t * db;
+    const crossC = c0 != null && c1 != null ? c0 + t * (c1 - c0) : c1 ?? c0;
+    const tms0 = new Date(prev.date + "T12:00:00").getTime();
+    const tms1 = new Date(curr.date + "T12:00:00").getTime();
+    const crossDate = new Date(tms0 + t * (tms1 - tms0)).toISOString().slice(0, 10);
+
+    out.push({
+      date: crossDate,
+      benchmark: crossB,
+      portfolioGreen: crossP,
+      portfolioRed: crossP,
+      cashInflationAdjusted: finiteNum(crossC)
+    });
+
+    push(curr.date, b1, p1, a1, c1);
+  }
+
+  return out;
+}
+const C_SUB_NEUTRAL = "#64748b";
+
+/** Table cell: strategy value vs benchmark (or alpha vs 0). */
+function colorMetricVsBench(label, stratRaw, benchRaw) {
+  const strat = parseFloat(stratRaw);
+  const bench = benchRaw != null && benchRaw !== "" ? parseFloat(benchRaw) : NaN;
+  if (label === "Alpha %") {
+    if (strat > 0) return C_VS_SPY_WIN;
+    if (strat < 0) return C_VS_SPY_LOSE;
+    return "#eab308";
+  }
+  if (label.includes("Win rate") || label.includes("Hit rate")) {
+    return strat >= 50 ? C_VS_SPY_WIN : C_VS_SPY_LOSE;
+  }
+  if (benchRaw == null || benchRaw === "" || Number.isNaN(bench)) return "#f0f0f0";
+  // API sends drawdown as negative % (e.g. -14 vs -19). Less loss = higher number → beat when strat >= bench.
+  if (label.includes("Max DD")) {
+    return strat >= bench ? C_VS_SPY_WIN : C_VS_SPY_LOSE;
+  }
+  return strat >= bench ? C_VS_SPY_WIN : C_VS_SPY_LOSE;
 }
 
 export default function BacktestTab() {
@@ -108,7 +270,7 @@ export default function BacktestTab() {
     period: "3y",
     rebalanceFreq: "monthly",
     topN: "10",
-    strategy: "momentum_value",
+    strategy: "full_composite",
     initialCapital: "10000"
   });
 
@@ -148,19 +310,36 @@ export default function BacktestTab() {
   ];
   
   const strategyOptions = [
-    { id: "momentum", label: "Momentum Only" },
-    { id: "momentum_value", label: "Momentum + Value" },
     { id: "full_composite", label: "Full Composite" },
     { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
     { id: "full_composite_turbo", label: "Full Composite (Turbo — max risk)" },
+    { id: "momentum", label: "Momentum Only" },
+    { id: "momentum_value", label: "Momentum + Value" },
     { id: "quality_momentum", label: "Quality + Momentum" }
   ];
   
-  const [optimizing, setOptimizing] = useState(false);
+  const [runBtnHover, setRunBtnHover] = useState(false);
+  const { abortInFlight: abortInFlightBacktest, beginRequest, clearIfCurrent } = useAbortableApi();
 
-  const runBacktest = async (optimize = false) => {
-    if (optimize) setOptimizing(true);
-    else { setLoading(true); setResults(null); }
+  // Stop loading when universe/strategy/period/etc. change so the previous model's request doesn't finish later.
+  useEffect(() => {
+    if (!loading) return;
+    abortInFlightBacktest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only abort when filters change, not when loading toggles
+  }, [
+    settings.universe,
+    settings.period,
+    settings.rebalanceFreq,
+    settings.topN,
+    settings.strategy,
+    settings.initialCapital
+  ]);
+
+  const runBacktest = async () => {
+    const ac = beginRequest();
+    const { signal } = ac;
+
+    setLoading(true);
     setError(null);
     
     try {
@@ -170,11 +349,11 @@ export default function BacktestTab() {
         topN: settings.topN,
         strategy: settings.strategy,
         initialCapital: settings.initialCapital,
-        optimize: optimize ? 'true' : 'false',
+        optimize: "false",
         _t: Date.now()
       });
       
-      const response = await fetch(`/api/backtest/${settings.universe}?${params}`);
+      const response = await fetch(`/api/backtest/${settings.universe}?${params}`, { signal });
       const data = await response.json();
       
       if (!data.success) {
@@ -195,29 +374,23 @@ export default function BacktestTab() {
         }));
       }
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       setError(err.message);
     } finally {
+      clearIfCurrent(ac);
       setLoading(false);
-      setOptimizing(false);
     }
   };
 
-  const resetOptimization = async () => {
-    try {
-      await fetch('/api/optimization/reset', { method: 'POST' });
-      if (results) runBacktest(false);
-    } catch (err) {
-      setError(err.message);
+  const onRunBacktestClick = () => {
+    if (loading) {
+      abortInFlightBacktest();
+      setLoading(false);
+      return;
     }
-  };
-
-  const freezeOptimization = async () => {
-    try {
-      await fetch('/api/optimization/freeze', { method: 'POST' });
-      if (results) runBacktest(false);
-    } catch (err) {
-      setError(err.message);
-    }
+    runBacktest();
   };
   
   const formatValue = (val) => {
@@ -226,16 +399,16 @@ export default function BacktestTab() {
     return `${sign}${num.toFixed(1)}%`;
   };
   
-  const getAlphaColor = (alpha) => {
-    const num = parseFloat(alpha);
-    if (num > 3) return "#22c55e";
-    if (num > 0) return "#4ade80";
-    if (num > -3) return "#eab308";
-    return "#ef4444";
+  /** Alpha > 0 = beat S&P on risk-adjusted basis → green; < 0 → red. */
+  const alphaVsBenchColor = (alpha) => {
+    const n = parseFloat(alpha);
+    if (n > 0) return C_VS_SPY_WIN;
+    if (n < 0) return C_VS_SPY_LOSE;
+    return "#eab308";
   };
   
   return (
-    <div style={{ animation: "fadeUp 0.3s ease-out" }}>
+    <div>
       {/* Controls */}
       <Box style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -270,69 +443,52 @@ export default function BacktestTab() {
             options={strategyOptions}
           />
           <button
-            onClick={() => runBacktest(false)}
-            disabled={loading || optimizing}
+            type="button"
+            onClick={onRunBacktestClick}
+            onMouseEnter={() => setRunBtnHover(true)}
+            onMouseLeave={() => setRunBtnHover(false)}
             style={{
               padding: "10px 24px",
-              background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
+              background:
+                loading && runBtnHover
+                  ? "rgba(239,68,68,0.15)"
+                  : loading
+                    ? "rgba(255,255,255,0.04)"
+                    : "rgba(255,255,255,0.08)",
+              border:
+                loading && runBtnHover
+                  ? "1px solid rgba(239,68,68,0.45)"
+                  : "1px solid rgba(255,255,255,0.12)",
               borderRadius: 6,
-              color: loading ? "#555" : "#f0f0f0",
+              color:
+                loading && runBtnHover
+                  ? "#fca5a5"
+                  : loading
+                    ? "#888"
+                    : "#f0f0f0",
               fontSize: 13,
               fontWeight: 700,
-              cursor: loading ? "not-allowed" : "pointer",
+              cursor: "pointer",
               fontFamily: MONO
             }}
           >
-            {loading ? "RUNNING..." : "RUN BACKTEST"}
+            {loading && runBtnHover
+              ? "CANCEL"
+              : loading
+                ? "RUNNING..."
+                : "RUN BACKTEST"}
           </button>
-          {isCompositeFamily(settings.strategy) && (
-            <button
-              onClick={() => runBacktest(true)}
-              disabled={loading || optimizing || (results?.optimizationStatus?.frozen)}
-              style={{
-                padding: "10px 24px",
-                background: optimizing ? "rgba(255,255,255,0.04)" : results?.optimizationStatus?.frozen ? "rgba(255,255,255,0.02)" : "rgba(59,130,246,0.15)",
-                border: `1px solid ${results?.optimizationStatus?.frozen ? "rgba(255,255,255,0.06)" : "rgba(59,130,246,0.3)"}`,
-                borderRadius: 6,
-                color: optimizing ? "#555" : results?.optimizationStatus?.frozen ? "#444" : "#60a5fa",
-                fontSize: 13,
-                fontWeight: 700,
-                cursor: (loading || optimizing || results?.optimizationStatus?.frozen) ? "not-allowed" : "pointer",
-                fontFamily: MONO
-              }}
-            >
-              {optimizing ? "OPTIMIZING..." : results?.optimizationStatus?.frozen ? "WEIGHTS FROZEN" : "OPTIMIZE WEIGHTS"}
-            </button>
-          )}
         </div>
       </Box>
       
-      {isCompositeFamily(settings.strategy) && (
-        <Box style={{ background: "rgba(234,179,8,0.04)", marginBottom: 16, borderColor: "rgba(234,179,8,0.15)" }}>
-          <div style={{ fontSize: 11, color: "#eab308", fontWeight: 700, marginBottom: 6, fontFamily: MONO }}>
-            FUNDAMENTAL DATA ASSUMPTION
-          </div>
-          <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "sans-serif" }}>
-            {settings.strategy === "full_composite_turbo" ? (
-              <>
-                Turbo is maximum risk: almost no quality floor, wide volatility allowance, and faster stop/regime reactions.
-                Fundamentals are still loaded for scoring weights where used, but filters are largely disabled. Not suitable
-                for capital you cannot afford to lose.
-              </>
-            ) : (
-              <>
-                The Full Composite strategy uses fundamental scores (Buffett Quality, Moat, ROIC, Earnings Quality, Shareholder Yield)
-                that are point-in-time approximations. For this backtest, fundamental data is fetched once at the start and held
-                stable throughout the simulation period to prevent look-ahead bias. This is a conservative assumption — in reality,
-                fundamentals evolve and quality signals shift over time.
-              </>
-            )}
+      {loading && results && (
+        <Box style={{ textAlign: "center", padding: "12px 16px", marginBottom: 12, borderColor: "rgba(255,255,255,0.08)" }}>
+          <div style={{ color: "#888", fontFamily: MONO, fontSize: 12 }}>
+            Updating backtest…
           </div>
         </Box>
       )}
-      
-      {loading && (
+      {loading && !results && (
         <Box style={{ textAlign: "center", padding: "40px" }}>
           <div style={{ color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>
             Fetching historical data and running simulation...
@@ -346,7 +502,8 @@ export default function BacktestTab() {
         </Box>
       )}
       
-      {results && !loading && (
+      {results && (
+        <div style={{ opacity: loading ? 0.72 : 1, transition: "opacity 0.2s ease" }}>
         <>
           {/* Performance Summary */}
           <Box>
@@ -358,25 +515,30 @@ export default function BacktestTab() {
               <MetricCard 
                 label="TOTAL RETURN" 
                 value={formatValue(results.performance.totalReturn)}
-                subValue={formatValue(results.performance.benchmarkReturn) + " benchmark"}
-                color={parseFloat(results.performance.totalReturn) >= parseFloat(results.performance.benchmarkReturn) ? "#22c55e" : "#ef4444"}
+                subValue={formatValue(results.performance.benchmarkReturn) + " S&P"}
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.totalReturn) >= parseFloat(results.performance.benchmarkReturn) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="ANNUALIZED" 
                 value={formatValue(results.performance.annualizedReturn)}
-                subValue={formatValue(results.performance.benchmarkAnnualized) + " benchmark"}
-                color={parseFloat(results.performance.annualizedReturn) >= parseFloat(results.performance.benchmarkAnnualized) ? "#22c55e" : "#ef4444"}
+                subValue={formatValue(results.performance.benchmarkAnnualized) + " S&P"}
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.annualizedReturn) >= parseFloat(results.performance.benchmarkAnnualized) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="ALPHA" 
                 value={formatValue(results.performance.alpha)}
-                color={getAlphaColor(results.performance.alpha)}
+                subValue="S&P (same period)"
+                compareColor={C_SUB_NEUTRAL}
+                color={alphaVsBenchColor(results.performance.alpha)}
               />
               <MetricCard 
                 label="SHARPE" 
                 value={results.performance.sharpe}
-                subValue={results.performance.benchmarkSharpe + " bench"}
-                color={parseFloat(results.performance.sharpe) >= parseFloat(results.performance.benchmarkSharpe) ? "#22c55e" : "#ef4444"}
+                subValue={results.performance.benchmarkSharpe + " S&P"}
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.sharpe) >= parseFloat(results.performance.benchmarkSharpe) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
             </div>
             
@@ -384,25 +546,28 @@ export default function BacktestTab() {
               <MetricCard 
                 label="MAX DRAWDOWN" 
                 value={results.performance.maxDrawdown + "%"}
-                subValue={results.performance.benchmarkMaxDD + "% benchmark"}
-                color={parseFloat(results.performance.maxDrawdown) > parseFloat(results.performance.benchmarkMaxDD) ? "#ef4444" : "#22c55e"}
+                subValue={results.performance.benchmarkMaxDD + "% S&P"}
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.maxDrawdown) >= parseFloat(results.performance.benchmarkMaxDD) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="VOLATILITY" 
                 value={results.performance.annualizedVol + "%"}
-                subValue={results.performance.benchmarkVol + "% benchmark"}
-                color={parseFloat(results.performance.annualizedVol) <= parseFloat(results.performance.benchmarkVol) ? "#22c55e" : "#888"}
+                subValue={results.performance.benchmarkVol + "% S&P"}
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.annualizedVol) <= parseFloat(results.performance.benchmarkVol) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="WIN RATE" 
                 value={results.performance.winRate + "%"}
-                color={parseFloat(results.performance.winRate) >= 50 ? "#22c55e" : "#eab308"}
+                color={parseFloat(results.performance.winRate) >= 50 ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="HIT RATE" 
                 value={results.performance.hitRate + "%"}
-                subValue="months beat benchmark"
-                color={parseFloat(results.performance.hitRate) >= 50 ? "#22c55e" : "#888"}
+                subValue="months beat S&P"
+                compareColor={C_SUB_NEUTRAL}
+                color={parseFloat(results.performance.hitRate) >= 50 ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
             </div>
 
@@ -413,8 +578,8 @@ export default function BacktestTab() {
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <MetricCard label="BETA VS BENCHMARK" value={String(results.performance.aggressiveMetrics.betaVsBenchmark)} subValue="1.00 = market" color="#60a5fa" />
-                  <MetricCard label="UP CAPTURE" value={results.performance.aggressiveMetrics.captureRatioUp + "%"} subValue="vs up months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioUp) >= 100 ? "#22c55e" : "#eab308"} />
-                  <MetricCard label="DOWN CAPTURE" value={results.performance.aggressiveMetrics.captureRatioDown + "%"} subValue="vs down months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioDown) <= 100 ? "#22c55e" : "#ef4444"} />
+                  <MetricCard label="UP CAPTURE" value={results.performance.aggressiveMetrics.captureRatioUp + "%"} subValue="vs up months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioUp) >= 100 ? C_VS_SPY_WIN : C_VS_SPY_LOSE} />
+                  <MetricCard label="DOWN CAPTURE" value={results.performance.aggressiveMetrics.captureRatioDown + "%"} subValue="vs down months" color={parseFloat(results.performance.aggressiveMetrics.captureRatioDown) <= 100 ? C_VS_SPY_WIN : C_VS_SPY_LOSE} />
                   <MetricCard label="TURNOVER" value={results.performance.aggressiveMetrics.turnoverPct + "%"} subValue="trades / (rebal × N)" color="#888" />
                   <MetricCard label="AVG HOLDING" value={results.performance.aggressiveMetrics.avgHoldingPeriod + " d"} subValue="exit trades" color="#888" />
                 </div>
@@ -451,12 +616,13 @@ export default function BacktestTab() {
                     ].map(([label, cKey, aKey, bKey]) => {
                       const c = compareSnaps.full_composite.performance;
                       const a = compareSnaps.full_composite_aggressive.performance;
+                      const benchVal = bKey != null ? c[bKey] : null;
                       return (
                         <tr key={label} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
                           <td style={{ padding: "6px" }}>{label}</td>
-                          <td style={{ textAlign: "right", padding: "6px" }}>{c[cKey]}{cKey !== "sharpe" ? "%" : ""}</td>
-                          <td style={{ textAlign: "right", padding: "6px" }}>{a[aKey]}{aKey !== "sharpe" ? "%" : ""}</td>
-                          <td style={{ textAlign: "right", padding: "6px" }}>{bKey ? `${c[bKey]}${bKey !== "benchmarkSharpe" ? "%" : ""}` : "—"}</td>
+                          <td style={{ textAlign: "right", padding: "6px", color: colorMetricVsBench(label, c[cKey], benchVal) }}>{c[cKey]}{cKey !== "sharpe" ? "%" : ""}</td>
+                          <td style={{ textAlign: "right", padding: "6px", color: colorMetricVsBench(label, a[aKey], benchVal) }}>{a[aKey]}{aKey !== "sharpe" ? "%" : ""}</td>
+                          <td style={{ textAlign: "right", padding: "6px", color: C_SUB_NEUTRAL }}>{bKey ? `${c[bKey]}${bKey !== "benchmarkSharpe" ? "%" : ""}` : "—"}</td>
                         </tr>
                       );
                     })}
@@ -527,148 +693,6 @@ export default function BacktestTab() {
               )}
             </Box>
           )}
-
-          {/* Optimization Dashboard for Full Composite */}
-          {isCompositeFamily(results.strategy) && results.optimizationStatus && (() => {
-            const os = results.optimizationStatus;
-            const opt = results.optimization;
-            const frozen = os.frozen;
-            const round = os.round;
-            const maxR = os.maxRounds;
-            const labels = { fundamental: 'Quality', dcf: 'DCF', valuation: 'Valuation', momentum: 'Momentum', value: 'Value' };
-            const pct = Math.round((round / maxR) * 100);
-
-            return (
-              <Box style={{ borderColor: frozen ? "rgba(239,68,68,0.2)" : opt?.status === 'accepted' ? "rgba(34,197,94,0.2)" : opt?.status === 'rejected' ? "rgba(234,179,8,0.2)" : "rgba(255,255,255,0.06)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1 }}>
-                    WEIGHT OPTIMIZATION STATUS
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={resetOptimization} style={{ padding: "4px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#f0f0f0", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>
-                      RESET TO DEFAULTS
-                    </button>
-                    {!frozen && (
-                      <button onClick={freezeOptimization} style={{ padding: "4px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 4, color: "#f0f0f0", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>
-                        FREEZE WEIGHTS
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
-                  <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO, whiteSpace: "nowrap" }}>
-                    Round {round}/{maxR}
-                  </div>
-                  <div style={{ flex: 1, height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: frozen ? "#ef4444" : "#60a5fa", borderRadius: 4, transition: "width 0.3s ease" }} />
-                  </div>
-                  <div style={{ fontSize: 11, color: frozen ? "#ef4444" : "#f0f0f0", fontFamily: MONO, whiteSpace: "nowrap" }}>
-                    {frozen ? "Frozen" : `${maxR - round} remaining`}
-                  </div>
-                </div>
-
-                {os.stability && (
-                  <div style={{ fontSize: 11, color: os.stability.stable ? "#22c55e" : "#eab308", fontFamily: MONO, marginBottom: 10 }}>
-                    Stability: {os.stability.message} (max variance: {os.stability.maxVariance}%)
-                  </div>
-                )}
-
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
-                  ACTIVE WEIGHTS
-                </div>
-                <div style={{ display: "flex", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
-                  {Object.entries(results.activeWeights).map(([f, w]) => (
-                    <div key={f} style={{ fontSize: 12, fontFamily: MONO, color: "#f0f0f0" }}>
-                      {labels[f] || f}: <span style={{ fontWeight: 700 }}>{(w * 100).toFixed(0)}%</span>
-                    </div>
-                  ))}
-                </div>
-
-                {opt && opt.status === 'accepted' && opt.previousWeights && opt.newWeights && (
-                  <div style={{ background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#22c55e", fontFamily: MONO, letterSpacing: 1, marginBottom: 8 }}>
-                      OPTIMIZATION ACCEPTED — ROUND {opt.round}
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 }}>
-                      {Object.keys(opt.newWeights).map(f => {
-                        const prev = opt.previousWeights[f] || 0;
-                        const next = opt.newWeights[f] || 0;
-                        const delta = next - prev;
-                        const deltaColor = delta > 0.005 ? "#22c55e" : delta < -0.005 ? "#ef4444" : "#666";
-                        return (
-                          <div key={f} style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
-                            {labels[f] || f}: {(prev * 100).toFixed(0)}%
-                            <span style={{ color: deltaColor, fontWeight: 700 }}> → {(next * 100).toFixed(0)}%</span>
-                            {Math.abs(delta) > 0.005 && <span style={{ color: deltaColor, fontSize: 10 }}> ({delta > 0 ? "+" : ""}{(delta * 100).toFixed(0)})</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 8, fontFamily: MONO }}>{opt.reason}</div>
-                  </div>
-                )}
-
-                {opt && opt.status === 'rejected' && (
-                  <div style={{ background: "rgba(234,179,8,0.05)", border: "1px solid rgba(234,179,8,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#eab308", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
-                      OPTIMIZATION REJECTED
-                    </div>
-                    <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>{opt.reason}</div>
-                  </div>
-                )}
-
-                {opt && opt.status === 'capped' && (
-                  <div style={{ background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 6, padding: 12, marginBottom: 10 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", fontFamily: MONO, letterSpacing: 1, marginBottom: 6 }}>
-                      OPTIMIZATION COMPLETE ({maxR}/{maxR} ROUNDS)
-                    </div>
-                    <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
-                      Weights are frozen to prevent overfitting. Click "Reset to Defaults" for 5 new rounds.
-                    </div>
-                  </div>
-                )}
-
-                {opt && opt.validation && (
-                  <div style={{ background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: 12 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO, letterSpacing: 1, marginBottom: 8 }}>
-                      OUT-OF-SAMPLE VALIDATION
-                    </div>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-                      <div>
-                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Train Sharpe</div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{opt.validation.trainSharpe}</div>
-                        <div style={{ fontSize: 9, color: "#666", fontFamily: MONO }}>{opt.validation.trainPeriod}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Test Sharpe (default)</div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: "#f0f0f0", fontFamily: MONO }}>{opt.validation.testDefaultSharpe}</div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 10, color: "#888", fontFamily: MONO }}>Test Sharpe (optimized)</div>
-                        <div style={{ fontSize: 16, fontWeight: 800, color: opt.validation.oosAccepted ? "#22c55e" : "#ef4444", fontFamily: MONO }}>{opt.validation.testOptimizedSharpe}</div>
-                      </div>
-                    </div>
-                    <div style={{ marginTop: 10, display: "flex", gap: 16 }}>
-                      <div style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
-                        Sharpe decay: <span style={{ fontWeight: 700, color: opt.validation.sharpeDecay < 20 ? "#22c55e" : opt.validation.sharpeDecay < 50 ? "#eab308" : "#ef4444" }}>{opt.validation.sharpeDecay}%</span>
-                        <span style={{ color: "#666", fontSize: 10 }}> ({opt.validation.sharpeDecay < 20 ? "real signal" : opt.validation.sharpeDecay < 50 ? "mixed" : "overfitting"})</span>
-                      </div>
-                      <div style={{ fontSize: 11, fontFamily: MONO, color: "#f0f0f0" }}>
-                        OOS Return: <span style={{ fontWeight: 700, color: opt.validation.testOptimizedReturn > opt.validation.testDefaultReturn ? "#22c55e" : "#ef4444" }}>
-                          {opt.validation.testOptimizedReturn > 0 ? "+" : ""}{opt.validation.testOptimizedReturn}%
-                        </span>
-                        <span style={{ color: "#666", fontSize: 10 }}> vs {opt.validation.testDefaultReturn > 0 ? "+" : ""}{opt.validation.testDefaultReturn}% default</span>
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 9, color: "#555", fontFamily: MONO, marginTop: 8 }}>
-                      {opt.validation.testPeriod}
-                    </div>
-                  </div>
-                )}
-              </Box>
-            );
-          })()}
 
           {isCompositeFamily(results.strategy) && results.factorAttribution && (
             <Box>
@@ -763,13 +787,42 @@ export default function BacktestTab() {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
               EQUITY CURVE — $10,000 INVESTED
             </div>
+            {results.inflationDetail ? (
+              <div style={{ fontSize: 10, color: "#888", marginTop: -6, marginBottom: 10, fontFamily: MONO, lineHeight: 1.45, maxWidth: 720 }}>
+                {results.inflationSource === "fred_cpiaucsl" && results.inflationPublisher ? (
+                  <span style={{ color: "#a8a8a8" }}>{results.inflationPublisher} · {results.inflationSeriesId}. </span>
+                ) : null}
+                {results.inflationDetail}
+              </div>
+            ) : null}
+            {(() => {
+              const inflPct = results.inflationBaselineAnnualPct ?? 3;
+              const usesFredCpi = results.inflationSource === "fred_cpiaucsl";
+              const equitySegmented = buildSegmentedEquityChartData(
+                results.equityCurve,
+                results.initialCapital,
+                inflPct
+              );
+              const showCash =
+                Number.isFinite(Number(results.initialCapital)) &&
+                Number(results.initialCapital) > 0 &&
+                equitySegmented.some((d) => d.cashInflationAdjusted != null);
+              const cashLabel = usesFredCpi
+                ? "Cash baseline (U.S. CPI — FRED CPIAUCSL)"
+                : `Cash baseline (~${inflPct}%/yr fallback)`;
+              return (
+                <>
             <div style={{ height: 300 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={results.equityCurve}>
+                <ComposedChart data={equitySegmented}>
                   <defs>
-                    <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#f0f0f0" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="#f0f0f0" stopOpacity={0} />
+                    <linearGradient id="portfolioGradientSegGreen" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C_VS_SPY_WIN} stopOpacity={0.22} />
+                      <stop offset="100%" stopColor={C_VS_SPY_WIN} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="portfolioGradientSegRed" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C_VS_SPY_LOSE} stopOpacity={0.22} />
+                      <stop offset="100%" stopColor={C_VS_SPY_LOSE} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis 
@@ -788,35 +841,81 @@ export default function BacktestTab() {
                     domain={['dataMin - 1000', 'dataMax + 1000']}
                   />
                   <Tooltip content={<CustomTooltip />} />
-                  <Area 
-                    type="monotone" 
-                    dataKey="portfolio" 
-                    stroke="#f0f0f0" 
-                    fill="url(#portfolioGradient)" 
+                  <Area
+                    type="monotone"
+                    dataKey="portfolioGreen"
+                    stroke={C_VS_SPY_WIN}
+                    fill="url(#portfolioGradientSegGreen)"
                     strokeWidth={2}
-                    name="Portfolio"
+                    name="Strategy (above S&P)"
+                    isAnimationActive={false}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="portfolioRed"
+                    stroke={C_VS_SPY_LOSE}
+                    fill="url(#portfolioGradientSegRed)"
+                    strokeWidth={2}
+                    name="Strategy (below S&P)"
+                    isAnimationActive={false}
                   />
                   <Line 
                     type="monotone" 
                     dataKey="benchmark" 
-                    stroke="#f0f0f0" 
-                    strokeWidth={1}
+                    stroke={C_SPY_LINE} 
+                    strokeWidth={1.5}
                     dot={false}
-                    name="Benchmark (SPY)"
+                    name="S&P 500 (SPY)"
                   />
+                  {showCash ? (
+                    <Line
+                      type="monotone"
+                      dataKey="cashInflationAdjusted"
+                      stroke={C_CASH_LINE}
+                      strokeWidth={1.5}
+                      strokeDasharray="5 4"
+                      dot={false}
+                      name={cashLabel}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
-            <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center" }}>
+            <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 16, height: 3, background: "#f0f0f0", borderRadius: 2 }} />
-                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy</span>
+                <div style={{ width: 16, height: 3, background: C_VS_SPY_WIN, borderRadius: 2 }} />
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy (above S&P)</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 16, height: 1, background: "#f0f0f0" }} />
-                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>SPY Benchmark</span>
+                <div style={{ width: 16, height: 3, background: C_VS_SPY_LOSE, borderRadius: 2 }} />
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy (below S&P)</span>
               </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 16, height: 2, background: C_SPY_LINE, borderRadius: 1 }} />
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>S&P 500 (SPY)</span>
+              </div>
+              {showCash ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div
+                    style={{
+                      width: 16,
+                      height: 0,
+                      borderTop: `2px dashed ${C_CASH_LINE}`,
+                      borderRadius: 1
+                    }}
+                  />
+                  <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>
+                    {usesFredCpi
+                      ? "Cash baseline (CPI from FRED — same purchasing power)"
+                      : `Cash baseline (~${inflPct}%/yr — same purchasing power)`}
+                  </span>
+                </div>
+              ) : null}
             </div>
+                </>
+              );
+            })()}
             {results.monthlyEventsSummary && results.monthlyEventsSummary.length > 0 && (
               <div style={{
                 marginTop: 14,
@@ -858,8 +957,14 @@ export default function BacktestTab() {
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", minWidth: 600 }}>
                 {results.monthlyReturns.map((m, i) => {
                   const portNum = parseFloat(m.portfolio);
-                  const color = portNum > 0 ? "#22c55e" : "#ef4444";
-                  const intensity = Math.min(Math.abs(portNum) / 10, 1);
+                  const benchNum = parseFloat(m.benchmark);
+                  const beatsSP = portNum >= benchNum;
+                  const color = beatsSP ? C_VS_SPY_WIN : C_VS_SPY_LOSE;
+                  const spread = portNum - benchNum;
+                  const intensity = Math.min(Math.max(Math.abs(spread) / 8, 0.15), 1);
+                  const bg = beatsSP
+                    ? `rgba(34,197,94,${intensity * 0.32})`
+                    : `rgba(239,68,68,${intensity * 0.32})`;
                   return (
                     <div
                       key={i}
@@ -867,12 +972,12 @@ export default function BacktestTab() {
                         width: 60,
                         padding: "6px 4px",
                         borderRadius: 4,
-                        background: portNum > 0 ? `rgba(34,197,94,${intensity * 0.3})` : `rgba(239,68,68,${intensity * 0.3})`,
-                        border: `1px solid ${color}30`,
+                        background: bg,
+                        border: `1px solid ${color}40`,
                         textAlign: "center",
                         cursor: "default"
                       }}
-                      title={`${m.month}: Portfolio ${m.portfolio.toFixed(1)}%, Benchmark ${m.benchmark.toFixed(1)}%`}
+                      title={`${m.month}: Strategy ${portNum.toFixed(1)}% vs S&P ${benchNum.toFixed(1)}% (${beatsSP ? "beat" : "trailed"})`}
                     >
                       <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>{m.month.substring(5)}</div>
                       <div style={{ fontSize: 11, fontWeight: 700, color, fontFamily: MONO }}>
@@ -971,6 +1076,7 @@ export default function BacktestTab() {
             </div>
           </Box>
         </>
+        </div>
       )}
       
       {!results && !loading && !error && (
@@ -978,6 +1084,30 @@ export default function BacktestTab() {
           <div style={{ fontSize: 32, marginBottom: 12 }}>Backtest</div>
           <div style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 8 }}>Run a walk-forward backtest to measure strategy performance</div>
           <div style={{ fontSize: 12, color: "#f0f0f0" }}>Configure settings above and click "Run Backtest" to begin</div>
+        </Box>
+      )}
+
+      {isCompositeFamily(settings.strategy) && (
+        <Box style={{ background: "rgba(234,179,8,0.04)", marginTop: 16, borderColor: "rgba(234,179,8,0.15)" }}>
+          <div style={{ fontSize: 11, color: "#eab308", fontWeight: 700, marginBottom: 6, fontFamily: MONO }}>
+            FUNDAMENTAL DATA ASSUMPTION
+          </div>
+          <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: "sans-serif" }}>
+            {settings.strategy === "full_composite_turbo" ? (
+              <>
+                Turbo is maximum risk: almost no quality floor, wide volatility allowance, and faster stop/regime reactions.
+                Fundamentals are still loaded for scoring weights where used, but filters are largely disabled. Not suitable
+                for capital you cannot afford to lose.
+              </>
+            ) : (
+              <>
+                The Full Composite strategy uses fundamental scores (Buffett Quality, Moat, ROIC, Earnings Quality, Shareholder Yield)
+                that are point-in-time approximations. For this backtest, fundamental data is fetched once at the start and held
+                stable throughout the simulation period to prevent look-ahead bias. This is a conservative assumption — in reality,
+                fundamentals evolve and quality signals shift over time.
+              </>
+            )}
+          </div>
         </Box>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
@@ -161,6 +162,9 @@ export default function PaperTradeTab() {
   });
 
   const [autoRebalanced, setAutoRebalanced] = useState(false);
+  const [loadBtnHover, setLoadBtnHover] = useState(false);
+  const [rebalBtnHover, setRebalBtnHover] = useState(false);
+  const paperApi = useAbortableApi();
 
   useEffect(() => { fetchPortfolio(); }, []);
 
@@ -183,30 +187,35 @@ export default function PaperTradeTab() {
   };
 
   const fetchPortfolio = async (showLoader = true) => {
+    const ac = paperApi.beginRequest();
     if (showLoader) setLoading(true);
     setError(null);
     try {
       const [pRes, hRes] = await Promise.all([
-        fetch("/api/paper-trade/portfolio"),
-        fetch("/api/paper-trade/history")
+        fetch("/api/paper-trade/portfolio", { signal: ac.signal }),
+        fetch("/api/paper-trade/history", { signal: ac.signal })
       ]);
       const pData = await safeJson(pRes);
       const hData = await safeJson(hRes);
       setPortfolio(pData.portfolio);
       setHistory(hData.history);
     } catch (e) {
-      setError(e.message);
+      if (!isAbortError(e)) setError(e.message);
+    } finally {
+      paperApi.clearIfCurrent(ac);
+      if (showLoader) setLoading(false);
     }
-    if (showLoader) setLoading(false);
   };
 
   const initPortfolio = async () => {
     setLoading(true);
     setError(null);
+    const ac = paperApi.beginRequest();
     try {
       const res = await fetch("/api/paper-trade/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
         body: JSON.stringify({
           initialCapital: parseFloat(initForm.initialCapital),
           strategy: initForm.strategy,
@@ -215,26 +224,55 @@ export default function PaperTradeTab() {
         })
       });
       const data = await safeJson(res);
-      if (!data.success) { setError(data.error); setLoading(false); return; }
-      await fetchPortfolio();
+      if (!data.success) {
+        setError(data.error);
+        setLoading(false);
+        paperApi.clearIfCurrent(ac);
+        return;
+      }
+      paperApi.clearIfCurrent(ac);
+      await fetchPortfolio(true);
     } catch (e) {
+      if (isAbortError(e)) {
+        setLoading(false);
+        paperApi.clearIfCurrent(ac);
+        return;
+      }
       setError(e.message);
       setLoading(false);
+      paperApi.clearIfCurrent(ac);
     }
   };
 
   const rebalance = async () => {
+    const ac = paperApi.beginRequest();
     setRebalancing(true);
     setError(null);
     try {
-      const res = await fetch("/api/paper-trade/rebalance", { method: "POST" });
+      const res = await fetch("/api/paper-trade/rebalance", { method: "POST", signal: ac.signal });
       const data = await safeJson(res);
-      if (!data.success) { setError(data.error); setRebalancing(false); return; }
+      if (!data.success) {
+        setError(data.error);
+        paperApi.clearIfCurrent(ac);
+        setRebalancing(false);
+        return;
+      }
+      paperApi.clearIfCurrent(ac);
       await fetchPortfolio(false);
     } catch (e) {
-      setError(e.message);
+      if (!isAbortError(e)) setError(e.message);
+      paperApi.clearIfCurrent(ac);
     }
     setRebalancing(false);
+  };
+
+  const onRebalanceClick = () => {
+    if (rebalancing) {
+      paperApi.abortInFlight();
+      setRebalancing(false);
+      return;
+    }
+    rebalance();
   };
 
   const resetPortfolio = async () => {
@@ -249,7 +287,29 @@ export default function PaperTradeTab() {
   if (loading) {
     return (
       <Box style={{ textAlign: "center", padding: 60 }}>
-        <div style={{ fontSize: 13, color: "#f0f0f0", fontFamily: MONO }}>Loading paper portfolio...</div>
+        <div style={{ fontSize: 13, color: "#f0f0f0", fontFamily: MONO, marginBottom: 16 }}>Loading paper portfolio...</div>
+        <button
+          type="button"
+          onClick={() => {
+            paperApi.abortInFlight();
+            setLoading(false);
+          }}
+          onMouseEnter={() => setLoadBtnHover(true)}
+          onMouseLeave={() => setLoadBtnHover(false)}
+          style={{
+            padding: "8px 20px",
+            background: loadBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+            border: loadBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 6,
+            color: loadBtnHover ? "#fca5a5" : "#888",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: MONO
+          }}
+        >
+          {loadBtnHover ? "CANCEL" : "STOP LOADING"}
+        </button>
       </Box>
     );
   }
@@ -287,17 +347,21 @@ export default function PaperTradeTab() {
             <Select label="UNIVERSE" value={initForm.universe} onChange={v => setInitForm(f => ({ ...f, universe: v }))} options={UNIVERSE_OPTIONS} />
             <Select label="TOP N" value={initForm.topN} onChange={v => setInitForm(f => ({ ...f, topN: v }))} options={TOP_N_OPTIONS} />
           </div>
-          <button onClick={initPortfolio} style={{
-            padding: "10px 24px",
-            background: "rgba(255,255,255,0.08)",
-            border: "1px solid rgba(255,255,255,0.15)",
-            borderRadius: 6,
-            color: "#f0f0f0",
-            fontSize: 13,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: MONO
-          }}>
+          <button
+            type="button"
+            onClick={initPortfolio}
+            style={{
+              padding: "10px 24px",
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              borderRadius: 6,
+              color: "#f0f0f0",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
             Create Paper Portfolio
           </button>
           {error && <div style={{ color: "#ef4444", fontSize: 12, marginTop: 10, fontFamily: MONO }}>{error}</div>}
@@ -385,18 +449,36 @@ export default function PaperTradeTab() {
             PORTFOLIO vs S&P 500
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}>
-            <button onClick={rebalance} disabled={rebalancing} style={{
-              padding: "6px 14px",
-              background: rebalancing ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 5,
-              color: rebalancing ? "#555" : "#f0f0f0",
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: rebalancing ? "wait" : "pointer",
-              fontFamily: MONO
-            }}>
-              {rebalancing ? "Running model..." : "Rebalance Now"}
+            <button
+              type="button"
+              onClick={onRebalanceClick}
+              onMouseEnter={() => setRebalBtnHover(true)}
+              onMouseLeave={() => setRebalBtnHover(false)}
+              style={{
+                padding: "6px 14px",
+                background:
+                  rebalancing && rebalBtnHover
+                    ? "rgba(239,68,68,0.15)"
+                    : rebalancing
+                      ? "rgba(255,255,255,0.04)"
+                      : "rgba(255,255,255,0.08)",
+                border:
+                  rebalancing && rebalBtnHover
+                    ? "1px solid rgba(239,68,68,0.45)"
+                    : "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 5,
+                color: rebalancing && rebalBtnHover ? "#fca5a5" : rebalancing ? "#888" : "#f0f0f0",
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: MONO
+              }}
+            >
+              {rebalancing && rebalBtnHover
+                ? "CANCEL"
+                : rebalancing
+                  ? "Running model..."
+                  : "Rebalance Now"}
             </button>
             <button onClick={() => setShowResetConfirm(true)} style={{
               padding: "6px 14px",

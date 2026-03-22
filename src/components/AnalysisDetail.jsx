@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, lazy, Suspense } from "react";
 import { LoadingSpinner, InfoTip } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 const DCFTab = lazy(() => import("./DCFTab.jsx"));
 const CompsTab = lazy(() => import("./CompsTab.jsx"));
 
 import { MONO, SANS } from "../lib/theme.js";
+import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -154,20 +155,28 @@ function SubBar({ label, score, max, infoTip }) {
 function NetworkInput({ ticker, onSubmit }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const submitAcRef = useRef(null);
+
+  useEffect(() => () => submitAcRef.current?.abort(), [ticker]);
 
   const handleSubmit = async (score, label) => {
+    submitAcRef.current?.abort();
+    const ac = new AbortController();
+    submitAcRef.current = ac;
     setSubmitting(true);
     try {
       await fetch(`/api/analysis/${ticker}/network-input`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: ac.signal,
         body: JSON.stringify({ networkEffectScore: score, label })
       });
       setSubmitted(true);
       onSubmit();
     } catch (e) {
-      console.error(e);
+      if (!isAbortError(e)) console.error(e);
     } finally {
+      if (submitAcRef.current === ac) submitAcRef.current = null;
       setSubmitting(false);
     }
   };
@@ -682,7 +691,7 @@ function SupplySideDetail({ data }) {
   const leverageType = leveragePositive ? 'positive' : 'negative';
   
   return (
-    <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+    <div>
       <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 12 }}>
         SUB-SCORES
       </div>
@@ -742,7 +751,7 @@ function NetworkDetail({ data, ticker, refreshKey }) {
   const industryName = details.industryName || data?.industry || 'Unknown';
   
   return (
-    <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+    <div>
       <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 12 }}>
         SUB-SCORES
       </div>
@@ -802,7 +811,7 @@ function LearningDetail({ data }) {
   const beta = details.beta || data?.fundamentals?.beta || 'N/A';
   
   return (
-    <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+    <div>
       <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 12 }}>
         SUB-SCORES
       </div>
@@ -871,7 +880,7 @@ function SwitchingDetail({ data }) {
   const revGrowth = details.revenueGrowth || 'N/A';
   
   return (
-    <div style={{ animation: "fadeUp 0.25s ease-out" }}>
+    <div>
       <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 12 }}>
         SUB-SCORES
       </div>
@@ -1098,65 +1107,114 @@ export default function AnalysisDetail({ ticker, onBack }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const [dcfData, setDcfData] = useState(null);
   const [dcfLoading, setDcfLoading] = useState(false);
+  const [analyzeBtnHover, setAnalyzeBtnHover] = useState(false);
+  const [dcfBtnHover, setDcfBtnHover] = useState(false);
+
+  const analysisApi = useAbortableApi();
+  const dcfApi = useAbortableApi();
+  const analysisReqId = useRef(0);
+  const dcfReqId = useRef(0);
 
   useEffect(() => {
-    fetchAnalysis();
-  }, [ticker, refreshKey]);
+    setDcfData(null);
+  }, [ticker]);
 
-  const fetchAnalysis = async () => {
+  useEffect(() => {
+    setData(null);
+  }, [ticker]);
+
+  useEffect(() => {
+    const id = ++analysisReqId.current;
+    const ac = analysisApi.beginRequest();
     setLoading(true);
     setError(null);
-    
-    try {
-      const res = await fetch(`/api/analysis/${ticker}`);
-      const json = await res.json();
-      
-      if (!json.success) {
-        throw new Error(json.error || "Failed to fetch analysis");
-      }
-      
-      setData(json);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  const handleRefresh = () => setRefreshKey(k => k + 1);
-  
-  const fetchDCF = useCallback(async () => {
-    if (dcfData || dcfLoading) return;
-    setDcfLoading(true);
-    try {
-      const res = await fetch(`/api/dcf/${ticker}`);
-      const json = await res.json();
-      if (json.success) {
-        setDcfData(json);
+    (async () => {
+      try {
+        const res = await fetch(`/api/analysis/${ticker}`, { signal: ac.signal });
+        const json = await res.json();
+
+        if (!json.success) {
+          throw new Error(json.error || "Failed to fetch analysis");
+        }
+        if (analysisReqId.current !== id) return;
+        setData(json);
+      } catch (err) {
+        if (isAbortError(err)) return;
+        if (analysisReqId.current !== id) return;
+        setError(err.message);
+      } finally {
+        analysisApi.clearIfCurrent(ac);
+        if (analysisReqId.current === id) setLoading(false);
       }
-    } catch (e) {
-      console.error('Failed to fetch DCF:', e);
-    } finally {
-      setDcfLoading(false);
-    }
-  }, [ticker, dcfData, dcfLoading]);
-  
+    })();
+    // analysisApi methods are stable
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticker, refreshKey]);
+
+  const handleRefresh = () => setRefreshKey((k) => k + 1);
+
   useEffect(() => {
-    if (activeTab === "dcf") {
-      fetchDCF();
-    }
-  }, [activeTab, fetchDCF]);
+    if (activeTab !== "dcf") return undefined;
+    if (dcfData) return undefined;
 
-  if (loading) {
+    const id = ++dcfReqId.current;
+    const ac = dcfApi.beginRequest();
+    setDcfLoading(true);
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/dcf/${ticker}`, { signal: ac.signal });
+        const json = await res.json();
+        if (dcfReqId.current !== id) return;
+        if (json.success) {
+          setDcfData(json);
+        }
+      } catch (e) {
+        if (!isAbortError(e)) console.error("Failed to fetch DCF:", e);
+      } finally {
+        dcfApi.clearIfCurrent(ac);
+        if (dcfReqId.current === id) setDcfLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch when tab/ticker/data cleared; skip if dcf already loaded
+  }, [activeTab, ticker, dcfData]);
+
+  if (loading && !data) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 60 }}>
         <LoadingSpinner size={40} />
         <div style={{ marginTop: 16, color: "#f0f0f0", fontFamily: MONO }}>Analyzing {ticker}...</div>
+        <button
+          type="button"
+          onClick={() => {
+            analysisApi.abortInFlight();
+            setLoading(false);
+          }}
+          onMouseEnter={() => setAnalyzeBtnHover(true)}
+          onMouseLeave={() => setAnalyzeBtnHover(false)}
+          style={{
+            marginTop: 20,
+            padding: "8px 20px",
+            background: analyzeBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+            border: analyzeBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 6,
+            color: analyzeBtnHover ? "#fca5a5" : "#888",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: MONO
+          }}
+        >
+          {analyzeBtnHover ? "CANCEL" : "STOP LOADING"}
+        </button>
       </div>
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
       <div style={{ padding: 20 }}>
         <button onClick={onBack} style={{ marginBottom: 16, padding: "6px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 5, color: "#f0f0f0", fontSize: 12, cursor: "pointer", fontFamily: MONO }}>← Back</button>
@@ -1176,9 +1234,21 @@ export default function AnalysisDetail({ ticker, onBack }) {
   ];
 
   return (
-    <div style={{ animation: "fadeUp .3s ease-out" }}>
+    <div>
       <button onClick={onBack} style={{ marginBottom: 16, padding: "6px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 5, color: "#f0f0f0", fontSize: 12, cursor: "pointer", fontFamily: MONO }}>← Back</button>
 
+      {loading && data && (
+        <Box border="rgba(255,255,255,0.08)" style={{ marginBottom: 12, padding: "10px 14px", background: "rgba(255,255,255,0.02)" }}>
+          <div style={{ fontSize: 12, color: "#888", fontFamily: MONO }}>Refreshing analysis for {ticker}…</div>
+        </Box>
+      )}
+      {error && data && (
+        <Box border="rgba(239,68,68,0.25)" style={{ marginBottom: 12, padding: "10px 14px", background: "rgba(239,68,68,0.06)" }}>
+          <div style={{ fontSize: 12, color: "#ef4444", fontFamily: MONO }}>Could not refresh: {error}</div>
+        </Box>
+      )}
+
+      <div style={{ opacity: loading && data ? 0.72 : 1, transition: "opacity 0.2s ease" }}>
       <div style={{ display: "flex", gap: 2, marginBottom: 16, overflowX: "auto", background: "rgba(255,255,255,0.02)", borderRadius: 7, padding: 3, width: "fit-content" }}>
         {tabs.map(t => (
           <button key={t.key} onClick={() => setActiveTab(t.key)} style={{ padding: "8px 16px", background: activeTab === t.key ? "rgba(255,255,255,0.08)" : "transparent", border: "none", borderRadius: 5, color: activeTab === t.key ? "#f0f0f0" : "#555", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: MONO, whiteSpace: "nowrap" }}>
@@ -1193,6 +1263,29 @@ export default function AnalysisDetail({ ticker, onBack }) {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 60 }}>
           <LoadingSpinner size={40} />
           <div style={{ marginTop: 16, color: "#f0f0f0", fontFamily: MONO }}>Building DCF model...</div>
+          <button
+            type="button"
+            onClick={() => {
+              dcfApi.abortInFlight();
+              setDcfLoading(false);
+            }}
+            onMouseEnter={() => setDcfBtnHover(true)}
+            onMouseLeave={() => setDcfBtnHover(false)}
+            style={{
+              marginTop: 20,
+              padding: "8px 20px",
+              background: dcfBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+              border: dcfBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              color: dcfBtnHover ? "#fca5a5" : "#888",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
+            {dcfBtnHover ? "CANCEL" : "STOP LOADING"}
+          </button>
         </div>
       ) : dcfData ? (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0" }}>Loading...</div>}>
@@ -1215,6 +1308,7 @@ export default function AnalysisDetail({ ticker, onBack }) {
           </p>
         </Box>
       )}
+      </div>
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { InfoTip } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 
@@ -281,30 +282,70 @@ export default function CompsTab({ ticker }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [cancelHover, setCancelHover] = useState(false);
+  const reqIdRef = useRef(0);
+  const { abortInFlight, beginRequest, clearIfCurrent } = useAbortableApi();
 
   useEffect(() => {
     if (!ticker) return;
-    
+
+    const id = ++reqIdRef.current;
+    const ac = beginRequest();
+
     setLoading(true);
     setError(null);
-    
-    fetch(`/api/comps/${ticker}`)
-      .then(r => r.json())
-      .then(d => {
+
+    fetch(`/api/comps/${ticker}`, { signal: ac.signal })
+      .then((r) => r.json())
+      .then((d) => {
+        if (reqIdRef.current !== id) return;
         if (d.success) {
           setData(d);
         } else {
           setError(d.error || "Failed to load comps");
         }
       })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (isAbortError(e)) return;
+        if (reqIdRef.current !== id) return;
+        setError(e.message);
+      })
+      .finally(() => {
+        clearIfCurrent(ac);
+        if (reqIdRef.current === id) setLoading(false);
+      });
+
+    return () => ac.abort();
+    // beginRequest / clearIfCurrent are stable from useAbortableApi
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker]);
 
   if (loading) {
     return (
       <div style={{ textAlign: "center", padding: 40, color: "#f0f0f0" }}>
-        Loading peer comparison...
+        <div style={{ fontFamily: MONO, fontSize: 13, marginBottom: 16 }}>Loading peer comparison...</div>
+        <button
+          type="button"
+          onClick={() => {
+            abortInFlight();
+            setLoading(false);
+          }}
+          onMouseEnter={() => setCancelHover(true)}
+          onMouseLeave={() => setCancelHover(false)}
+          style={{
+            padding: "8px 20px",
+            background: cancelHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+            border: cancelHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+            borderRadius: 6,
+            color: cancelHover ? "#fca5a5" : "#888",
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: "pointer",
+            fontFamily: MONO
+          }}
+        >
+          {cancelHover ? "CANCEL" : "STOP LOADING"}
+        </button>
       </div>
     );
   }
