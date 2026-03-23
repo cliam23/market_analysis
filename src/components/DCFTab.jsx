@@ -19,14 +19,15 @@ function Box({ border, children, style: sx = {} }) {
   );
 }
 
-function SH({ color, children }) {
+function SH({ color, children, compact }) {
   return (
     <div style={{
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
       color,
-      marginBottom: 8,
+      marginBottom: compact ? 0 : 8,
+      lineHeight: compact ? 1.2 : undefined,
       textTransform: "uppercase",
       fontFamily: MONO
     }}>
@@ -84,7 +85,7 @@ function EditableInput({ value, onChange, min, max, step = 0.001, suffix = "%", 
             outline: "none"
           }}
         />
-        <span style={{ fontSize: 12, color: "#f0f0f0" }}>{suffix}</span>
+        <span style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>{suffix}</span>
       </div>
     </div>
   );
@@ -97,9 +98,9 @@ function WACCBreakdown({ components }) {
   return (
     <div style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: 10, marginTop: 8 }}>
       <div style={{ fontSize: 11, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>WACC COMPONENTS</div>
-      <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6, fontFamily: MONO }}>
         <div>Cost of Equity: {(costOfEquity * 100).toFixed(1)}%</div>
-        <div style={{ fontSize: 11, color: "#f0f0f0", marginLeft: 10 }}>Rf {riskFreeRate * 100}% + β {adjustedBeta.toFixed(2)} × ERP {equityRiskPremium * 100}%</div>
+        <div style={{ fontSize: 11, color: "#f0f0f0", marginLeft: 10, fontFamily: MONO }}>Rf {riskFreeRate * 100}% + β {adjustedBeta.toFixed(2)} × ERP {equityRiskPremium * 100}%</div>
         <div>Cost of Debt: {(costOfDebt * 100).toFixed(1)}% → {(costOfDebtAfterTax * 100).toFixed(1)}% after tax</div>
         <div>Capital: {(equityWeight * 100).toFixed(0)}% equity / {(debtWeight * 100).toFixed(0)}% debt</div>
       </div>
@@ -272,7 +273,7 @@ export default function DCFTab({ data }) {
   };
 
   return (
-    <div>
+    <div style={{ fontFamily: MONO, color: "#f0f0f0" }}>
       {/* Warnings */}
       {(data.warnings?.terminalHeavy || data.warnings?.financialSector || data.warnings?.highGrowth || data.warnings?.acquisitionGrowth) && (
         <Box border="rgba(234,179,8,0.2)">
@@ -305,7 +306,7 @@ export default function DCFTab({ data }) {
       <Box border="rgba(255,255,255,0.06)">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <SH color="#f0f0f0">ASSUMPTIONS</SH>
+            <SH color="#f0f0f0" compact>ASSUMPTIONS</SH>
             <InfoTip title={EDUCATION.dcf.title}>{EDUCATION.dcf.content}</InfoTip>
           </div>
           <button onClick={resetToDefaults} style={{ fontSize: 11, padding: "4px 10px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 4, color: "#f0f0f0", cursor: "pointer", fontFamily: MONO }}>
@@ -483,7 +484,7 @@ export default function DCFTab({ data }) {
       {/* Sensitivity Table */}
       <Box border="rgba(234,179,8,0.15)">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <SH color="#eab308">SENSITIVITY ANALYSIS</SH>
+          <SH color="#eab308" compact>SENSITIVITY ANALYSIS</SH>
           <InfoTip title={EDUCATION.sensitivityTable.title}>{EDUCATION.sensitivityTable.content}</InfoTip>
         </div>
         <div style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 10 }}>

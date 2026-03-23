@@ -404,10 +404,10 @@ export default function CompsTab({ ticker }) {
               </div>
             )}
           </div>
-          <div style={{ textAlign: "right" }}>
+          <div style={{ textAlign: "right", position: "relative", zIndex: 2 }}>
             <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, marginBottom: 4, display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
               IMPLIED FAIR VALUE
-              <InfoTip title={EDUCATION.impliedFairValue.title}>{EDUCATION.impliedFairValue.content}</InfoTip>
+              <InfoTip placement="end" title={EDUCATION.impliedFairValue.title}>{EDUCATION.impliedFairValue.content}</InfoTip>
             </div>
             {impliedFairValue?.median > 0 ? (
               <>
@@ -441,7 +441,7 @@ export default function CompsTab({ ticker }) {
       {/* Valuation Metrics */}
       <Box border="rgba(255,255,255,0.05)">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-          <SH color="#f0f0f0">VALUATION METRICS</SH>
+          <SH color="#f0f0f0" compact>VALUATION METRICS</SH>
           <InfoTip title={EDUCATION.comps.title}>{EDUCATION.comps.content}</InfoTip>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>

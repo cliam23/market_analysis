@@ -53,14 +53,15 @@ export function Ring({ value, max = 100, size = 52, sw = 4, color }) {
   );
 }
 
-export function SH({ color, children }) {
+export function SH({ color, children, compact }) {
   return (
     <div style={{
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
       color: color || "#f0f0f0",
-      marginBottom: 8,
+      marginBottom: compact ? 0 : 8,
+      lineHeight: compact ? 1.2 : undefined,
       textTransform: "uppercase",
       fontFamily: MONO
     }}>
@@ -171,7 +172,10 @@ export function SeverityBadge({ severity }) {
 
 let _infoTipCloseId = 0;
 
-export function InfoTip({ title, children }) {
+/**
+ * @param {'start' | 'end'} [placement] — start: panel grows right (default). end: align panel’s right edge to the icon (use for triggers flush to the viewport right).
+ */
+export function InfoTip({ title, children, placement = "start" }) {
   const [open, setOpen] = useState(false);
   const [myId] = useState(() => ++_infoTipCloseId);
   
@@ -200,13 +204,23 @@ export function InfoTip({ title, children }) {
   };
 
   return (
-    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+    <span style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', alignSelf: 'center', lineHeight: 0 }}>
       <span 
         onClick={handleClick}
         style={{ 
-          cursor: 'pointer', fontSize: 12, color: '#f0f0f0', marginLeft: 6,
-          width: 18, height: 18, borderRadius: '50%', display: 'inline-flex',
-          alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer',
+          fontSize: 11,
+          fontWeight: 700,
+          fontFamily: SANS,
+          color: '#f0f0f0',
+          width: 18,
+          height: 18,
+          borderRadius: '50%',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flexShrink: 0,
+          lineHeight: 1,
           background: open ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
           border: '1px solid ' + (open ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.08)'),
           transition: 'all 0.2s', userSelect: 'none'
@@ -218,28 +232,58 @@ export function InfoTip({ title, children }) {
         <div 
           onClick={(e) => { e.stopPropagation(); }}
           style={{
-            position: 'absolute', top: 28, left: -10, zIndex: 100,
-            width: 340, maxWidth: '85vw',
-            background: '#141420', border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 10, padding: 18, boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-            textTransform: 'none'
+            position: 'absolute',
+            top: 26,
+            zIndex: 500,
+            width: 320,
+            maxWidth: 'min(320px, calc(100vw - 24px))',
+            left: placement === 'end' ? 'auto' : -8,
+            right: placement === 'end' ? 0 : 'auto',
+            background: 'linear-gradient(165deg, rgba(26,26,36,0.98) 0%, #12121a 100%)',
+            border: '1px solid rgba(255,255,255,0.14)',
+            borderRadius: 12,
+            padding: '16px 18px 14px',
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.4), 0 16px 48px rgba(0,0,0,0.55), 0 4px 16px rgba(0,0,0,0.35)',
+            textTransform: 'none',
+            fontFamily: SANS,
+            backdropFilter: 'blur(12px)'
           }}
         >
           {title && (
             <div style={{ 
-              fontSize: 11, fontWeight: 700, color: '#f0f0f0', marginBottom: 10, 
-              fontFamily: MONO, letterSpacing: 1,
-              paddingBottom: 8, borderBottom: '1px solid rgba(255,255,255,0.06)'
+              fontSize: 12, fontWeight: 700, color: '#f0f0f0', marginBottom: 10, 
+              fontFamily: SANS, letterSpacing: 0.4,
+              paddingBottom: 10, borderBottom: '1px solid rgba(255,255,255,0.08)'
             }}>
               {title}
             </div>
           )}
-          <div style={{ fontSize: 13, color: '#f0f0f0', lineHeight: 1.7 }}>{children}</div>
+          <div style={{
+            fontSize: 13,
+            color: 'rgba(240,240,240,0.92)',
+            lineHeight: 1.65,
+            fontFamily: SANS,
+            maxHeight: 'min(280px, 48vh)',
+            overflowY: 'auto',
+            paddingRight: 4,
+            marginRight: -2
+          }}>{children}</div>
           <div 
             onClick={(e) => { e.stopPropagation(); setOpen(false); }} 
-            style={{ fontSize: 11, color: '#f0f0f0', marginTop: 12, cursor: 'pointer', textAlign: 'right' }}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 0.3,
+              color: '#818cf8',
+              marginTop: 14,
+              paddingTop: 10,
+              borderTop: '1px solid rgba(255,255,255,0.06)',
+              cursor: 'pointer',
+              textAlign: 'right',
+              fontFamily: SANS
+            }}
           >
-            close ✕
+            CLOSE ✕
           </div>
         </div>
       )}

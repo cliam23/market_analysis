@@ -36,9 +36,9 @@ const METHODOLOGY = {
   momentum: "Ranks by risk-adjusted momentum (annualized return / volatility) with optional trend filter bonus. Pure price-based signal.",
   momentum_value: "Combines momentum (60%) with valuation metrics like P/E and P/B (40%). Balances price trend with value attractiveness.",
   quality_momentum: "Weights quality fundamentals (60%) — ROE, gross margin, operating margin — alongside momentum (40%).",
-  full_composite: "Runs the full Buffett-grade analysis engine: quality, moat, valuation, ROIC, earnings quality, momentum, shareholder yield, with constraint penalties.",
-  full_composite_aggressive: "Aggressive variant: higher momentum with momentum-quality blend, inverse-vol sizing, tighter sector cap (30%), faster regime de-risking, daily stop checks.",
-  full_composite_turbo: "Maximum risk: minimal quality filters, very wide vol allowance, momentum + momentum-quality blend. For experimentation only."
+  full_composite: "Full Composite: same five-pillar blend as the backtest (fundamental 35%, DCF 10%, dynamic valuation 15%, momentum 25%, price value 15%) — not the old checklist-only composite.",
+  full_composite_aggressive: "Same pillars as Full Composite with aggressive weights (e.g. 25/0/10/40/25) and 65/35 momentum vs momentum-quality blend in the ranking engine; backtest also uses tighter sector cap and different regime/stop behavior.",
+  full_composite_turbo: "Turbo pillar weights (e.g. 10/0/5/55/30) and 50/50 momentum vs momentum-quality blend; minimal quality gates in the backtest — for experimentation only."
 };
 
 const selectStyle = {
