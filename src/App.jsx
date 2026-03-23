@@ -3,12 +3,25 @@ import SearchView from "./components/SearchView.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
 import PaperTradeTab from "./components/PaperTradeTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
+import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
 const RankingsView = lazy(() => import("./components/RankingsView.jsx"));
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
 
 import { MONO, SANS } from "./lib/theme.js";
 
+function parsePaperReportFromSearch() {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    const d = p.get("paperRebalance");
+    if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d.trim())) return null;
+    return { date: d.trim(), occurrence: p.get("paperRebalanceOcc") };
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
+  const [paperReport, setPaperReport] = useState(parsePaperReportFromSearch);
   const [tab, setTab] = useState("search");
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [backendConnected, setBackendConnected] = useState(true);
@@ -18,6 +31,12 @@ export default function App() {
     checkBackend();
     const interval = setInterval(checkBackend, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setPaperReport(parsePaperReportFromSearch());
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
   }, []);
 
   const checkBackend = async () => {
@@ -63,8 +82,8 @@ export default function App() {
     </button>
   );
 
-  return (
-    <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
+  const sharedFontsAndBase = (
+    <>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
@@ -75,6 +94,24 @@ export default function App() {
         * { box-sizing: border-box; }
         body { margin: 0; }
       `}</style>
+    </>
+  );
+
+  if (paperReport) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
+        {sharedFontsAndBase}
+        <div style={{ textAlign: "center", paddingTop: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#f0f0f0", fontFamily: SANS }}>Market Analysis</div>
+        </div>
+        <PaperRebalanceStandalone date={paperReport.date} occurrence={paperReport.occurrence} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
+      {sharedFontsAndBase}
 
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 32px" }}>
         {/* Header */}

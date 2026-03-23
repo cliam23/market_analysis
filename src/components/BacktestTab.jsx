@@ -137,7 +137,7 @@ function isCompositeFamily(s) {
   return COMPOSITE_FAMILY.includes(s);
 }
 
-/** Green = beating S&P, red = trailing S&P (for headline metrics). */
+/** Green = beating benchmark, red = trailing benchmark (for headline metrics). */
 const C_VS_SPY_WIN = "#22c55e";
 const C_VS_SPY_LOSE = "#ef4444";
 const C_SPY_LINE = "#94a3b8";
@@ -399,13 +399,46 @@ export default function BacktestTab() {
     return `${sign}${num.toFixed(1)}%`;
   };
   
-  /** Alpha > 0 = beat S&P on risk-adjusted basis → green; < 0 → red. */
+  /** Alpha > 0 = beat benchmark on risk-adjusted basis → green; < 0 → red. */
   const alphaVsBenchColor = (alpha) => {
     const n = parseFloat(alpha);
     if (n > 0) return C_VS_SPY_WIN;
     if (n < 0) return C_VS_SPY_LOSE;
     return "#eab308";
   };
+
+  /** Aligns with server UNIVERSE_BENCHMARK_LABELS + Backtest universe dropdown ids. */
+  const UNIVERSE_BENCH_DISPLAY = {
+    sp500_top50: { short: "S&P Top 50", line: "Equal-weight S&P Top 50", tag: "S&P" },
+    vgt: { short: "VGT", line: "VGT universe (equal-weight)", tag: "VGT" },
+    mag7: { short: "Mag 7", line: "Mag 7 (equal-weight)", tag: "M7" },
+    russell_growth: { short: "Russell growth", line: "Russell growth (equal-weight)", tag: "RusG" },
+    dividend_aristocrats: { short: "Div. aristocrats", line: "Dividend aristocrats (equal-weight)", tag: "Arist" }
+  };
+  const apiBench = results?.benchmark;
+  const disp = results?.universe ? UNIVERSE_BENCH_DISPLAY[results.universe] : null;
+  const benchShort =
+    apiBench?.type === "universe_equal_weight"
+      ? disp?.short ?? apiBench.shortLabel ?? "Universe"
+      : apiBench?.type === "spy_fallback"
+        ? apiBench.shortLabel ?? "SPY"
+        : "SPY";
+  /** Ultra-short suffix for KPI subs (uniform “value vs tag”). Full name stays in benchmark line + chart. */
+  const benchTag =
+    apiBench?.type === "universe_equal_weight"
+      ? disp?.tag ?? benchShort
+      : apiBench?.type === "spy_fallback"
+        ? "SPY"
+        : "SPY";
+  const benchLineName =
+    apiBench?.type === "universe_equal_weight"
+      ? apiBench.label ?? disp?.line ?? benchShort
+      : apiBench?.type === "spy_fallback"
+        ? apiBench.label ?? "S&P 500 (SPY)"
+        : "S&P 500 (SPY)";
+  const benchDescription = apiBench?.description ?? null;
+  const strategyAboveLabel = `Strategy (above ${benchShort})`;
+  const strategyBelowLabel = `Strategy (below ${benchShort})`;
   
   return (
     <div>
@@ -510,33 +543,38 @@ export default function BacktestTab() {
             <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
               PERFORMANCE SUMMARY — {results.period} ({results.performance.years} years)
             </div>
+            {benchDescription ? (
+              <div style={{ fontSize: 10, color: "#888", marginTop: -8, marginBottom: 12, fontFamily: MONO, lineHeight: 1.45 }}>
+                Benchmark: {benchDescription}
+              </div>
+            ) : null}
             
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <MetricCard 
                 label="TOTAL RETURN" 
                 value={formatValue(results.performance.totalReturn)}
-                subValue={formatValue(results.performance.benchmarkReturn) + " S&P"}
+                subValue={`${formatValue(results.performance.benchmarkReturn)} vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.totalReturn) >= parseFloat(results.performance.benchmarkReturn) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="ANNUALIZED" 
                 value={formatValue(results.performance.annualizedReturn)}
-                subValue={formatValue(results.performance.benchmarkAnnualized) + " S&P"}
+                subValue={`${formatValue(results.performance.benchmarkAnnualized)} vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.annualizedReturn) >= parseFloat(results.performance.benchmarkAnnualized) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="ALPHA" 
                 value={formatValue(results.performance.alpha)}
-                subValue="S&P (same period)"
+                subValue={`same window vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={alphaVsBenchColor(results.performance.alpha)}
               />
               <MetricCard 
                 label="SHARPE" 
                 value={results.performance.sharpe}
-                subValue={results.performance.benchmarkSharpe + " S&P"}
+                subValue={`${results.performance.benchmarkSharpe} vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.sharpe) >= parseFloat(results.performance.benchmarkSharpe) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
@@ -546,14 +584,14 @@ export default function BacktestTab() {
               <MetricCard 
                 label="MAX DRAWDOWN" 
                 value={results.performance.maxDrawdown + "%"}
-                subValue={results.performance.benchmarkMaxDD + "% S&P"}
+                subValue={`${results.performance.benchmarkMaxDD}% vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.maxDrawdown) >= parseFloat(results.performance.benchmarkMaxDD) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
               <MetricCard 
                 label="VOLATILITY" 
                 value={results.performance.annualizedVol + "%"}
-                subValue={results.performance.benchmarkVol + "% S&P"}
+                subValue={`${results.performance.benchmarkVol}% vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.annualizedVol) <= parseFloat(results.performance.benchmarkVol) ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
@@ -565,7 +603,7 @@ export default function BacktestTab() {
               <MetricCard 
                 label="HIT RATE" 
                 value={results.performance.hitRate + "%"}
-                subValue="months beat S&P"
+                subValue={`mo beat vs ${benchTag}`}
                 compareColor={C_SUB_NEUTRAL}
                 color={parseFloat(results.performance.hitRate) >= 50 ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
@@ -847,7 +885,7 @@ export default function BacktestTab() {
                     stroke={C_VS_SPY_WIN}
                     fill="url(#portfolioGradientSegGreen)"
                     strokeWidth={2}
-                    name="Strategy (above S&P)"
+                    name={strategyAboveLabel}
                     isAnimationActive={false}
                   />
                   <Area
@@ -856,7 +894,7 @@ export default function BacktestTab() {
                     stroke={C_VS_SPY_LOSE}
                     fill="url(#portfolioGradientSegRed)"
                     strokeWidth={2}
-                    name="Strategy (below S&P)"
+                    name={strategyBelowLabel}
                     isAnimationActive={false}
                   />
                   <Line 
@@ -865,7 +903,7 @@ export default function BacktestTab() {
                     stroke={C_SPY_LINE} 
                     strokeWidth={1.5}
                     dot={false}
-                    name="S&P 500 (SPY)"
+                    name={benchLineName}
                   />
                   {showCash ? (
                     <Line
@@ -885,15 +923,15 @@ export default function BacktestTab() {
             <div style={{ display: "flex", gap: 16, marginTop: 8, justifyContent: "center", flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 16, height: 3, background: C_VS_SPY_WIN, borderRadius: 2 }} />
-                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy (above S&P)</span>
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>{strategyAboveLabel}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 16, height: 3, background: C_VS_SPY_LOSE, borderRadius: 2 }} />
-                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>Strategy (below S&P)</span>
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>{strategyBelowLabel}</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 16, height: 2, background: C_SPY_LINE, borderRadius: 1 }} />
-                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>S&P 500 (SPY)</span>
+                <span style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO }}>{benchLineName}</span>
               </div>
               {showCash ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -977,7 +1015,7 @@ export default function BacktestTab() {
                         textAlign: "center",
                         cursor: "default"
                       }}
-                      title={`${m.month}: Strategy ${portNum.toFixed(1)}% vs S&P ${benchNum.toFixed(1)}% (${beatsSP ? "beat" : "trailed"})`}
+                      title={`${m.month}: Strat ${portNum.toFixed(1)}% vs ${benchTag} ${benchNum.toFixed(1)}% (${beatsSP ? "beat" : "trailed"})`}
                     >
                       <div style={{ fontSize: 10, color: "#f0f0f0", fontFamily: MONO }}>{m.month.substring(5)}</div>
                       <div style={{ fontSize: 11, fontWeight: 700, color, fontFamily: MONO }}>

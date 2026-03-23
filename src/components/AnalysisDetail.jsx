@@ -22,14 +22,15 @@ function Box({ border, children, style: sx = {} }) {
   );
 }
 
-function SH({ color, children }) {
+function SH({ color, children, compact }) {
   return (
     <div style={{
       fontSize: 11,
       fontWeight: 700,
       letterSpacing: 2,
       color,
-      marginBottom: 8,
+      marginBottom: compact ? 0 : 8,
+      lineHeight: compact ? 1.2 : undefined,
       textTransform: "uppercase",
       fontFamily: MONO
     }}>
@@ -120,8 +121,8 @@ function ScoreSection({ title, score, max, grade, infoTip, color: colorOverride,
     <Box border={color + "30"}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <Ring value={score} max={max} size={44} sw={4} color={color} />
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8 }}>
-          <SH color="#f0f0f0">{title}</SH>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <SH color="#f0f0f0" compact>{title}</SH>
           {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
         </div>
         <Pill color={color}>
@@ -138,14 +139,32 @@ function SubBar({ label, score, max, infoTip }) {
   const color = pct >= 70 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ fontSize: 11, color: "#f0f0f0", width: 110, display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+      <div
+        style={{
+          fontSize: 11,
+          color: "#f0f0f0",
+          width: 124,
+          flexShrink: 0,
+          lineHeight: 1.25
+        }}
+      >
         {label}
-        {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
       </div>
-      <div style={{ flex: 1, height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
+      <div
+        style={{
+          width: 22,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }}
+      >
+        {infoTip ? <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip> : null}
+      </div>
+      <div style={{ flex: 1, minWidth: 0, height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
         <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 3, transition: "width 0.3s" }} />
       </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO, width: 36, textAlign: "right" }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO, width: 40, flexShrink: 0, textAlign: "right" }}>
         {score}/{max}
       </div>
     </div>
@@ -272,14 +291,18 @@ function OverviewTab({ data }) {
         
         {data.composite && data.composite.components && (() => {
           const FACTOR_COLORS = {
-            "Quality": "#22c55e",
-            "Moat": "#a78bfa",
-            "Valuation": "#eab308",
-            "ROIC": "#06b6d4",
+            Quality: "#22c55e",
+            Moat: "#a78bfa",
+            Valuation: "#eab308",
+            ROIC: "#06b6d4",
             "Earnings Quality": "#f59e0b",
-            "Momentum": "#818cf8",
+            Momentum: "#818cf8",
             "Shareholder Yield": "#f87171",
-            "Quality Floor": "#4ade80"
+            "Quality Floor": "#4ade80",
+            Fundamental: "#22c55e",
+            DCF: "#a78bfa",
+            "Dynamic valuation": "#eab308",
+            "Price value": "#f97316"
           };
           const comps = data.composite.components;
           const totalWeight = comps.reduce((s, c) => s + (c.adjustedWeight || c.weight), 0);
@@ -1288,11 +1311,11 @@ export default function AnalysisDetail({ ticker, onBack }) {
           </button>
         </div>
       ) : dcfData ? (
-        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0" }}>Loading...</div>}>
+        <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0", fontFamily: MONO }}>Loading...</div>}>
           <DCFTab data={dcfData} />
         </Suspense>
       ) : (
-        <div style={{ padding: 20, textAlign: "center", color: "#f0f0f0" }}>Failed to load DCF data</div>
+        <div style={{ padding: 20, textAlign: "center", color: "#f0f0f0", fontFamily: MONO }}>Failed to load DCF data</div>
       ))}
       {activeTab === "comps" && (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0" }}>Loading...</div>}>

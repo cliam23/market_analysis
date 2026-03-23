@@ -86,40 +86,40 @@ export default function AboutTab() {
 
       <Section title="The 5-Pillar Ranking Model" defaultOpen={true}>
         <p style={{ margin: "0 0 16px" }}>
-          When the model selects stocks for the paper-trade portfolio (or runs a Full Composite backtest),
-          it scores every stock on <strong style={{ color: "#f0f0f0" }}>five pillars</strong> and weights them as follows:
+          When the model selects stocks for the paper-trade portfolio, runs a Full Composite backtest, or scores a ticker in{" "}
+          <strong style={{ color: "#f0f0f0" }}>Search / Momentum Rankings</strong>, it uses the same{" "}
+          <strong style={{ color: "#f0f0f0" }}>five pillars</strong> (0–100 each) blended with these default weights:
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-          <PillarCard name="FUNDAMENTAL" weight="25%">
-            Composite of Buffett quality, moat width, ROIC spread, earnings quality,
+          <PillarCard name="FUNDAMENTAL" weight="35%">
+            Composite of Buffett-style quality, moat width, ROIC spread, earnings quality,
             shareholder yield, growth constraints, and AI disruption signal. Measures
             whether the underlying business is high-quality.
           </PillarCard>
-          <PillarCard name="DCF" weight="15%">
+          <PillarCard name="DCF" weight="10%">
             Simplified discounted cash flow model. Projects free cash flow 5 years forward
             with decaying growth, applies a WACC discount rate derived from beta, calculates
             terminal value, and compares the resulting intrinsic value to the current price.
             Stocks trading well below intrinsic value score higher.
           </PillarCard>
-          <PillarCard name="DYNAMIC VALUATION" weight="20%">
-            Real-time valuation signals that change at every rebalance: price vs. 52-week
-            average, implied P/E from forward earnings, distance from 200-day MA, and a
-            quality adjustment so high-quality businesses aren't penalized for deserved
-            premium valuations.
+          <PillarCard name="DYNAMIC VALUATION" weight="15%">
+            Real-time valuation signals that change with price history: price vs. 252-day
+            average, distance from 200-day MA, trend-quality (smooth uptrends), plus a
+            quality adjustment so strong businesses are not over-penalized for premium multiples.
           </PillarCard>
           <PillarCard name="MOMENTUM" weight="25%">
-            6-month risk-adjusted momentum with trend confirmation. Captures the well-documented
-            tendency for stocks with positive momentum to continue outperforming. Filtered
-            for excessive volatility to avoid speculative blow-ups.
+            ~6-month risk-adjusted momentum with trend bonus (same family as backtest). Captures
+            the tendency for winners to keep working; combined with a small momentum-quality
+            tilt on the default Full Composite run.
           </PillarCard>
           <PillarCard name="PRICE VALUE" weight="15%">
-            Mean-reversion overlay: rewards stocks pulling back from highs while maintaining
-            positive short-term momentum. Complements the momentum signal by identifying
-            favorable entry points within an uptrend.
+            Pullback / entry-quality overlay from price action: distance from highs, MA trend,
+            multi-horizon momentum, volatility-adjusted trend strength — favors constructive
+            entries within an uptrend.
           </PillarCard>
         </div>
-        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
-          Final score = (Fundamental × 0.25) + (DCF × 0.15) + (Dynamic Val × 0.20) + (Momentum × 0.25) + (Price Value × 0.15)
+        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
+          Default Full Composite = (Fundamental × 0.35) + (DCF × 0.10) + (Dynamic Val × 0.15) + (Momentum × 0.25) + (Price Value × 0.15), plus a small momentum-quality nudge on the default profile. Aggressive / Turbo backtests use different weight vectors (higher momentum, lower DCF/fundamental).
         </p>
       </Section>
 
@@ -141,7 +141,7 @@ export default function AboutTab() {
       <Section title="Filters & Safeguards">
         <p style={{ margin: "0 0 8px" }}>Before a stock can enter the portfolio, it must pass several hard filters:</p>
         <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
-          <li><strong style={{ color: "#f0f0f0" }}>Fundamental quality &ge; 30:</strong> Removes low-quality businesses regardless of momentum or valuation.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Fundamental quality &ge; 20:</strong> Removes the weakest names before ranking (Full Composite backtest default floor).</li>
           <li><strong style={{ color: "#f0f0f0" }}>No severe constraints:</strong> Companies with critical debt or growth constraints are excluded.</li>
           <li><strong style={{ color: "#f0f0f0" }}>Volatility cap:</strong> Annualized volatility above 80% is excluded to avoid speculative names.</li>
           <li><strong style={{ color: "#f0f0f0" }}>Trend confirmation:</strong> Stocks in strong downtrends with weak value scores are filtered out.</li>
