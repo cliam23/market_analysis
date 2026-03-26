@@ -3,6 +3,7 @@ import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
+import { RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
 
 function Box({ children, style: sx = {} }) {
@@ -63,7 +64,7 @@ function ChartTooltip({ active, payload, label }) {
 
 function Select({ value, onChange, options, label, style }) {
   return (
-    <div style={style}>
+    <div style={{ minWidth: 0, width: "100%", ...style }}>
       {label && <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
       <select
         value={value}
@@ -72,11 +73,15 @@ function Select({ value, onChange, options, label, style }) {
           background: "rgba(255,255,255,0.04)",
           border: "1px solid rgba(255,255,255,0.1)",
           borderRadius: 6,
-          padding: "8px 12px",
+          padding: "8px 10px",
           color: "#f0f0f0",
-          fontSize: 13,
+          fontSize: 12,
           fontFamily: MONO,
-          cursor: "pointer"
+          cursor: "pointer",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          boxSizing: "border-box"
         }}
       >
         {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -87,7 +92,7 @@ function Select({ value, onChange, options, label, style }) {
 
 const UNIVERSE_OPTIONS = [
   { id: "sp500_top50", label: "S&P 500 Top 50" },
-  { id: "vgt", label: "VGT (Tech)" },
+  { id: "vgt", label: "VGT" },
   { id: "mag7", label: "Mag 7" },
   { id: "russell_growth", label: "Russell Growth" },
   { id: "dividend_aristocrats", label: "Dividend Aristocrats" }
@@ -95,8 +100,8 @@ const UNIVERSE_OPTIONS = [
 
 const STRATEGY_OPTIONS = [
   { id: "full_composite", label: "Full Composite" },
-  { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
-  { id: "full_composite_turbo", label: "Full Composite (Turbo — max risk)" },
+  { id: "full_composite_aggressive", label: "Composite Aggressive" },
+  { id: "full_composite_turbo", label: "Composite Turbo" },
   { id: "quality_momentum", label: "Quality + Momentum" },
   { id: "momentum_value", label: "Momentum + Value" },
   { id: "momentum", label: "Momentum Only" }
@@ -108,6 +113,27 @@ const TOP_N_OPTIONS = [
   { id: "15", label: "15" },
   { id: "20", label: "20" }
 ];
+
+/** Pillar keys for composite adaptive weights (same order as backtest / server FACTOR_NAMES). */
+const PILLAR_ORDER = ["fundamental", "dcf", "valuation", "momentum", "value"];
+const PILLAR_LABELS = {
+  fundamental: "Quality",
+  dcf: "DCF",
+  valuation: "Valuation",
+  momentum: "Momentum",
+  value: "Value"
+};
+
+function isCompositeStrategy(strategy) {
+  return strategy === "full_composite" || strategy === "full_composite_aggressive" || strategy === "full_composite_turbo";
+}
+
+function formatWeightPct(raw) {
+  if (raw == null || Number.isNaN(raw)) return "—";
+  const n = Number(raw);
+  const pct = n <= 1 && n >= 0 ? n * 100 : n;
+  return `${pct.toFixed(1)}%`;
+}
 
 function fmtDate(dateStr) {
   if (!dateStr) return "";
@@ -287,30 +313,35 @@ export default function PaperTradeTab() {
 
   if (loading) {
     return (
-      <Box style={{ textAlign: "center", padding: 60 }}>
-        <div style={{ fontSize: 13, color: "#f0f0f0", fontFamily: MONO, marginBottom: 16 }}>Loading paper portfolio...</div>
-        <button
-          type="button"
-          onClick={() => {
-            paperApi.abortInFlight();
-            setLoading(false);
-          }}
-          onMouseEnter={() => setLoadBtnHover(true)}
-          onMouseLeave={() => setLoadBtnHover(false)}
-          style={{
-            padding: "8px 20px",
-            background: loadBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
-            border: loadBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 6,
-            color: loadBtnHover ? "#fca5a5" : "#888",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: MONO
-          }}
-        >
-          {loadBtnHover ? "CANCEL" : "STOP LOADING"}
-        </button>
+      <Box style={{ padding: "48px 20px 40px", boxSizing: "border-box" }}>
+        <div style={{ textAlign: "center", fontSize: 13, color: "#f0f0f0", fontFamily: MONO, marginBottom: 16 }}>
+          Loading paper portfolio...
+        </div>
+        <div style={{ ...RUN_ACTION_BAR_STYLE, marginTop: 0 }}>
+          <button
+            type="button"
+            onClick={() => {
+              paperApi.abortInFlight();
+              setLoading(false);
+            }}
+            onMouseEnter={() => setLoadBtnHover(true)}
+            onMouseLeave={() => setLoadBtnHover(false)}
+            style={{
+              padding: "8px 20px",
+              flexShrink: 0,
+              background: loadBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+              border: loadBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              color: loadBtnHover ? "#fca5a5" : "#888",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
+            {loadBtnHover ? "CANCEL" : "STOP LOADING"}
+          </button>
+        </div>
       </Box>
     );
   }
@@ -325,8 +356,16 @@ export default function PaperTradeTab() {
           <p style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 16, lineHeight: 1.6 }}>
             Start a forward paper trade to test your model out-of-sample. The model runs on live market data — no overfitting possible.
           </p>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-            <div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(9.25rem, 1fr))",
+              gap: "12px 10px",
+              marginBottom: 16,
+              alignItems: "end"
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>CAPITAL ($)</div>
               <input
                 type="number"
@@ -336,11 +375,13 @@ export default function PaperTradeTab() {
                   background: "rgba(255,255,255,0.04)",
                   border: "1px solid rgba(255,255,255,0.1)",
                   borderRadius: 6,
-                  padding: "8px 12px",
+                  padding: "8px 10px",
                   color: "#f0f0f0",
-                  fontSize: 13,
+                  fontSize: 12,
                   fontFamily: MONO,
-                  width: 140
+                  width: "100%",
+                  minWidth: 0,
+                  boxSizing: "border-box"
                 }}
               />
             </div>
@@ -348,23 +389,26 @@ export default function PaperTradeTab() {
             <Select label="UNIVERSE" value={initForm.universe} onChange={v => setInitForm(f => ({ ...f, universe: v }))} options={UNIVERSE_OPTIONS} />
             <Select label="TOP N" value={initForm.topN} onChange={v => setInitForm(f => ({ ...f, topN: v }))} options={TOP_N_OPTIONS} />
           </div>
-          <button
-            type="button"
-            onClick={initPortfolio}
-            style={{
-              padding: "10px 24px",
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.15)",
-              borderRadius: 6,
-              color: "#f0f0f0",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO
-            }}
-          >
-            Create Paper Portfolio
-          </button>
+          <div style={RUN_ACTION_BAR_STYLE}>
+            <button
+              type="button"
+              onClick={initPortfolio}
+              style={{
+                padding: "10px 24px",
+                flexShrink: 0,
+                background: "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 6,
+                color: "#f0f0f0",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: MONO
+              }}
+            >
+              Create Paper Portfolio
+            </button>
+          </div>
           {error && <div style={{ color: "#ef4444", fontSize: 12, marginTop: 10, fontFamily: MONO }}>{error}</div>}
         </Box>
 
@@ -378,7 +422,19 @@ export default function PaperTradeTab() {
     );
   }
 
-  const { summary, holdings, config, createdAt, lastRebalance, nextRebalance, cash, navHistory, monthlyEventsSummary } = portfolio;
+  const {
+    summary,
+    holdings,
+    config,
+    createdAt,
+    lastRebalance,
+    nextRebalance,
+    cash,
+    navHistory,
+    monthlyEventsSummary,
+    activeWeights,
+    weightHistory
+  } = portfolio;
   const rebalanceHistory = history?.rebalanceHistory || [];
 
   const chartData = (navHistory || []).map(n => ({
@@ -443,6 +499,60 @@ export default function PaperTradeTab() {
         />
       </div>
 
+      {isCompositeStrategy(config.strategy) && activeWeights && (
+        <Box>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 8, fontFamily: MONO }}>
+            ADAPTIVE COMPOSITE WEIGHTS
+          </div>
+          <div style={{ fontSize: 10, color: "#888", fontFamily: MONO, marginBottom: 12, lineHeight: 1.5 }}>
+            Current pillar weights used for ranking (backtest-style single-period IC updates from the third rebalance onward, with caps). Same engine as Full Composite backtest.
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", marginBottom: weightHistory?.length ? 14 : 0 }}>
+            {PILLAR_ORDER.map((key) => (
+              <div key={key} style={{ minWidth: 100 }}>
+                <div style={{ fontSize: 9, color: "#888", fontFamily: MONO, letterSpacing: 0.5 }}>{PILLAR_LABELS[key]}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>{formatWeightPct(activeWeights[key])}</div>
+              </div>
+            ))}
+          </div>
+          {weightHistory && weightHistory.length > 0 && (
+            <>
+              <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>
+                RECENT WEIGHT SNAPSHOTS (LAST {weightHistory.length})
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 10, fontFamily: MONO }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                      <th style={{ textAlign: "left", padding: "6px 8px", color: "#888" }}>Date</th>
+                      <th style={{ textAlign: "left", padding: "6px 8px", color: "#888" }}>Alpha</th>
+                      {PILLAR_ORDER.map((key) => (
+                        <th key={key} style={{ textAlign: "right", padding: "6px 6px", color: "#888", whiteSpace: "nowrap" }}>{PILLAR_LABELS[key]}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {weightHistory.slice().reverse().map((row) => (
+                      <tr key={row.date} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                        <td style={{ padding: "6px 8px", color: "#f0f0f0" }}>{fmtDate(row.date)}</td>
+                        <td style={{ padding: "6px 8px", color: row.alpha >= 0 ? "#22c55e" : "#ef4444" }}>
+                          {row.alpha != null ? `${row.alpha >= 0 ? "+" : ""}${Number(row.alpha).toFixed(1)}%` : "—"}
+                        </td>
+                        {PILLAR_ORDER.map((key) => (
+                          <td key={key} style={{ textAlign: "right", padding: "6px 6px", color: "#c8c8c8" }}>
+                            {row.weights?.[key] != null ? `${Number(row.weights[key]).toFixed(1)}%` : "—"}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Box>
+      )}
+
       {/* S&P 500 Comparison */}
       <Box>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", rowGap: 4, columnGap: 16, alignItems: "center", marginBottom: 12 }}>
@@ -503,36 +613,6 @@ export default function PaperTradeTab() {
             {nextRebalance && <>&nbsp;&nbsp;Next: {fmtDate(nextRebalance)}</>}
           </div>
         </div>
-        {monthlyEventsSummary && monthlyEventsSummary.length > 0 && (
-          <div style={{
-            marginBottom: 12,
-            padding: "10px 12px",
-            background: "rgba(255,255,255,0.02)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 8,
-            fontFamily: MONO,
-            fontSize: 10
-          }}>
-            <div style={{ fontWeight: 700, letterSpacing: 1, color: "#f0f0f0", marginBottom: 8 }}>
-              MONTHLY EVENTS — correlate dips with rebalances
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "#c8c8c8", lineHeight: 1.5 }}>
-              {monthlyEventsSummary.slice().reverse().map((row) => (
-                <span key={row.month}>
-                  <strong style={{ color: "#f0f0f0" }}>{row.month}</strong>
-                  {": "}
-                  {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""}
-                  {row.stops > 0 ? (
-                    <span style={{ color: "#f97316" }}>{`, ${row.stops} stop exit${row.stops !== 1 ? "s" : ""}`}</span>
-                  ) : null}
-                </span>
-              ))}
-            </div>
-            <div style={{ marginTop: 8, color: "#888", fontSize: 9, lineHeight: 1.5 }}>
-              Paper trade records full rebalance runs. Stop exits appear here only if a sell is tagged STOP (model rotations use reason ROTATION). For stop-loss clusters vs the benchmark, use Backtest → trade log and the monthly events under the equity curve.
-            </div>
-          </div>
-        )}
         {chartData.length > 1 ? (
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={chartData} margin={{ top: 5, right: 30, bottom: 5, left: 5 }}>
@@ -638,6 +718,33 @@ export default function PaperTradeTab() {
           <div style={{ fontSize: 14, color: "#f0f0f0", marginBottom: 8 }}>No holdings yet</div>
           <div style={{ fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
             Click "Rebalance Now" to run the model and make initial picks.
+          </div>
+        </Box>
+      )}
+
+      {monthlyEventsSummary && monthlyEventsSummary.length > 0 && (
+        <Box>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, color: "#f0f0f0", marginBottom: 10, fontFamily: MONO }}>
+            MONTHLY ACTIVITY
+          </div>
+          <div style={{ fontSize: 10, color: "#888", fontFamily: MONO, marginBottom: 10, lineHeight: 1.5 }}>
+            Rebalances and stop exits by month — pairs with the chart above; detail lives in the rebalance log below.
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 14px", color: "#c8c8c8", lineHeight: 1.5, fontFamily: MONO, fontSize: 10 }}>
+            {monthlyEventsSummary.slice().reverse().map((row) => (
+              <span key={row.month}>
+                <strong style={{ color: "#f0f0f0" }}>{row.month}</strong>
+                {": "}
+                {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""}
+                {row.stops > 0 ? (
+                  <span style={{ color: "#f97316" }}>{`, ${row.stops} stop exit${row.stops !== 1 ? "s" : ""}`}</span>
+                ) : null}
+              </span>
+            ))}
+          </div>
+          <div style={{ marginTop: 10, color: "#888", fontSize: 9, lineHeight: 1.5, fontFamily: MONO }}>
+            Stop exits count only sells tagged STOP (rotations use ROTATION). For deeper trade history vs benchmark, use{" "}
+            <strong style={{ color: "#c8c8c8" }}>Backtest</strong> → trade log.
           </div>
         </Box>
       )}

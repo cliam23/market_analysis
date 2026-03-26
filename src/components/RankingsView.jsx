@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Box, SH, Pill, LoadingSpinner, TrendBadge } from "./shared.jsx";
+import { Box, SH, Pill, LoadingSpinner, TrendBadge, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { MONO } from "../lib/theme.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
@@ -7,14 +7,14 @@ const STRATEGIES = [
   { id: "momentum", label: "Momentum Only" },
   { id: "momentum_value", label: "Momentum + Value" },
   { id: "full_composite", label: "Full Composite" },
-  { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
-  { id: "full_composite_turbo", label: "Full Composite (Turbo)" },
+  { id: "full_composite_aggressive", label: "Composite Aggressive" },
+  { id: "full_composite_turbo", label: "Composite Turbo" },
   { id: "quality_momentum", label: "Quality + Momentum" }
 ];
 
 const UNIVERSES = [
   { id: "sp500_top50", label: "S&P 500 Top 50" },
-  { id: "vgt", label: "VGT (Tech)" },
+  { id: "vgt", label: "VGT" },
   { id: "mag7", label: "Mag 7" },
   { id: "russell_growth", label: "Russell Growth" },
   { id: "dividend_aristocrats", label: "Dividend Aristocrats" }
@@ -45,11 +45,15 @@ const selectStyle = {
   background: "rgba(255,255,255,0.04)",
   border: "1px solid rgba(255,255,255,0.1)",
   borderRadius: 6,
-  padding: "8px 12px",
+  padding: "8px 10px",
   color: "#f0f0f0",
   fontSize: 12,
   fontFamily: MONO,
-  cursor: "pointer"
+  cursor: "pointer",
+  width: "100%",
+  minWidth: 0,
+  maxWidth: "100%",
+  boxSizing: "border-box"
 };
 
 const labelStyle = {
@@ -139,13 +143,20 @@ export default function RankingsView({ onSelectTicker }) {
     <div>
       {/* Controls */}
       <Box border="rgba(255,255,255,0.06)" style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(9.25rem, 1fr))",
+            gap: "10px 10px",
+            alignItems: "end"
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
             <label style={labelStyle}>STRATEGY</label>
             <select
               value={selectedStrategy}
               onChange={(e) => setSelectedStrategy(e.target.value)}
-              style={{ ...selectStyle, minWidth: 170 }}
+              style={selectStyle}
             >
               {STRATEGIES.map((s) => (
                 <option key={s.id} value={s.id}>{s.label}</option>
@@ -153,12 +164,12 @@ export default function RankingsView({ onSelectTicker }) {
             </select>
           </div>
 
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label style={labelStyle}>UNIVERSE</label>
             <select
               value={selectedUniverse}
               onChange={(e) => setSelectedUniverse(e.target.value)}
-              style={{ ...selectStyle, minWidth: 160 }}
+              style={selectStyle}
             >
               {UNIVERSES.map((u) => (
                 <option key={u.id} value={u.id}>{u.label}</option>
@@ -166,7 +177,7 @@ export default function RankingsView({ onSelectTicker }) {
             </select>
           </div>
 
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label style={labelStyle}>LOOKBACK</label>
             <select
               value={selectedLookback}
@@ -179,7 +190,7 @@ export default function RankingsView({ onSelectTicker }) {
             </select>
           </div>
 
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label style={labelStyle}>TREND FILTER</label>
             <select
               value={smooth ? "on" : "off"}
@@ -191,7 +202,7 @@ export default function RankingsView({ onSelectTicker }) {
             </select>
           </div>
 
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label style={labelStyle}>SORT BY</label>
             <select
               value={sortBy}
@@ -203,46 +214,47 @@ export default function RankingsView({ onSelectTicker }) {
               ))}
             </select>
           </div>
-
-          <div style={{ marginLeft: "auto" }}>
-            <label style={labelStyle}>&nbsp;</label>
-            <button
-              type="button"
-              onClick={onScanClick}
-              onMouseEnter={() => setScanBtnHover(true)}
-              onMouseLeave={() => setScanBtnHover(false)}
-              style={{
-                padding: "8px 20px",
-                background:
-                  loading && scanBtnHover
-                    ? "rgba(239,68,68,0.15)"
-                    : loading
-                      ? "rgba(255,255,255,0.04)"
-                      : "rgba(255,255,255,0.08)",
-                border:
-                  loading && scanBtnHover
-                    ? "1px solid rgba(239,68,68,0.45)"
-                    : "1px solid rgba(255,255,255,0.12)",
-                borderRadius: 6,
-                color:
-                  loading && scanBtnHover
-                    ? "#fca5a5"
-                    : loading
-                      ? "#888"
-                      : "#818cf8",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-                fontFamily: MONO
-              }}
-            >
-              {loading && scanBtnHover
-                ? "CANCEL"
-                : loading
-                  ? "SCANNING..."
-                  : "RUN SCAN"}
-            </button>
-          </div>
+        </div>
+        <div style={RUN_ACTION_BAR_STYLE}>
+          <button
+            type="button"
+            onClick={onScanClick}
+            onMouseEnter={() => setScanBtnHover(true)}
+            onMouseLeave={() => setScanBtnHover(false)}
+            style={{
+              padding: "8px 18px",
+              flexShrink: 0,
+              whiteSpace: "nowrap",
+              boxSizing: "border-box",
+              background:
+                loading && scanBtnHover
+                  ? "rgba(239,68,68,0.15)"
+                  : loading
+                    ? "rgba(255,255,255,0.04)"
+                    : "rgba(255,255,255,0.08)",
+              border:
+                loading && scanBtnHover
+                  ? "1px solid rgba(239,68,68,0.45)"
+                  : "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              color:
+                loading && scanBtnHover
+                  ? "#fca5a5"
+                  : loading
+                    ? "#888"
+                    : "#818cf8",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
+            {loading && scanBtnHover
+              ? "CANCEL"
+              : loading
+                ? "SCANNING..."
+                : "RUN SCAN"}
+          </button>
         </div>
 
         {loading && results && (

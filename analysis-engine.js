@@ -90,6 +90,10 @@ const AI_OPP_MODERATE = [
   "Consulting Services", "Specialty Chemicals", "Communication Equipment", "Industrial Distribution"
 ];
 
+/** Stable arrays for matchIndustry (WeakMap prep); avoid per-call spread allocations. */
+const STRONG_OR_MODERATE_NETWORK = [...STRONG_NETWORK, ...MODERATE_NETWORK];
+const HIGH_OR_MODERATE_BARRIER = [...HIGH_BARRIER, ...MODERATE_BARRIER];
+
 const SECTOR_RISK = {
   "Technology": { severity: "moderate", description: "Rapid innovation cycles and AI disruption create constant competitive pressure" },
   "Healthcare": { severity: "moderate", description: "Regulatory risk and patent cliffs are structural industry challenges" },
@@ -597,10 +601,22 @@ function safeNum(val, def = 0) {
   return isNaN(n) ? def : n;
 }
 
+const _industryKeywordPrep = new WeakMap();
+function _prepIndustryKeywords(list) {
+  if (!list || !list.length) return [];
+  let p = _industryKeywordPrep.get(list);
+  if (!p) {
+    p = list.map((s) => String(s).toLowerCase());
+    _industryKeywordPrep.set(list, p);
+  }
+  return p;
+}
+
 function matchIndustry(industry, list) {
   if (!industry) return false;
   const lower = industry.toLowerCase();
-  return list.some(i => lower.includes(i.toLowerCase()));
+  const keywords = _prepIndustryKeywords(list);
+  return keywords.some((i) => lower.includes(i));
 }
 
 function billions(val) {
@@ -700,8 +716,8 @@ function calcNetworkEffects(data, userInput = null) {
 
   let scoreC = 0;
   if (marketCap > 500e9 && (sector.includes("tech") || sector.includes("communication"))) scoreC = 4;
-  else if (marketCap > 100e9 && matchIndustry(industry, [...STRONG_NETWORK, ...MODERATE_NETWORK])) scoreC = 3;
-  else if (marketCap > 50e9 && matchIndustry(industry, [...STRONG_NETWORK, ...MODERATE_NETWORK])) scoreC = 2;
+  else if (marketCap > 100e9 && matchIndustry(industry, STRONG_OR_MODERATE_NETWORK)) scoreC = 3;
+  else if (marketCap > 50e9 && matchIndustry(industry, STRONG_OR_MODERATE_NETWORK)) scoreC = 2;
 
   const algorithmicScore = Math.min(scoreA + scoreB + scoreC, 15);
   const userScore = userInput?.score || 0;
@@ -802,7 +818,7 @@ function calcLearningCurve(data) {
     explanation,
     details: {
       rdIndustry: matchIndustry(industry, HIGH_RD),
-      barrierIndustry: matchIndustry(industry, [...HIGH_BARRIER, ...MODERATE_BARRIER]),
+      barrierIndustry: matchIndustry(industry, HIGH_OR_MODERATE_BARRIER),
       sustainedMargins: grossMargin > 0.50 && beta < 1.2,
       currentGrossMargin: (grossMargin * 100).toFixed(1),
       beta: beta.toFixed(2),
@@ -1851,7 +1867,8 @@ function calcTotalShareholderYield(data, intrinsicValueData = {}) {
 // COMPOSITE SCORE
 // =====================================================================
 
-function calcComposite({
+/** Rules-only composite (original heuristic pillars). */
+function calcCompositeRules({
   buffettChecklist,
   moatAnalysis,
   intrinsicValue,
@@ -2090,6 +2107,680 @@ function calcComposite({
   };
 }
 
+/**
+ * Hybrid composite: Random Forest / classifier structural score replaces Moat, ROIC, and Earnings Quality
+ * (and AI headwind penalties), avoiding double-count with ML feature inputs. Valuation, momentum, yield, Buffett stay heuristic.
+ */
+function calcCompositeHybrid({
+  buffettChecklist,
+  moatAnalysis,
+  intrinsicValue,
+  roicTree,
+  earningsQuality,
+  entryTiming,
+  totalShareholderYield,
+  growthConstraints,
+  aiDisruption,
+  fundamentals,
+  price
+}, mlMeta) {
+  const structuralScore0to100 = Math.max(0, Math.min(100, mlMeta.structuralScore0to100));
+  const probPositive20d = mlMeta.probPositive20d != null ? Number(mlMeta.probPositive20d) : null;
+  const blend = mlMeta.structuralBlend != null ? Math.max(0, Math.min(1, Number(mlMeta.structuralBlend))) : 1;
+
+  const components = [];
+  const buffettScore = safeNum(buffettChecklist?.total, null);
+  if (buffettScore != null) {
+    components.push({ name: 'Quality', score: Math.max(0, Math.min(100, buffettScore)), weight: 0.20, source: 'buffettChecklist' });
+  }
+
+  let valuationScore = null;
+  const marginOfSafety = parseFloat(intrinsicValue?.undervaluation) || 0;
+  let mosPoints = 0;
+  if (marginOfSafety >= 30) mosPoints = 35;
+  else if (marginOfSafety >= 20) mosPoints = 30;
+  else if (marginOfSafety >= 10) mosPoints = 25;
+  else if (marginOfSafety >= 0) mosPoints = 18;
+  else if (marginOfSafety >= -10) mosPoints = 12;
+  else if (marginOfSafety >= -25) mosPoints = 6;
+  else if (marginOfSafety >= -50) mosPoints = 3;
+  else mosPoints = 0;
+  let dcfPoints = 0;
+  const dcfUpside = (parseFloat(intrinsicValue?.dcfUpside) || 0) * 100;
+  if (dcfUpside >= 30) dcfPoints = 30;
+  else if (dcfUpside >= 15) dcfPoints = 25;
+  else if (dcfUpside >= 5) dcfPoints = 20;
+  else if (dcfUpside >= 0) dcfPoints = 15;
+  else if (dcfUpside >= -15) dcfPoints = 10;
+  else if (dcfUpside >= -30) dcfPoints = 5;
+  else dcfPoints = 0;
+  valuationScore = Math.max(0, Math.min(100, mosPoints + dcfPoints));
+  components.push({ name: 'Valuation', score: valuationScore, weight: 0.20, source: 'calculated' });
+
+  const spread = safeNum(roicTree?.spread, 0);
+  let roicScoreHeuristic = 0;
+  if (spread >= 25) roicScoreHeuristic = 100;
+  else if (spread >= 20) roicScoreHeuristic = 90;
+  else if (spread >= 15) roicScoreHeuristic = 80;
+  else if (spread >= 10) roicScoreHeuristic = 70;
+  else if (spread >= 5) roicScoreHeuristic = 55;
+  else if (spread >= 2) roicScoreHeuristic = 40;
+  else if (spread >= 0) roicScoreHeuristic = 25;
+  else roicScoreHeuristic = Math.max(0, 25 + spread * 5);
+  const moatScore = safeNum(moatAnalysis?.moat_score, 50);
+  const eqScore = safeNum(earningsQuality?.score, 50);
+  const rulesStructuralAvg = (moatScore + roicScoreHeuristic + eqScore) / 3;
+  const mlStructuralBlended = blend * structuralScore0to100 + (1 - blend) * rulesStructuralAvg;
+  components.push({
+    name: 'ML structure',
+    score: Math.round(mlStructuralBlended),
+    weight: 0.35,
+    source: 'random_forest'
+  });
+
+  const entryTotal = safeNum(entryTiming?.total, 0);
+  const entryPts = (entryTotal / 17) * 50;
+  const distFromHigh = Math.abs(safeNum(entryTiming?.distance, 0));
+  let techPts = 0;
+  if (distFromHigh <= 5) techPts = 15;
+  else if (distFromHigh <= 15) techPts = 30;
+  else if (distFromHigh <= 25) techPts = 50;
+  else if (distFromHigh <= 40) techPts = 40;
+  else techPts = 20;
+  const maDist = safeNum(entryTiming?.maDistance, 0);
+  if (maDist > 0) {
+    if (maDist <= 10) techPts += 15;
+    else if (maDist <= 30) techPts += 5;
+  } else {
+    if (Math.abs(maDist) <= 10) techPts += 20;
+    else techPts += 10;
+  }
+  const momentumScore = Math.min(100, entryPts + techPts);
+  components.push({ name: 'Momentum', score: momentumScore, weight: 0.10, source: 'calculated' });
+
+  const tsyYield = safeNum(totalShareholderYield?.totalYield, 0);
+  let tsyScore = 0;
+  if (tsyYield >= 8) tsyScore = 100;
+  else if (tsyYield >= 6) tsyScore = 85;
+  else if (tsyYield >= 4) tsyScore = 70;
+  else if (tsyYield >= 3) tsyScore = 55;
+  else if (tsyYield >= 2) tsyScore = 40;
+  else if (tsyYield >= 1) tsyScore = 25;
+  else if (tsyYield >= 0.5) tsyScore = 15;
+  else tsyScore = 5;
+  const fcfCoverage = safeNum(totalShareholderYield?.returnCoverage, null);
+  if (fcfCoverage !== null) {
+    if (fcfCoverage < 0.8) tsyScore = tsyScore * 0.6;
+    else if (fcfCoverage < 1.0) tsyScore = tsyScore * 0.8;
+  }
+  components.push({ name: 'Shareholder Yield', score: tsyScore, weight: 0.05, source: 'totalShareholderYield' });
+
+  if (buffettScore != null) {
+    const qualityFloor = (buffettScore + structuralScore0to100) / 2;
+    components.push({ name: 'Quality Floor', score: qualityFloor, weight: 0.10, source: 'calculated' });
+  }
+
+  const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
+  if (Math.abs(totalWeight - 1.0) > 0.01) {
+    const scale = 1.0 / totalWeight;
+    components.forEach((c) => { c.adjustedWeight = c.weight * scale; });
+  }
+  components.forEach((c) => {
+    c.weighted = c.score * (c.adjustedWeight || c.weight);
+  });
+  const rawScore = components.reduce((sum, c) => sum + c.weighted, 0);
+
+  let constraintPenalty = 0;
+  const severity = growthConstraints?.overall_severity;
+  if (severity === 'critical') constraintPenalty = -10;
+  else if (severity === 'high') constraintPenalty = -7;
+  else if (severity === 'moderate') constraintPenalty = -3;
+  if (entryTiming?.overextendedWarning) constraintPenalty -= 3;
+
+  let compositeScore = Math.max(0, Math.min(100, Math.round(rawScore + constraintPenalty)));
+
+  let grade; let label; let color;
+  if (compositeScore >= 80) { grade = 'A'; label = 'STRONG BUY'; color = '#22c55e'; }
+  else if (compositeScore >= 70) { grade = 'A-'; label = 'BUY'; color = '#4ade80'; }
+  else if (compositeScore >= 60) { grade = 'B+'; label = 'ACCUMULATE'; color = '#86efac'; }
+  else if (compositeScore >= 55) { grade = 'B'; label = 'LEAN BUY'; color = '#eab308'; }
+  else if (compositeScore >= 45) { grade = 'C+'; label = 'HOLD'; color = '#eab308'; }
+  else if (compositeScore >= 35) { grade = 'C'; label = 'LEAN SELL'; color = '#f97316'; }
+  else if (compositeScore >= 25) { grade = 'D'; label = 'SELL'; color = '#ef4444'; }
+  else { grade = 'F'; label = 'STRONG SELL'; color = '#dc2626'; }
+
+  if (marginOfSafety < -50) { label = 'AVOID'; color = '#dc2626'; }
+  else if (marginOfSafety < -25 && (label === 'STRONG BUY' || label === 'BUY')) { label = 'HOLD'; color = '#eab308'; }
+
+  const sorted = [...components].sort((a, b) => b.score - a.score);
+  const strengths = sorted.slice(0, 2).map((s) => {
+    let insight = '';
+    if (s.name === 'ML structure') {
+      insight = probPositive20d != null
+        ? `Model P(up 20d) ${(probPositive20d * 100).toFixed(1)}% — structural score ${Math.round(structuralScore0to100)}/100`
+        : `Structural score ${Math.round(structuralScore0to100)}/100 (RF on fundamentals + path features)`;
+    } else if (s.name === 'Quality') insight = `${buffettScore}/100 Buffett checklist score — strong fundamentals`;
+    else if (s.name === 'Valuation') insight = `${marginOfSafety >= 0 ? marginOfSafety + '% undervalued' : Math.abs(marginOfSafety) + '% overvalued'} — ${valuationScore}/100 valuation score`;
+    else if (s.name === 'Momentum') insight = `${entryTiming?.signal?.replace(/_/g, ' ')} entry timing signal`;
+    else if (s.name === 'Shareholder Yield') insight = `${tsyYield}% total yield — ${totalShareholderYield?.category?.replace(/_/g, ' ')}`;
+    else if (s.name === 'Quality Floor') insight = `Buffett + ML structural blend at ${s.score.toFixed(0)}/100`;
+    return { name: s.name, score: s.score, insight };
+  });
+
+  const weaknesses = sorted.slice(-2).map((s) => {
+    let insight = '';
+    if (s.name === 'Valuation') insight = `Trading at ${Math.abs(marginOfSafety)}% ${marginOfSafety < 0 ? 'premium' : 'discount'} to intrinsic value`;
+    else if (s.name === 'Momentum') insight = `${entryTiming?.signal?.replace(/_/g, ' ')} — ${entryTiming?.overextendedWarning || 'weak technical setup'}`;
+    else if (s.name === 'Shareholder Yield') insight = `${tsyYield}% total yield — ${tsyYield < 1 ? 'minimal' : 'moderate'} capital return`;
+    else if (s.name === 'ML structure') insight = `Structural score ${Math.round(s.score)}/100 — see path/fundamental features`;
+    else insight = `Score of ${s.score}/100 indicates room for improvement`;
+    return { name: s.name, score: s.score, insight };
+  });
+
+  let narrative = `Strongest attributes: ${strengths[0]?.name} (${strengths[0]?.score}/100) and ${strengths[1]?.name} (${strengths[1]?.score}/100). `;
+  narrative += `Key concerns: ${weaknesses[0]?.name} (${weaknesses[0]?.score}/100) and ${weaknesses[1]?.name} (${weaknesses[1]?.score}/100). `;
+  if (probPositive20d != null) narrative += `Model-estimated probability of positive 20-day return: ${(probPositive20d * 100).toFixed(1)}%. `;
+  if (valuationScore > 70) narrative += 'Attractive valuation provides margin of safety. ';
+  else if (valuationScore < 30) narrative += 'Rich valuation limits upside and increases risk. ';
+  if (momentumScore > 70) narrative += 'Positive technical momentum supports entry timing.';
+  else if (momentumScore < 30) narrative += 'Weak momentum suggests waiting for a better entry point.';
+
+  const catalysts = {};
+  if (valuationScore < 50) {
+    catalysts.toReachBuy = `A ${Math.abs(Math.round(marginOfSafety * 0.5))}% price decline would push valuation score above 50, likely raising composite to 65+.`;
+  }
+  if (compositeScore < 70 && marginOfSafety < 0) {
+    catalysts.toReachStrongBuy = `Would need price to decline to ~$${Math.max(1, Math.round(price * 0.7))} for significant margin of safety while maintaining quality scores.`;
+  }
+
+  return {
+    score: compositeScore,
+    grade,
+    label,
+    color,
+    components: components.map((c) => ({
+      name: c.name,
+      score: c.score,
+      weight: Math.round((c.adjustedWeight || c.weight) * 100),
+      weighted: parseFloat(c.weighted.toFixed(1))
+    })),
+    constraintPenalty,
+    rawScore: parseFloat(rawScore.toFixed(1)),
+    finalScore: compositeScore,
+    strengths,
+    weaknesses,
+    narrative,
+    catalysts,
+    marginOfSafety: parseFloat(marginOfSafety.toFixed(1)),
+    valuationScore,
+    mlStructuralScore: structuralScore0to100,
+    mlProbPositive20d: probPositive20d,
+    mlHybrid: true
+  };
+}
+
+/**
+ * Blend rules composite headline score with env-gated RF "winning cluster" probability score.
+ */
+function calcCompositeClusterBlend(args, mlMeta) {
+  const rules = calcCompositeRules(args);
+  const clusterScore0to100 = Math.max(0, Math.min(100, Number(mlMeta.clusterScore0to100)));
+  const λ = mlMeta.clusterBlend != null ? Math.max(0, Math.min(1, Number(mlMeta.clusterBlend))) : 0.45;
+  const compositeScore = Math.round(λ * clusterScore0to100 + (1 - λ) * rules.score);
+  let grade; let label; let color;
+  if (compositeScore >= 80) { grade = 'A'; label = 'STRONG BUY'; color = '#22c55e'; }
+  else if (compositeScore >= 70) { grade = 'A-'; label = 'BUY'; color = '#4ade80'; }
+  else if (compositeScore >= 60) { grade = 'B+'; label = 'ACCUMULATE'; color = '#86efac'; }
+  else if (compositeScore >= 55) { grade = 'B'; label = 'LEAN BUY'; color = '#eab308'; }
+  else if (compositeScore >= 45) { grade = 'C+'; label = 'HOLD'; color = '#eab308'; }
+  else if (compositeScore >= 35) { grade = 'C'; label = 'LEAN SELL'; color = '#f97316'; }
+  else if (compositeScore >= 25) { grade = 'D'; label = 'SELL'; color = '#ef4444'; }
+  else { grade = 'F'; label = 'STRONG SELL'; color = '#dc2626'; }
+  return {
+    ...rules,
+    score: compositeScore,
+    grade,
+    label,
+    color,
+    clusterScore0to100,
+    clusterBlend: λ,
+    compositeMode: 'cluster_blend'
+  };
+}
+
+/**
+ * Composite score: rules-only, or hybrid with precomputed ML outputs (from Python predict).
+ * @param {object} mlOptions - structuralScore0to100 and/or probPositive20d (0-1); optional structuralBlend 0-1 vs rules average
+ */
+function calcComposite(args, mlOptions = {}) {
+  const cs = mlOptions.clusterScore0to100;
+  if (cs != null && Number.isFinite(Number(cs))) {
+    return calcCompositeClusterBlend(args, mlOptions);
+  }
+  const s = mlOptions.structuralScore0to100;
+  const p = mlOptions.probPositive20d;
+  const hasMl = (s != null && Number.isFinite(Number(s))) || (p != null && Number.isFinite(Number(p)));
+  if (!hasMl) return calcCompositeRules(args);
+  const structuralScore0to100 = Number.isFinite(Number(s))
+    ? Math.max(0, Math.min(100, Number(s)))
+    : Math.max(0, Math.min(100, Number(p) * 100));
+  const probPositive20d = p != null && Number.isFinite(Number(p)) ? Math.max(0, Math.min(1, Number(p))) : null;
+  return calcCompositeHybrid(args, {
+    structuralScore0to100,
+    probPositive20d,
+    structuralBlend: mlOptions.structuralBlend
+  });
+}
+
+// =====================================================================
+// ML FEATURE VECTORS (Random Forest / export to Python)
+// Order must match ml/features_schema.json
+// =====================================================================
+
+const ML_FEATURE_ORDER = [
+  'buffett_total',
+  'moat_score',
+  'roic_spread',
+  'roic_pct',
+  'eq_score',
+  'dcf_upside_pct',
+  'dcf_score',
+  'fundamental_composite',
+  'constraint_penalty',
+  'ai_headwind_score',
+  'total_shareholder_yield',
+  'forward_pe',
+  'trailing_pe',
+  'gross_margin',
+  'operating_margin',
+  'beta',
+  'margin_of_safety_pct',
+  'entry_timing_total',
+  'entry_distance_pct',
+  'entry_ma_distance_pct',
+  'momentum_norm',
+  'valuation_dyn',
+  'value_score',
+  'annualized_vol',
+  'mom_quality_score',
+  'seq_log_ret_1',
+  'seq_log_ret_5',
+  'seq_log_ret_20',
+  'seq_log_vol_20',
+  'seq_log_vol_60',
+  'rel_excess_3m',
+  'rel_excess_6m',
+  'rel_excess_12m'
+];
+
+/** Total simple return over `tradingDays` ending at asOfDate (last bar on or before asOfDate). */
+function totalReturnOverTradingWindow(series, asOfDate, tradingDays) {
+  const avail = [...(series || [])]
+    .filter((p) => p && p.date && p.close > 0 && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (avail.length < tradingDays + 1) return null;
+  const end = avail.length - 1;
+  const start = end - tradingDays;
+  const c0 = avail[start].close;
+  const c1 = avail[end].close;
+  if (c0 <= 0 || c1 <= 0) return null;
+  return c1 / c0 - 1;
+}
+
+/**
+ * Excess return vs benchmark: R_stock - R_benchmark over ~3/6/12 month windows (63/126/252 trading days).
+ */
+function computeRelativeStrengthVsBenchmark(stockSeries, benchmarkSeries, asOfDate, windows = [63, 126, 252]) {
+  const z = () => ({ rel_excess_3m: 0, rel_excess_6m: 0, rel_excess_12m: 0 });
+  if (!stockSeries || !benchmarkSeries || !asOfDate) return z();
+  const w3 = windows[0] ?? 63;
+  const w6 = windows[1] ?? 126;
+  const w12 = windows[2] ?? 252;
+  const excess = (w) => {
+    const ri = totalReturnOverTradingWindow(stockSeries, asOfDate, w);
+    const rm = totalReturnOverTradingWindow(benchmarkSeries, asOfDate, w);
+    if (ri == null || rm == null) return 0;
+    return ri - rm;
+  };
+  return {
+    rel_excess_3m: excess(w3),
+    rel_excess_6m: excess(w6),
+    rel_excess_12m: excess(w12)
+  };
+}
+
+/** True if benchmark last close is above its 200-day SMA (as of asOfDate). Default true if insufficient history. */
+function spyAbove200dma(benchmarkSeries, asOfDate) {
+  if (!benchmarkSeries || !asOfDate) return true;
+  const avail = [...benchmarkSeries]
+    .filter((p) => p && p.date && p.close > 0 && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (avail.length < 200) return true;
+  const last200 = avail.slice(-200);
+  const ma200 = last200.reduce((s, p) => s + p.close, 0) / 200;
+  const cur = avail[avail.length - 1].close;
+  return cur > ma200;
+}
+
+/** Pillar multipliers for SPY above vs below 200-DMA (used with IC-aware fusion in adaptiveWeights.js). */
+function regimePillarMultipliers(spyAbove200) {
+  return spyAbove200
+    ? { fundamental: 0.92, dcf: 0.92, valuation: 1.06, momentum: 1.12, value: 1.04 }
+    : { fundamental: 1.10, dcf: 1.06, valuation: 0.96, momentum: 0.88, value: 0.94 };
+}
+
+/**
+ * When SPY above 200-DMA: tilt toward momentum / tactical value; below: tilt toward quality / DCF.
+ * Weights renormalized to sum to 1.
+ */
+function regimeAdjustedCompositeWeights(baseWeights, spyAbove200) {
+  const w = {
+    fundamental: safeNum(baseWeights?.fundamental, 0.35),
+    dcf: safeNum(baseWeights?.dcf, 0.10),
+    valuation: safeNum(baseWeights?.valuation, 0.15),
+    momentum: safeNum(baseWeights?.momentum, 0.25),
+    value: safeNum(baseWeights?.value, 0.15)
+  };
+  const mult = regimePillarMultipliers(spyAbove200);
+  const out = {
+    fundamental: w.fundamental * mult.fundamental,
+    dcf: w.dcf * mult.dcf,
+    valuation: w.valuation * mult.valuation,
+    momentum: w.momentum * mult.momentum,
+    value: w.value * mult.value
+  };
+  const sum = out.fundamental + out.dcf + out.valuation + out.momentum + out.value;
+  if (sum > 0) {
+    out.fundamental /= sum;
+    out.dcf /= sum;
+    out.valuation /= sum;
+    out.momentum /= sum;
+    out.value /= sum;
+  }
+  return out;
+}
+
+/**
+ * Wilder RSI on closes ending at asOfDate (last bar on or before asOfDate).
+ * RS = avgGain / avgLoss over `period`; first averages are simple means of first `period` deltas.
+ */
+function computeRsi(priceSeries, asOfDate, period = 14) {
+  if (!priceSeries || !asOfDate || period < 2) return { rsi: 50, ok: false };
+  const avail = [...priceSeries]
+    .filter((p) => p && p.date && p.close > 0 && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (avail.length < period + 2) return { rsi: 50, ok: false };
+  const closes = avail.map((p) => p.close);
+  const deltas = [];
+  for (let i = 1; i < closes.length; i++) deltas.push(closes[i] - closes[i - 1]);
+  if (deltas.length < period + 1) return { rsi: 50, ok: false };
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    const d = deltas[i];
+    if (d >= 0) avgGain += d;
+    else avgLoss -= d;
+  }
+  avgGain /= period;
+  avgLoss /= period;
+  for (let i = period; i < deltas.length; i++) {
+    const d = deltas[i];
+    const g = d > 0 ? d : 0;
+    const l = d < 0 ? -d : 0;
+    avgGain = (avgGain * (period - 1) + g) / period;
+    avgLoss = (avgLoss * (period - 1) + l) / period;
+  }
+  if (avgLoss < 1e-12) return { rsi: 100, ok: true };
+  const rs = avgGain / avgLoss;
+  const rsi = 100 - 100 / (1 + rs);
+  return { rsi: Math.max(0, Math.min(100, rsi)), ok: true };
+}
+
+/** (lastClose - MA200) / MA200 at asOfDate; null if insufficient history. */
+function distanceFromMa200Pct(priceSeries, asOfDate) {
+  if (!priceSeries || !asOfDate) return null;
+  const avail = [...priceSeries]
+    .filter((p) => p && p.date && p.close > 0 && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (avail.length < 200) return null;
+  const last200 = avail.slice(-200);
+  const ma200 = last200.reduce((s, p) => s + p.close, 0) / 200;
+  const cur = avail[avail.length - 1].close;
+  if (ma200 <= 0) return null;
+  return (cur - ma200) / ma200;
+}
+
+/**
+ * Sequential SPY regime for momentum escape valve.
+ * high_momentum: strong trend + RSI confirmation (cap value tilt).
+ * stressed: below 200-DMA or very low RSI.
+ */
+function classifySpyMomentumRegime(spySeries, asOfDate, opts = {}) {
+  const rsiHi = opts.rsiHigh != null ? opts.rsiHigh : 55;
+  const rsiLo = opts.rsiLow != null ? opts.rsiLow : 35;
+  const distMin = opts.distMa200Min != null ? opts.distMa200Min : 0.02;
+  const above200 = spyAbove200dma(spySeries, asOfDate);
+  const { rsi, ok: rsiOk } = computeRsi(spySeries, asOfDate, opts.rsiPeriod || 14);
+  const distPct = distanceFromMa200Pct(spySeries, asOfDate);
+  let tag = 'neutral';
+  if (above200 && rsiOk && rsi > rsiHi && distPct != null && distPct > distMin) {
+    tag = 'high_momentum';
+  } else if (!above200 || (rsiOk && rsi < rsiLo)) {
+    tag = 'stressed';
+  }
+  return { tag, rsi: rsiOk ? rsi : null, distMa200Pct: distPct, above200, rsiOk };
+}
+
+/** Lagged log-returns and annualized log-vol from daily closes (Lecture 12-style path inputs). */
+function buildSequentialPriceFeatures(priceSeries, asOfDate) {
+  const z = () => ({
+    seq_log_ret_1: 0,
+    seq_log_ret_5: 0,
+    seq_log_ret_20: 0,
+    seq_log_vol_20: 0,
+    seq_log_vol_60: 0
+  });
+  if (!priceSeries || !asOfDate || !Array.isArray(priceSeries) || priceSeries.length < 22) return z();
+  const avail = [...priceSeries]
+    .filter((p) => p && p.date && p.close > 0 && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const nRaw = avail.length;
+  if (nRaw < 22) return z();
+  const closes = new Float64Array(nRaw);
+  for (let k = 0; k < nRaw; k++) closes[k] = avail[k].close;
+  const n = closes.length;
+  const logRet = (i, j) => {
+    const a = closes[j];
+    const b = closes[i];
+    if (a <= 0 || b <= 0) return 0;
+    return Math.log(b / a);
+  };
+  const idx = n - 1;
+  const r1 = idx >= 1 ? logRet(idx, idx - 1) : 0;
+  const r5 = idx >= 5 ? logRet(idx, idx - 5) : 0;
+  const r20 = idx >= 20 ? logRet(idx, idx - 20) : 0;
+  const dailyLogs = [];
+  const start = Math.max(1, n - 60);
+  for (let i = start; i < n; i++) dailyLogs.push(logRet(i, i - 1));
+  const volAnn = (arr) => {
+    if (arr.length < 2) return 0;
+    let mean = 0;
+    for (const x of arr) mean += x;
+    mean /= arr.length;
+    let s2 = 0;
+    for (const x of arr) s2 += (x - mean) ** 2;
+    const sd = Math.sqrt(s2 / (arr.length - 1));
+    return sd * Math.sqrt(252);
+  };
+  const last20 = dailyLogs.slice(-20);
+  const last60 = dailyLogs.slice(-60);
+  return {
+    seq_log_ret_1: r1,
+    seq_log_ret_5: r5,
+    seq_log_ret_20: r20,
+    seq_log_vol_20: volAnn(last20),
+    seq_log_vol_60: volAnn(last60)
+  };
+}
+
+function encodeAiNetImpactForMl(aiDisruption) {
+  const v = aiDisruption?.net_impact;
+  const m = {
+    strong_headwind: -2,
+    headwind: -1,
+    neutral: 0,
+    tailwind: 1,
+    strong_tailwind: 2
+  };
+  return safeNum(m[v], 0);
+}
+
+function encodeGrowthConstraintForMl(growthConstraints) {
+  const s = growthConstraints?.overall_severity;
+  if (s === 'critical') return -3;
+  if (s === 'high') return -2;
+  if (s === 'moderate') return -1;
+  return 0;
+}
+
+/**
+ * Flat numeric features for sklearn RF, from the same inputs as calcComposite.
+ * Optional momentum / valuation fields override when merging with backtest-style rows.
+ */
+function buildMlFeatureVector({
+  buffettChecklist,
+  moatAnalysis,
+  intrinsicValue,
+  roicTree,
+  earningsQuality,
+  entryTiming,
+  totalShareholderYield,
+  growthConstraints,
+  aiDisruption,
+  fundamentals,
+  price: _price,
+  momentumNorm,
+  valuationDyn,
+  valueScore,
+  annualizedVol,
+  momQualityScore,
+  priceSeries,
+  asOfDate,
+  benchmarkSeries
+}) {
+  const marginOfSafety = parseFloat(intrinsicValue?.undervaluation) || 0;
+  const dcfUpsideFrac = parseFloat(intrinsicValue?.dcfUpside) || 0;
+  const dcfUpsidePct = dcfUpsideFrac * 100;
+
+  let dcfScoreMl = 50;
+  if (dcfUpsidePct >= 40) dcfScoreMl = 100;
+  else if (dcfUpsidePct >= 25) dcfScoreMl = 85;
+  else if (dcfUpsidePct >= 10) dcfScoreMl = 70;
+  else if (dcfUpsidePct >= 0) dcfScoreMl = 55;
+  else if (dcfUpsidePct >= -10) dcfScoreMl = 40;
+  else if (dcfUpsidePct >= -25) dcfScoreMl = 25;
+  else dcfScoreMl = 10;
+
+  const b = safeNum(buffettChecklist?.total, 0);
+  const m = safeNum(moatAnalysis?.moat_score, 0);
+  const e = safeNum(earningsQuality?.score, 0);
+
+  const record = {
+    buffett_total: b,
+    moat_score: m,
+    roic_spread: safeNum(roicTree?.spread, 0),
+    roic_pct: safeNum(roicTree?.roic, 0),
+    eq_score: e,
+    dcf_upside_pct: dcfUpsidePct,
+    dcf_score: dcfScoreMl,
+    fundamental_composite: (b + m + e) / 3,
+    constraint_penalty: encodeGrowthConstraintForMl(growthConstraints),
+    ai_headwind_score: encodeAiNetImpactForMl(aiDisruption),
+    total_shareholder_yield: safeNum(totalShareholderYield?.totalYield, 0),
+    forward_pe: safeNum(fundamentals?.forwardPE, 0),
+    trailing_pe: safeNum(fundamentals?.trailingPE, 0),
+    gross_margin: (() => {
+      const gm = safeNum(fundamentals?.grossMargin || fundamentals?.grossProfitMargin, 0);
+      return gm > 1 ? gm : gm * 100;
+    })(),
+    operating_margin: (() => {
+      const om = safeNum(fundamentals?.operatingMargin, 0);
+      return om > 1 ? om : om * 100;
+    })(),
+    beta: safeNum(fundamentals?.beta, 1),
+    margin_of_safety_pct: marginOfSafety,
+    entry_timing_total: safeNum(entryTiming?.total, 0),
+    entry_distance_pct: safeNum(entryTiming?.distance, 0),
+    entry_ma_distance_pct: safeNum(entryTiming?.maDistance, 0),
+    momentum_norm: safeNum(momentumNorm, 0),
+    valuation_dyn: safeNum(valuationDyn, 0),
+    value_score: safeNum(valueScore, 0),
+    annualized_vol: safeNum(annualizedVol, 0),
+    mom_quality_score: safeNum(momQualityScore, 50)
+  };
+
+  const seqFeats = buildSequentialPriceFeatures(priceSeries, asOfDate);
+  Object.assign(record, seqFeats);
+
+  const relFeats = computeRelativeStrengthVsBenchmark(priceSeries, benchmarkSeries, asOfDate);
+  Object.assign(record, relFeats);
+
+  const vector = ML_FEATURE_ORDER.map((k) => record[k]);
+  return { record, vector, names: [...ML_FEATURE_ORDER] };
+}
+
+/**
+ * Same feature order as buildMlFeatureVector, using server `fundamentals` packet + ranking row
+ * (paper rebalance / bt_rankFullCompositeV2 output).
+ */
+function packMlFundRankRow(fund, rankRow, overrides = {}) {
+  if (!fund && !rankRow) return null;
+  const f = fund || {};
+  const r = rankRow || {};
+  const seqFeats = overrides.sequentialFeatures
+    || buildSequentialPriceFeatures(overrides.priceSeries, overrides.asOfDate);
+
+  const relFeats = overrides.relativeStrength
+    || computeRelativeStrengthVsBenchmark(
+      overrides.priceSeries,
+      overrides.benchmarkSeries,
+      overrides.asOfDate
+    );
+
+  const record = {
+    buffett_total: safeNum(f.buffettScore, 0),
+    moat_score: safeNum(f.moatScore, 0),
+    roic_spread: safeNum(f.roicSpread, 0),
+    roic_pct: safeNum(f.roicScore, 0),
+    eq_score: safeNum(f.eqScore, 0),
+    dcf_upside_pct: safeNum(f.dcfUpside, 0),
+    dcf_score: safeNum(r.dcfScore ?? f.dcfScore, 0),
+    fundamental_composite: safeNum(f.fundamentalComposite, 0),
+    constraint_penalty: safeNum(f.constraintPenalty, 0),
+    ai_headwind_score: safeNum(f.aiBonus, 0),
+    total_shareholder_yield: safeNum(f.totalShareholderYield, 0),
+    forward_pe: safeNum(f.forwardPE, 0),
+    trailing_pe: safeNum(f.trailingPE, 0),
+    gross_margin: safeNum(f.grossMargin, 0),
+    operating_margin: safeNum(f.operatingMargin, 0),
+    beta: safeNum(f.beta, 1),
+    margin_of_safety_pct: safeNum(overrides.marginOfSafetyPct, safeNum(f.dcfUpside, 0)),
+    entry_timing_total: safeNum(overrides.entryTimingTotal, 0),
+    entry_distance_pct: safeNum(overrides.entryDistancePct, 0),
+    entry_ma_distance_pct: safeNum(overrides.entryMaDistancePct, 0),
+    momentum_norm: safeNum(r.momentumScore, 0),
+    valuation_dyn: safeNum(r.valuationScore, 0),
+    value_score: safeNum(r.valueScore, 0),
+    annualized_vol: safeNum(r.volatility, 0),
+    mom_quality_score: safeNum(r.momentumQuality, 50),
+    ...seqFeats,
+    ...relFeats
+  };
+
+  const vector = ML_FEATURE_ORDER.map((k) => record[k]);
+  return { record, vector, names: [...ML_FEATURE_ORDER] };
+}
+
 // =====================================================================
 // EXPORTS
 // =====================================================================
@@ -2121,6 +2812,19 @@ export {
   calcEarningsQuality,
   calcTotalShareholderYield,
   calcComposite,
+  calcCompositeRules,
+
+  ML_FEATURE_ORDER,
+  buildSequentialPriceFeatures,
+  computeRelativeStrengthVsBenchmark,
+  spyAbove200dma,
+  regimePillarMultipliers,
+  regimeAdjustedCompositeWeights,
+  computeRsi,
+  distanceFromMa200Pct,
+  classifySpyMomentumRegime,
+  buildMlFeatureVector,
+  packMlFundRankRow,
 
   // Peer comparison functions
   PEER_MAP, INDUSTRY_TICKERS, SECTOR_FALLBACKS,

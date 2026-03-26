@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ComposedChart, Bar } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
+import { RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 function Box({ border, children, style: sx = {} }) {
@@ -21,7 +22,7 @@ function Box({ border, children, style: sx = {} }) {
 
 function Select({ value, onChange, options, label, style }) {
   return (
-    <div style={style}>
+    <div style={{ minWidth: 0, width: "100%", ...style }}>
       {label && <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
       <select
         value={value}
@@ -30,11 +31,15 @@ function Select({ value, onChange, options, label, style }) {
           background: "rgba(255,255,255,0.04)",
           border: "1px solid rgba(255,255,255,0.1)",
           borderRadius: 6,
-          padding: "8px 12px",
+          padding: "8px 10px",
           color: "#f0f0f0",
-          fontSize: 13,
+          fontSize: 12,
           fontFamily: MONO,
-          cursor: "pointer"
+          cursor: "pointer",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          boxSizing: "border-box"
         }}
       >
         {options.map(o => (
@@ -135,6 +140,22 @@ function CustomTooltip({ active, payload, label }) {
 const COMPOSITE_FAMILY = ["full_composite", "full_composite_aggressive", "full_composite_turbo"];
 function isCompositeFamily(s) {
   return COMPOSITE_FAMILY.includes(s);
+}
+
+const BT_PILLAR_ORDER = ["fundamental", "dcf", "valuation", "momentum", "value"];
+const BT_PILLAR_LABELS = {
+  fundamental: "Quality",
+  dcf: "DCF",
+  valuation: "Valuation",
+  momentum: "Momentum",
+  value: "Value"
+};
+
+function formatBtWeightPct(raw) {
+  if (raw == null || Number.isNaN(raw)) return "—";
+  const n = Number(raw);
+  const pct = n <= 1 && n >= 0 ? n * 100 : n;
+  return `${pct.toFixed(1)}%`;
 }
 
 /** Green = beating benchmark, red = trailing benchmark (for headline metrics). */
@@ -238,6 +259,16 @@ function buildSegmentedEquityChartData(curve, initialCapital, inflationBaselineA
 }
 const C_SUB_NEUTRAL = "#64748b";
 
+const TRADE_LOG_TH_STICKY = {
+  padding: "8px 10px",
+  color: "#f0f0f0",
+  position: "sticky",
+  top: 0,
+  background: "rgba(24,24,26,0.98)",
+  boxShadow: "0 1px 0 rgba(255,255,255,0.06)",
+  zIndex: 1,
+};
+
 /** Table cell: strategy value vs benchmark (or alpha vs 0). */
 function colorMetricVsBench(label, stratRaw, benchRaw) {
   const strat = parseFloat(stratRaw);
@@ -260,6 +291,7 @@ function colorMetricVsBench(label, stratRaw, benchRaw) {
 
 export default function BacktestTab() {
   const [loading, setLoading] = useState(false);
+  const [loadSec, setLoadSec] = useState(0);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [showTrades, setShowTrades] = useState(false);
@@ -268,10 +300,12 @@ export default function BacktestTab() {
   const [settings, setSettings] = useState({
     universe: "sp500_top50",
     period: "3y",
-    rebalanceFreq: "monthly",
-    topN: "10",
+    rebalanceFreq: "bimonthly",
+    topN: "15",
     strategy: "full_composite",
-    initialCapital: "10000"
+    initialCapital: "10000",
+    adaptiveMode: "fixed",
+    positionSizing: "invVol"
   });
 
   const updateSetting = (key, value) => {
@@ -282,7 +316,7 @@ export default function BacktestTab() {
   
   const universeOptions = [
     { id: "sp500_top50", label: "S&P 500 Top 50" },
-    { id: "vgt", label: "VGT (Tech)" },
+    { id: "vgt", label: "VGT" },
     { id: "mag7", label: "Mag 7" },
     { id: "russell_growth", label: "Russell Growth" },
     { id: "dividend_aristocrats", label: "Dividend Aristocrats" }
@@ -296,10 +330,23 @@ export default function BacktestTab() {
   ];
   
   const freqOptions = [
-    { id: "monthly", label: "Monthly (15th)" },
-    { id: "quarterly", label: "Quarterly (15th)" },
-    { id: "weekly", label: "Weekly (+7 calendar days)" },
-    { id: "biweekly", label: "Biweekly (+14 calendar days)" }
+    { id: "monthly", label: "Monthly" },
+    { id: "bimonthly", label: "Bimonthly" },
+    { id: "quarterly", label: "Quarterly" },
+    { id: "weekly", label: "Weekly" },
+    { id: "biweekly", label: "Biweekly" }
+  ];
+
+  const adaptiveModeOptions = [
+    { id: "adaptive", label: "Adaptive" },
+    { id: "fixed", label: "Fixed (server defaults)" },
+    { id: "conservative", label: "Conservative blend" }
+  ];
+
+  const positionSizingOptions = [
+    { id: "invVol", label: "Inverse vol" },
+    { id: "equal", label: "Equal" },
+    { id: "score", label: "Score-weighted" }
   ];
   
   const topNOptions = [
@@ -311,15 +358,24 @@ export default function BacktestTab() {
   
   const strategyOptions = [
     { id: "full_composite", label: "Full Composite" },
-    { id: "full_composite_aggressive", label: "Full Composite (Aggressive)" },
-    { id: "full_composite_turbo", label: "Full Composite (Turbo — max risk)" },
+    { id: "full_composite_aggressive", label: "Composite Aggressive" },
+    { id: "full_composite_turbo", label: "Composite Turbo" },
     { id: "momentum", label: "Momentum Only" },
     { id: "momentum_value", label: "Momentum + Value" },
     { id: "quality_momentum", label: "Quality + Momentum" }
   ];
   
-  const [runBtnHover, setRunBtnHover] = useState(false);
   const { abortInFlight: abortInFlightBacktest, beginRequest, clearIfCurrent } = useAbortableApi();
+
+  useEffect(() => {
+    if (!loading) {
+      setLoadSec(0);
+      return;
+    }
+    const t0 = Date.now();
+    const id = setInterval(() => setLoadSec(Math.floor((Date.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [loading]);
 
   // Stop loading when universe/strategy/period/etc. change so the previous model's request doesn't finish later.
   useEffect(() => {
@@ -332,7 +388,9 @@ export default function BacktestTab() {
     settings.rebalanceFreq,
     settings.topN,
     settings.strategy,
-    settings.initialCapital
+    settings.initialCapital,
+    settings.adaptiveMode,
+    settings.positionSizing
   ]);
 
   const runBacktest = async () => {
@@ -349,13 +407,24 @@ export default function BacktestTab() {
         topN: settings.topN,
         strategy: settings.strategy,
         initialCapital: settings.initialCapital,
+        adaptiveMode: settings.adaptiveMode,
+        positionSizing: settings.positionSizing,
         optimize: "false",
         _t: Date.now()
       });
       
       const response = await fetch(`/api/backtest/${settings.universe}?${params}`, { signal });
-      const data = await response.json();
-      
+      const rawText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        throw new Error(rawText.slice(0, 200) || `Bad response (HTTP ${response.status})`);
+      }
+      if (!response.ok) {
+        throw new Error(data.error || data.message || `HTTP ${response.status}`);
+      }
+
       if (!data.success) {
         throw new Error(data.error || "Backtest failed");
       }
@@ -444,7 +513,14 @@ export default function BacktestTab() {
     <div>
       {/* Controls */}
       <Box style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(9.25rem, 1fr))",
+            gap: "12px 10px",
+            alignItems: "end"
+          }}
+        >
           <Select
             label="UNIVERSE"
             value={settings.universe}
@@ -475,41 +551,44 @@ export default function BacktestTab() {
             onChange={(v) => updateSetting('strategy', v)}
             options={strategyOptions}
           />
+          <Select
+            label="ADAPTIVE MODE"
+            value={settings.adaptiveMode}
+            onChange={(v) => updateSetting("adaptiveMode", v)}
+            options={adaptiveModeOptions}
+          />
+          <Select
+            label="POSITION SIZING"
+            value={settings.positionSizing}
+            onChange={(v) => updateSetting("positionSizing", v)}
+            options={positionSizingOptions}
+          />
+        </div>
+        <div style={RUN_ACTION_BAR_STYLE}>
           <button
             type="button"
             onClick={onRunBacktestClick}
-            onMouseEnter={() => setRunBtnHover(true)}
-            onMouseLeave={() => setRunBtnHover(false)}
+            title={loading ? "Click to cancel the in-flight backtest" : undefined}
             style={{
-              padding: "10px 24px",
-              background:
-                loading && runBtnHover
-                  ? "rgba(239,68,68,0.15)"
-                  : loading
-                    ? "rgba(255,255,255,0.04)"
-                    : "rgba(255,255,255,0.08)",
-              border:
-                loading && runBtnHover
-                  ? "1px solid rgba(239,68,68,0.45)"
-                  : "1px solid rgba(255,255,255,0.12)",
+              padding: "10px 20px",
+              flexShrink: 0,
+              minWidth: "11.5rem",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: 6,
-              color:
-                loading && runBtnHover
-                  ? "#fca5a5"
-                  : loading
-                    ? "#888"
-                    : "#f0f0f0",
-              fontSize: 13,
+              color: loading ? "#888" : "#f0f0f0",
+              fontSize: 12,
               fontWeight: 700,
               cursor: "pointer",
-              fontFamily: MONO
+              fontFamily: MONO,
+              boxSizing: "border-box",
+              whiteSpace: "nowrap"
             }}
           >
-            {loading && runBtnHover
-              ? "CANCEL"
-              : loading
-                ? "RUNNING..."
-                : "RUN BACKTEST"}
+            {loading ? "RUNNING…" : "RUN BACKTEST"}
           </button>
         </div>
       </Box>
@@ -524,7 +603,12 @@ export default function BacktestTab() {
       {loading && !results && (
         <Box style={{ textAlign: "center", padding: "40px" }}>
           <div style={{ color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>
-            Fetching historical data and running simulation...
+            Fetching historical data and running simulation…
+            {loadSec > 0 ? (
+              <span style={{ display: "block", marginTop: 10, color: "#a8a8a8", fontSize: 12 }}>
+                {loadSec}s elapsed — large universe + Full Composite + ML can take 30–90s on a cold run; results appear when the server finishes.
+              </span>
+            ) : null}
           </div>
         </Box>
       )}
@@ -608,6 +692,34 @@ export default function BacktestTab() {
                 color={parseFloat(results.performance.hitRate) >= 50 ? C_VS_SPY_WIN : C_VS_SPY_LOSE}
               />
             </div>
+
+            {results.performance.oneMonthSellCount != null && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 10, fontFamily: MONO, letterSpacing: 1 }}>
+                  TURNOVER / CHURN
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <MetricCard
+                    label="1-MO SELLS"
+                    value={String(results.performance.oneMonthSellCount)}
+                    subValue={`avg ${results.performance.oneMonthSellAvgReturnPct}% (≤35d holds)`}
+                    color={results.performance.oneMonthSellCount <= 3 ? C_VS_SPY_WIN : "#f97316"}
+                  />
+                  <MetricCard
+                    label="ROUND-TRIPS 60D"
+                    value={String(results.performance.rebuyWithin60d)}
+                    subValue="rebuy after SELL ≤60d"
+                    color={results.performance.rebuyWithin60d === 0 ? C_VS_SPY_WIN : "#f97316"}
+                  />
+                  <MetricCard
+                    label="AVG HOLD (EXITS)"
+                    value={results.performance.avgHoldingPeriodDays != null ? `${results.performance.avgHoldingPeriodDays} d` : "—"}
+                    subValue="target 90+ days"
+                    color="#888"
+                  />
+                </div>
+              </div>
+            )}
 
             {results.performance.aggressiveMetrics && (
               <div style={{ marginTop: 16 }}>
@@ -732,6 +844,54 @@ export default function BacktestTab() {
             </Box>
           )}
 
+          {isCompositeFamily(results.strategy) && (results.initialPillarWeights || results.finalPillarWeights) && (
+            <Box>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 8, fontFamily: MONO, letterSpacing: 1 }}>
+                RANKING PILLAR WEIGHTS (SIMULATION)
+              </div>
+              <div style={{ fontSize: 10, color: "#888", fontFamily: MONO, marginBottom: 12, lineHeight: 1.5, maxWidth: 720 }}>
+                {results.cached ? (
+                  <span style={{ color: "#eab308" }}>Served from server cache. </span>
+                ) : null}
+                Baseline is the mix at the start of the backtest; effective is the mix after the last rebalance (rolling IC, regime blend, momentum cap). Headline returns and holdings use this path. Factor attribution below labels the first percentage as the effective mix.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
+                <div style={{ flex: "1 1 240px" }}>
+                  <div style={{ fontSize: 10, color: "#a8a8a8", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>BASELINE (START)</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
+                    {BT_PILLAR_ORDER.map((key) => (
+                      <div key={key} style={{ minWidth: 88 }}>
+                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{BT_PILLAR_LABELS[key]}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>
+                          {formatBtWeightPct((results.initialPillarWeights || results.activeWeights)?.[key])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ flex: "1 1 240px" }}>
+                  <div style={{ fontSize: 10, color: "#a8a8a8", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>EFFECTIVE (LAST REBALANCE)</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
+                    {BT_PILLAR_ORDER.map((key) => (
+                      <div key={key} style={{ minWidth: 88 }}>
+                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{BT_PILLAR_LABELS[key]}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: "#60a5fa", fontFamily: MONO }}>
+                          {formatBtWeightPct((results.finalPillarWeights || results.activeWeights)?.[key])}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              {Array.isArray(results.rebalances) && results.rebalances.some((r) => r.pillarWeights) && (
+                <div style={{ marginTop: 14, fontSize: 10, color: "#888", fontFamily: MONO, lineHeight: 1.45 }}>
+                  Each rebalance row in the event log includes <span style={{ color: "#a8a8a8" }}>pillarWeights</span> and{" "}
+                  <span style={{ color: "#a8a8a8" }}>adaptiveMeta</span> (rolling IC step, SPY momentum regime tag when applicable).
+                </div>
+              )}
+            </Box>
+          )}
+
           {isCompositeFamily(results.strategy) && results.factorAttribution && (
             <Box>
               <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
@@ -776,6 +936,7 @@ export default function BacktestTab() {
                         </div>
                       </div>
                       
+                      <div style={{ fontSize: 9, color: "#666", fontFamily: MONO, marginBottom: 4 }}>EFFECTIVE MIX → IC BLEND</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: MONO }}>
                         <span style={{ color: "#f0f0f0" }}>{(f.originalWeight * 100).toFixed(0)}%</span>
                         <span style={{ color: deltaColor, fontWeight: 700 }}>
@@ -1047,23 +1208,31 @@ export default function BacktestTab() {
             </div>
             
             {showTrades && (
-              <div style={{ overflowX: "auto", maxHeight: 400, overflowY: "auto" }}>
+              <div
+                style={{
+                  overflowX: "auto",
+                  maxHeight: "min(70vh, 640px)",
+                  overflowY: "auto",
+                  borderRadius: 6,
+                  border: "1px solid rgba(255,255,255,0.06)",
+                }}
+              >
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
                   <thead>
-                    <tr style={{ background: "rgba(255,255,255,0.02)" }}>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Date</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Action</th>
-                      <th style={{ padding: "8px 10px", textAlign: "left", color: "#f0f0f0" }}>Ticker</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Shares</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Price</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Value</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Return</th>
-                      <th style={{ padding: "8px 10px", textAlign: "right", color: "#f0f0f0" }}>Days</th>
+                    <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "left" }}>Date</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "left" }}>Action</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "left" }}>Ticker</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "right" }}>Shares</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "right" }}>Price</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "right" }}>Value</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "right" }}>Return</th>
+                      <th style={{ ...TRADE_LOG_TH_STICKY, textAlign: "right" }}>Days</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {results.trades.slice(0, 100).map((t, i) => (
-                      <tr key={i} style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
+                    {results.trades.map((t, i) => (
+                      <tr key={`${t.date}-${t.type}-${t.ticker}-${i}`} style={{ borderTop: "1px solid rgba(255,255,255,0.03)" }}>
                         <td style={{ padding: "8px 10px", color: "#f0f0f0" }}>{t.date}</td>
                         <td style={{ 
                           padding: "8px 10px", 
@@ -1092,11 +1261,6 @@ export default function BacktestTab() {
                     ))}
                   </tbody>
                 </table>
-                {results.trades.length > 100 && (
-                  <div style={{ textAlign: "center", color: "#f0f0f0", fontSize: 11, padding: 8 }}>
-                    Showing 100 of {results.trades.length} trades
-                  </div>
-                )}
               </div>
             )}
           </Box>

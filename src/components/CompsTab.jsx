@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
-import { InfoTip } from "./shared.jsx";
+import { InfoTip, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 
 import { MONO } from "../lib/theme.js";
@@ -322,30 +322,35 @@ export default function CompsTab({ ticker }) {
 
   if (loading) {
     return (
-      <div style={{ textAlign: "center", padding: 40, color: "#f0f0f0" }}>
-        <div style={{ fontFamily: MONO, fontSize: 13, marginBottom: 16 }}>Loading peer comparison...</div>
-        <button
-          type="button"
-          onClick={() => {
-            abortInFlight();
-            setLoading(false);
-          }}
-          onMouseEnter={() => setCancelHover(true)}
-          onMouseLeave={() => setCancelHover(false)}
-          style={{
-            padding: "8px 20px",
-            background: cancelHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
-            border: cancelHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 6,
-            color: cancelHover ? "#fca5a5" : "#888",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: MONO
-          }}
-        >
-          {cancelHover ? "CANCEL" : "STOP LOADING"}
-        </button>
+      <div style={{ padding: "32px 20px 28px", color: "#f0f0f0", width: "100%", boxSizing: "border-box" }}>
+        <div style={{ textAlign: "center", fontFamily: MONO, fontSize: 13, marginBottom: 16 }}>
+          Loading peer comparison...
+        </div>
+        <div style={RUN_ACTION_BAR_STYLE}>
+          <button
+            type="button"
+            onClick={() => {
+              abortInFlight();
+              setLoading(false);
+            }}
+            onMouseEnter={() => setCancelHover(true)}
+            onMouseLeave={() => setCancelHover(false)}
+            style={{
+              padding: "8px 20px",
+              flexShrink: 0,
+              background: cancelHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+              border: cancelHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              color: cancelHover ? "#fca5a5" : "#888",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
+            {cancelHover ? "CANCEL" : "STOP LOADING"}
+          </button>
+        </div>
       </div>
     );
   }

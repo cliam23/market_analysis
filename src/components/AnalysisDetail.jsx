@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, lazy, Suspense } from "react";
-import { LoadingSpinner, InfoTip } from "./shared.jsx";
+import { LoadingSpinner, InfoTip, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 const DCFTab = lazy(() => import("./DCFTab.jsx"));
 const CompsTab = lazy(() => import("./CompsTab.jsx"));
@@ -1207,32 +1207,36 @@ export default function AnalysisDetail({ ticker, onBack }) {
 
   if (loading && !data) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 60 }}>
-        <LoadingSpinner size={40} />
-        <div style={{ marginTop: 16, color: "#f0f0f0", fontFamily: MONO }}>Analyzing {ticker}...</div>
-        <button
-          type="button"
-          onClick={() => {
-            analysisApi.abortInFlight();
-            setLoading(false);
-          }}
-          onMouseEnter={() => setAnalyzeBtnHover(true)}
-          onMouseLeave={() => setAnalyzeBtnHover(false)}
-          style={{
-            marginTop: 20,
-            padding: "8px 20px",
-            background: analyzeBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
-            border: analyzeBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 6,
-            color: analyzeBtnHover ? "#fca5a5" : "#888",
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: "pointer",
-            fontFamily: MONO
-          }}
-        >
-          {analyzeBtnHover ? "CANCEL" : "STOP LOADING"}
-        </button>
+      <div style={{ padding: "48px 24px 40px", width: "100%", boxSizing: "border-box" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+          <LoadingSpinner size={40} />
+          <div style={{ color: "#f0f0f0", fontFamily: MONO }}>Analyzing {ticker}...</div>
+        </div>
+        <div style={RUN_ACTION_BAR_STYLE}>
+          <button
+            type="button"
+            onClick={() => {
+              analysisApi.abortInFlight();
+              setLoading(false);
+            }}
+            onMouseEnter={() => setAnalyzeBtnHover(true)}
+            onMouseLeave={() => setAnalyzeBtnHover(false)}
+            style={{
+              padding: "8px 20px",
+              flexShrink: 0,
+              background: analyzeBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+              border: analyzeBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 6,
+              color: analyzeBtnHover ? "#fca5a5" : "#888",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: MONO
+            }}
+          >
+            {analyzeBtnHover ? "CANCEL" : "STOP LOADING"}
+          </button>
+        </div>
       </div>
     );
   }
@@ -1283,32 +1287,36 @@ export default function AnalysisDetail({ ticker, onBack }) {
       {activeTab === "overview" && <OverviewTab data={data} />}
       {activeTab === "scale" && <ScaleTab data={data} ticker={ticker} refreshKey={handleRefresh} />}
       {activeTab === "dcf" && (dcfLoading ? (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: 60 }}>
-          <LoadingSpinner size={40} />
-          <div style={{ marginTop: 16, color: "#f0f0f0", fontFamily: MONO }}>Building DCF model...</div>
-          <button
-            type="button"
-            onClick={() => {
-              dcfApi.abortInFlight();
-              setDcfLoading(false);
-            }}
-            onMouseEnter={() => setDcfBtnHover(true)}
-            onMouseLeave={() => setDcfBtnHover(false)}
-            style={{
-              marginTop: 20,
-              padding: "8px 20px",
-              background: dcfBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
-              border: dcfBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 6,
-              color: dcfBtnHover ? "#fca5a5" : "#888",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO
-            }}
-          >
-            {dcfBtnHover ? "CANCEL" : "STOP LOADING"}
-          </button>
+        <div style={{ padding: "48px 24px 40px", width: "100%", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+            <LoadingSpinner size={40} />
+            <div style={{ color: "#f0f0f0", fontFamily: MONO }}>Building DCF model...</div>
+          </div>
+          <div style={RUN_ACTION_BAR_STYLE}>
+            <button
+              type="button"
+              onClick={() => {
+                dcfApi.abortInFlight();
+                setDcfLoading(false);
+              }}
+              onMouseEnter={() => setDcfBtnHover(true)}
+              onMouseLeave={() => setDcfBtnHover(false)}
+              style={{
+                padding: "8px 20px",
+                flexShrink: 0,
+                background: dcfBtnHover ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.06)",
+                border: dcfBtnHover ? "1px solid rgba(239,68,68,0.45)" : "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 6,
+                color: dcfBtnHover ? "#fca5a5" : "#888",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: MONO
+              }}
+            >
+              {dcfBtnHover ? "CANCEL" : "STOP LOADING"}
+            </button>
+          </div>
         </div>
       ) : dcfData ? (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0", fontFamily: MONO }}>Loading...</div>}>
