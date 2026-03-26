@@ -41,140 +41,181 @@ function PillarCard({ name, weight, children }) {
   );
 }
 
+function FlowStep({ n, title, body }) {
+  return (
+    <div style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "flex-start" }}>
+      <span style={{
+        flexShrink: 0, width: 22, height: 22, borderRadius: 6, fontSize: 11, fontWeight: 800,
+        fontFamily: MONO, background: "rgba(255,255,255,0.08)", color: "#f0f0f0",
+        display: "flex", alignItems: "center", justifyContent: "center"
+      }}>{n}</span>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: 12, fontFamily: MONO, color: "#f0f0f0", marginBottom: 4 }}>{title}</div>
+        <div style={{ fontSize: 12, lineHeight: 1.65, color: "#f0f0f0" }}>{body}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function AboutTab() {
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto" }}>
+    <div style={{ maxWidth: 840, margin: "0 auto" }}>
       <div style={{ textAlign: "center", marginBottom: 28 }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 4, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>ABOUT</div>
-        <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0, color: "#f0f0f0" }}>How the Model Works</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0, color: "#f0f0f0" }}>How everything works</h2>
         <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 6, fontFamily: MONO }}>
-          A multi-factor, rules-based investment analysis platform
+          Multi-factor scoring, historical simulation, and optional ML — one coherent pipeline
         </p>
       </div>
 
-      <Section title="Platform Overview" defaultOpen={true}>
-        <p style={{ margin: "0 0 10px" }}>
-          Value Signal Pro is a <strong style={{ color: "#f0f0f0" }}>rules-based investment analysis platform</strong> that
-          combines multiple time-tested investment principles — Buffett quality, competitive moats, capital efficiency,
-          valuation, and momentum — into a single composite ranking system.
+      <Section title="Start here: running the app" defaultOpen={true}>
+        <p style={{ margin: "0 0 12px" }}>
+          The UI talks to a <strong style={{ color: "#f0f0f0" }}>Node server</strong> that loads prices and fundamentals, scores tickers, runs backtests, and stores paper portfolios.
+          From the project folder, use <strong style={{ color: "#f0f0f0" }}>npm run dev:all</strong> so the API and the Vite front end run together.
+          If you see “Backend not connected,” the server is not running or the proxy cannot reach it.
         </p>
         <p style={{ margin: 0 }}>
-          Unlike black-box ML models, every signal is transparent and grounded in decades of
-          academic factor research. The platform lets you search stocks, backtest strategies on historical data,
-          track momentum leaders, and paper-trade the model's picks in real time.
+          <strong style={{ color: "#f0f0f0" }}>Data path:</strong> quotes, history, and financials are fetched from <strong style={{ color: "#f0f0f0" }}>Yahoo Finance</strong> (via yahoo-finance2).
+          Nothing in the browser calls Yahoo directly; the server is the only place that pulls market data.
         </p>
       </Section>
 
-      <Section title="Tabs & Features">
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {[
-            { tab: "Search", icon: "🔍", desc: "Look up any ticker for a deep-dive analysis: Buffett checklist, moat assessment, ROIC, earnings quality, DCF valuation, comparables, total shareholder yield, and entry timing." },
-            { tab: "Backtest", icon: "📈", desc: "Simulate trading strategies on historical data with four modes: Momentum Only, Momentum + Value, Quality Momentum, and Full Composite. Compare risk-adjusted returns, drawdowns, and factor attribution." },
-            { tab: "Momentum Rankings", icon: "📊", desc: "Scan the universe for the strongest momentum stocks with configurable lookback, trend filters, and universe selection. See real-time rankings with volatility-adjusted scores." },
-            { tab: "Paper Trade", icon: "💼", desc: "Forward-test the model by running it live. Suggested next rebalance follows the same mid-month (15th) anchor as the backtest; optional auto-run triggers once the calendar reaches that date. Tracks portfolio value, trades, and performance vs. S&P 500." },
-          ].map(({ tab, icon, desc }) => (
-            <div key={tab} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-              <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 13, color: "#f0f0f0", fontFamily: MONO, marginBottom: 3 }}>{tab}</div>
-                <div style={{ fontSize: 12, color: "#f0f0f0", lineHeight: 1.6 }}>{desc}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+      <Section title="The five screens (tabs)" defaultOpen={true}>
+        <FlowStep
+          n={1}
+          title="Search"
+          body="Pick a ticker from the list or search. Opening a name loads a full analysis: composite and pillar scores, Buffett-style checklist context, DCF summary, comparables, shareholder yield, and momentum/entry timing. Deep sections may call dedicated endpoints (for example DCF detail or comps). You can go back to the list without losing the server session."
+        />
+        <FlowStep
+          n={2}
+          title="Backtest"
+          body="Choose universe (e.g. S&P 500 Top 50, Mag 7), calendar period, rebalance frequency, how many names to hold, and strategy. The server walks forward in time: on each rebalance it ranks the universe, applies sector limits where relevant, sizes positions, and simulates daily marks with optional stop-loss and regime-based exposure. Results include performance stats vs a benchmark, equity curve (with optional inflation baseline when data is available), monthly returns, factor attribution for composite strategies, and a trade log."
+        />
+        <FlowStep
+          n={3}
+          title="Strategy Rankings"
+          body="This is a live cross-sectional scan, not a time machine. You choose the same strategy families as the backtest (momentum-only through full composite variants), a universe, a momentum lookback (3 / 6 / 12 months), and optional smoothing. Run Scan to fetch fresh data and rank every stock in that universe today. Sort by strategy score, raw momentum, or risk-adjusted momentum. Tap a row to open that ticker in Search."
+        />
+        <FlowStep
+          n={4}
+          title="Trading (paper)"
+          body="Initialize a virtual portfolio with capital, universe, strategy, and how many positions to hold. The server tracks holdings, cash, next rebalance date, and history. You rebalance manually (or use auto-rebalance when the calendar reaches the scheduled date). Each rebalance recomputes rankings the same way as the backtest engine for your chosen strategy, then rebuilds the book. Performance is charted against a reference line (often SPY or universe-appropriate benchmark, depending on configuration)."
+        />
+        <FlowStep
+          n={5}
+          title="About"
+          body="This page — methodology, limitations, and disclaimers."
+        />
       </Section>
 
-      <Section title="The 5-Pillar Ranking Model" defaultOpen={true}>
+      <Section title="How scoring fits together">
+        <p style={{ margin: "0 0 10px" }}>
+          <strong style={{ color: "#f0f0f0" }}>Core idea:</strong> each eligible stock gets sub-scores (fundamental quality, DCF gap, dynamic valuation, momentum, price/value entry), mapped to roughly 0–100.
+          They combine into a <strong style={{ color: "#f0f0f0" }}>composite</strong> using weights that depend on the strategy (conservative full composite vs aggressive vs turbo).
+          Rankings for backtest, scan, and paper trade use the same underlying analysis code paths so results are comparable.
+        </p>
+        <p style={{ margin: 0 }}>
+          <strong style={{ color: "#f0f0f0" }}>Optional ML:</strong> if you train the Random Forest and set environment variables (see below), the server can blend a model score into composite <strong style={{ color: "#f0f0f0" }}>ranking</strong> for paper rebalance and composite <strong style={{ color: "#f0f0f0" }}>backtests</strong>, and optionally blend into the <strong style={{ color: "#f0f0f0" }}>single-ticker analysis</strong> composite.
+          The default with ML off remains fully rules-based and inspectable pillar-by-pillar.
+        </p>
+      </Section>
+
+      <Section title="The 5-pillar ranking model" defaultOpen={true}>
         <p style={{ margin: "0 0 16px" }}>
-          When the model selects stocks for the paper-trade portfolio, runs a Full Composite backtest, or scores a ticker in{" "}
-          <strong style={{ color: "#f0f0f0" }}>Search / Momentum Rankings</strong>, it uses the same{" "}
-          <strong style={{ color: "#f0f0f0" }}>five pillars</strong> (0–100 each) blended with these default weights:
+          Full Composite and related modes blend these pillars (illustrative default weights for <strong style={{ color: "#f0f0f0" }}>Full Composite</strong>; aggressive and turbo shift emphasis toward momentum and relax gates):
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
           <PillarCard name="FUNDAMENTAL" weight="35%">
-            Composite of Buffett-style quality, moat width, ROIC spread, earnings quality,
-            shareholder yield, growth constraints, and AI disruption signal. Measures
-            whether the underlying business is high-quality.
+            Buffett-style quality, moat, ROIC spread, earnings quality, shareholder yield, growth constraints, and an AI disruption signal — summarized as one fundamental pillar.
           </PillarCard>
           <PillarCard name="DCF" weight="10%">
-            Simplified discounted cash flow model. Projects free cash flow 5 years forward
-            with decaying growth, applies a WACC discount rate derived from beta, calculates
-            terminal value, and compares the resulting intrinsic value to the current price.
-            Stocks trading well below intrinsic value score higher.
+            Simplified discounted cash flow: project free cash flow with fading growth, discount with a beta-derived WACC, add terminal value, compare intrinsic value per share to price. Underweight or zero in more aggressive presets.
           </PillarCard>
           <PillarCard name="DYNAMIC VALUATION" weight="15%">
-            Real-time valuation signals that change with price history: price vs. 252-day
-            average, distance from 200-day MA, trend-quality (smooth uptrends), plus a
-            quality adjustment so strong businesses are not over-penalized for premium multiples.
+            Price-based valuation signals (e.g. vs long moving averages, trend quality) with adjustments so strong businesses are not always punished for rich multiples.
           </PillarCard>
           <PillarCard name="MOMENTUM" weight="25%">
-            ~6-month risk-adjusted momentum with trend bonus (same family as backtest). Captures
-            the tendency for winners to keep working; combined with a small momentum-quality
-            tilt on the default Full Composite run.
+            Multi-month risk-adjusted momentum plus trend bonus. Composite variants may blend raw momentum with a “momentum quality” tilt (weighting depends on strategy).
           </PillarCard>
           <PillarCard name="PRICE VALUE" weight="15%">
-            Pullback / entry-quality overlay from price action: distance from highs, MA trend,
-            multi-horizon momentum, volatility-adjusted trend strength — favors constructive
-            entries within an uptrend.
+            Entry and pullback quality: distance from highs, moving-average structure, multi-horizon strength — favors constructive setups within a trend.
           </PillarCard>
         </div>
-        <p style={{ margin: "0 0 10px", fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
-          Default Full Composite = (Fundamental × 0.35) + (DCF × 0.10) + (Dynamic Val × 0.15) + (Momentum × 0.25) + (Price Value × 0.15), plus a small momentum-quality nudge on the default profile. Aggressive / Turbo backtests use different weight vectors (higher momentum, lower DCF/fundamental).
+        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.65 }}>
+          Default Full Composite ≈ Fundamental 35% + DCF 10% + Dynamic valuation 15% + Momentum 25% + Price value 15%, before any optional ML blend. Aggressive / Turbo use different weight vectors and different filter strictness in simulation.
         </p>
       </Section>
 
-      <Section title="DCF Methodology">
-        <p style={{ margin: "0 0 10px" }}>The DCF (Discounted Cash Flow) model values a business by the present value of its future cash flows:</p>
-        <ol style={{ margin: "0 0 12px", paddingLeft: 20, lineHeight: 2 }}>
-          <li><strong style={{ color: "#f0f0f0" }}>Starting FCF:</strong> Uses reported free cash flow (or 75% of operating cash flow as a fallback).</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Growth projection:</strong> Projects FCF for 5 years using the company's earnings or revenue growth rate, with annual decay (growth fades 15% per year toward the terminal rate).</li>
-          <li><strong style={{ color: "#f0f0f0" }}>WACC:</strong> Weighted average cost of capital derived from the stock's beta: WACC = 4.3% + beta × 5.5%.</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Terminal value:</strong> Assumes the business grows at 2.5% forever after year 5. Terminal Value = FCF₅ × (1 + 2.5%) / (WACC − 2.5%).</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Intrinsic value:</strong> Sum of discounted projected FCFs + discounted terminal value + net cash (cash minus debt), divided by shares outstanding.</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Scoring:</strong> Converted to a 0–100 score based on the upside from intrinsic value to current price. &ge;40% upside = 100, &le;−25% downside = 10.</li>
-        </ol>
-        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
-          This is a simplified single-scenario DCF. It does not model multiple scenarios, segment-level projections, or WACC refinements. Treat it as one signal among five, not a standalone valuation.
-        </p>
-      </Section>
-
-      <Section title="Filters & Safeguards">
-        <p style={{ margin: "0 0 8px" }}>Before a stock can enter the portfolio, it must pass several hard filters:</p>
+      <Section title="Backtest mechanics (what the curve really is)">
         <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
-          <li><strong style={{ color: "#f0f0f0" }}>Fundamental quality &ge; 20:</strong> Removes the weakest names before ranking (Full Composite backtest default floor).</li>
-          <li><strong style={{ color: "#f0f0f0" }}>No severe constraints:</strong> Companies with critical debt or growth constraints are excluded.</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Volatility cap:</strong> Annualized volatility above 80% is excluded to avoid speculative names.</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Trend confirmation:</strong> Stocks in strong downtrends with weak value scores are filtered out.</li>
-          <li><strong style={{ color: "#f0f0f0" }}>Minimum data:</strong> At least 120 trading days of price history required for reliable signal calculation.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Universe:</strong> a fixed list of tickers (e.g. top names by market cap slice, or theme lists like Mag 7). Only symbols with enough history participate in ranking each period.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Rebalance:</strong> on schedule (monthly, weekly, etc.), the model re-ranks and may rotate holdings. Monthly mode is anchored around mid-month; other frequencies step through calendar time from the start of your chosen period.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Benchmark:</strong> when possible, the chart compares you to an <strong style={{ color: "#f0f0f0" }}>equal-weight</strong> version of the same universe; if data is insufficient, the server falls back to SPY and labels that clearly in the UI.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Stops and regime:</strong> composite-style runs can cut positions on adverse moves (volatility-aware trailing stops) and scale exposure by market regime. Sharp single-day steps on the equity curve are often stops or cluster of exits — check the trade log (STOP vs rebalance).</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Fundamentals in time:</strong> the backtest uses fundamentals loaded for the run as a slow-moving snapshot (no lookahead within the sim). That matches a conservative research assumption; it is not the same as true point-in-time fundamentals for every historical date.</li>
         </ul>
       </Section>
 
-      <Section title="Drawdowns, stops & rebalance cadence">
+      <Section title="Paper trade vs backtest">
         <p style={{ margin: "0 0 10px" }}>
-          Short-term NAV moves in backtests are often driven by <strong style={{ color: "#f0f0f0" }}>stop-loss exits</strong> (vol-adaptive trailing stops with confirmation)
-          firing on one or a few days, not by stale chart data. Those events can dominate the equity curve even when rebalance dates are unchanged.
+          <strong style={{ color: "#f0f0f0" }}>Backtest</strong> replays the past with your chosen dates and cadence. <strong style={{ color: "#f0f0f0" }}>Paper trade</strong> starts from “now” (or your init time) and moves forward: you see a live portfolio state, suggested next rebalance, and can apply a rebalance when you choose.
         </p>
         <p style={{ margin: 0 }}>
-          Changing <strong style={{ color: "#f0f0f0" }}>rebalance frequency</strong> mainly changes how often rankings rotate into new names; it does not remove mid-period stops.
-          Monthly backtest rebalances are anchored to the <strong style={{ color: "#f0f0f0" }}>15th</strong>; weekly/biweekly modes step by calendar weeks from the period start.
-          Use the monthly event summary and trade log (STOP vs rebalance) to line up drawdowns with what actually happened.
+          Composite paper portfolios can use <strong style={{ color: "#f0f0f0" }}>adaptive pillar weights</strong> informed by recent factor behavior (similar in spirit to adaptive logic in the backtest). Optional <strong style={{ color: "#f0f0f0" }}>ML rank blending</strong> applies at rebalance when configured. Execution is still model-level (prices at rebalance), not a broker simulator.
         </p>
       </Section>
 
-      <Section title="Data Source & Limitations">
+      <Section title="Optional machine learning (admin / .env)">
         <p style={{ margin: "0 0 10px" }}>
-          All data comes from <strong style={{ color: "#f0f0f0" }}>Yahoo Finance</strong> via the yahoo-finance2 API.
-          This provides real-time quotes, historical prices, financial statements, and summary statistics.
+          ML is <strong style={{ color: "#f0f0f0" }}>off by default</strong>. To use it you need Python dependencies (see <strong style={{ color: "#f0f0f0" }}>ml/README.md</strong>), a trained model under <strong style={{ color: "#f0f0f0" }}>models/</strong>, and typically a virtualenv the server can invoke.
+        </p>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 18, lineHeight: 2 }}>
+          <li><strong style={{ color: "#f0f0f0" }}>ML_RANK_WEIGHT</strong> (0–1): blends the model into <strong style={{ color: "#f0f0f0" }}>composite ranking</strong> on paper rebalance and on composite <strong style={{ color: "#f0f0f0" }}>backtest</strong> rebalances. Higher values give more influence to the learned score. Requires a compatible trained RF pipeline.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>ML_COMPOSITE_ANALYSIS=1</strong>: for <strong style={{ color: "#f0f0f0" }}>single-ticker analysis</strong>, blends rules with the model’s structural / probability-style signal in the composite shown in Search. Response may include a small ML prediction payload when inference succeeds.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>PYTHON</strong>: optional path to the interpreter; otherwise the server prefers <strong style={{ color: "#f0f0f0" }}>.venv</strong> if present.</li>
+        </ul>
+        <p style={{ margin: 0, fontSize: 12, fontFamily: MONO, color: "#f0f0f0" }}>
+          Copy <strong style={{ color: "#f0f0f0" }}>.env.example</strong> to <strong style={{ color: "#f0f0f0" }}>.env</strong> for variable names. ML adds latency (Python subprocess per batch) — backtests with ML run slower.
+        </p>
+      </Section>
+
+      <Section title="DCF methodology">
+        <p style={{ margin: "0 0 10px" }}>The server runs a <strong style={{ color: "#f0f0f0" }}>10-year</strong> free-cash-flow discount model, then maps implied upside into the 0–100 DCF pillar score:</p>
+        <ol style={{ margin: "0 0 12px", paddingLeft: 20, lineHeight: 2 }}>
+          <li><strong style={{ color: "#f0f0f0" }}>Starting FCF:</strong> from reported free cash flow (with fallbacks when lines are missing).</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Growth:</strong> two phases with fading growth rates by year (revenue/earnings caps for very large companies apply). Long-run <strong style={{ color: "#f0f0f0" }}>terminal growth</strong> is about <strong style={{ color: "#f0f0f0" }}>2.5%</strong> nominal.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>WACC:</strong> blended cost of capital — <strong style={{ color: "#f0f0f0" }}>cost of equity</strong> uses a 4.3% risk-free rate, a 5.5% equity risk premium, and a beta shrunk toward 1; <strong style={{ color: "#f0f0f0" }}>after-tax cost of debt</strong> steps with leverage; result is nudged for very high FCF margins / strong balance sheets and then <strong style={{ color: "#f0f0f0" }}>clamped between ~6% and 15%</strong>.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Enterprise vs equity:</strong> discounted cash flows plus terminal value, adjusted for <strong style={{ color: "#f0f0f0" }}>net cash</strong> (cash minus debt), divided by shares for implied value per share.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Score:</strong> how far market price sits below or above that implied value, compressed to the 0–100 pillar range.</li>
+        </ol>
+        <p style={{ margin: 0, fontSize: 12, color: "#f0f0f0", fontFamily: MONO }}>
+          Still a single-scenario toy model — use it as one pillar among five, not a precision intrinsic value.
+        </p>
+      </Section>
+
+      <Section title="Filters and safeguards">
+        <p style={{ margin: "0 0 8px" }}>Composite strategies apply eligibility rules before ranking (exact thresholds vary by strategy):</p>
+        <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
+          <li><strong style={{ color: "#f0f0f0" }}>Fundamental floor:</strong> very weak fundamental scores are dropped in standard full composite; aggressive modes relax this; turbo largely minimizes quality gates for experimentation.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Balance sheet / growth constraints:</strong> severe flags can exclude names.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Volatility cap:</strong> extremely high realized vol can exclude speculative names in stricter modes.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Trend / value interaction:</strong> deep downtrends with poor value can be filtered in stricter profiles.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>History length:</strong> enough trading days are required so momentum and volatility are meaningful.</li>
+        </ul>
+      </Section>
+
+      <Section title="Data sources and limitations">
+        <p style={{ margin: "0 0 10px" }}>
+          <strong style={{ color: "#f0f0f0" }}>Market data:</strong> Yahoo Finance. Corporate actions are reflected in adjusted prices where the upstream series provides them.
         </p>
         <p style={{ margin: "0 0 10px" }}>
-          <strong style={{ color: "#f0f0f0" }}>Key limitations:</strong>
+          <strong style={{ color: "#f0f0f0" }}>Inflation / cash baseline (backtest):</strong> when U.S. CPI series can be loaded from FRED, the equity chart can show a purchasing-power baseline for cash; otherwise a simple assumed rate may be documented in the UI. This does not change strategy returns — it is a reference curve.
         </p>
         <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
-          <li>Historical fundamentals are not available — the backtest uses current fundamentals as a point-in-time approximation, which is reasonable for 1–3 year periods but less reliable over 5+ years.</li>
-          <li>Yahoo Finance data can occasionally return inconsistent types or missing fields for international tickers or smaller companies.</li>
-          <li>The DCF model depends on the accuracy of reported FCF and growth estimates — if these are noisy, the DCF score will be noisy.</li>
-          <li>No transaction costs, slippage, or taxes are modeled in the backtest or paper trade.</li>
-          <li>Paper trade uses point-in-time prices at rebalance, not intraday execution prices.</li>
+          <li>Historical fundamentals for every past date are not fully replicated; long backtests lean on a stable fundamental snapshot for the run.</li>
+          <li>Smaller or non-U.S. tickers may have gaps or odd fields in Yahoo’s payload.</li>
+          <li>No slippage, commissions, taxes, or borrow costs in simulation or paper mode.</li>
+          <li>Paper trade uses discrete rebalance pricing, not full intraday execution simulation.</li>
         </ul>
       </Section>
 
@@ -184,22 +225,16 @@ export default function AboutTab() {
           border: "1px solid rgba(239,68,68,0.15)", fontSize: 12, lineHeight: 1.7, color: "#f0f0f0"
         }}>
           <p style={{ margin: "0 0 8px", color: "#ef4444", fontWeight: 700, fontFamily: MONO, fontSize: 12 }}>
-            THIS IS AN EDUCATIONAL TOOL — NOT FINANCIAL ADVICE
+            EDUCATIONAL TOOL — NOT FINANCIAL ADVICE
           </p>
           <p style={{ margin: "0 0 8px" }}>
-            Value Signal Pro is built for learning and research purposes. It demonstrates how quantitative
-            factor models work, but should <strong style={{ color: "#f0f0f0" }}>never</strong> be used as the
-            sole basis for real investment decisions.
+            This application is for learning and research. It shows how multi-factor and optional ML-augmented workflows can be structured; it should <strong style={{ color: "#f0f0f0" }}>never</strong> be the sole basis for real investment decisions.
           </p>
           <p style={{ margin: "0 0 8px" }}>
-            Past backtest performance does not predict future results. The model uses simplified approximations
-            (point-in-time fundamentals, single-scenario DCF, no transaction costs) that would not hold up
-            in a production trading system.
+            Past backtest or paper results do not predict future returns. Simplifications (fundamentals, DCF, costs, execution) mean live outcomes would differ.
           </p>
           <p style={{ margin: 0 }}>
-            Always do your own research, consult a qualified financial advisor, and never invest more
-            than you can afford to lose. The creators of this tool accept no liability for any investment
-            decisions made using it.
+            Do your own due diligence, consult a licensed professional if you need advice, and only risk capital you can afford to lose. The authors accept no liability for decisions made using this tool.
           </p>
         </div>
       </Section>

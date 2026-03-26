@@ -16,14 +16,27 @@ export default function SearchView({ onSelectTicker }) {
     <div>
       <Box style={{ marginBottom: 16 }}>
         <SH>Search</SH>
-        <form onSubmit={handleSearch} style={{ display: "flex", gap: 8, maxWidth: 500 }}>
+        <form
+          onSubmit={handleSearch}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            gap: 8,
+            alignItems: "center",
+            width: "100%",
+            maxWidth: "100%",
+            boxSizing: "border-box"
+          }}
+        >
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Enter ticker symbol (e.g., AAPL)"
             style={{
-              flex: 1,
+              minWidth: 0,
+              width: "100%",
+              boxSizing: "border-box",
               background: "rgba(255,255,255,0.04)",
               border: "1px solid rgba(255,255,255,0.1)",
               borderRadius: 6,
@@ -40,10 +53,11 @@ export default function SearchView({ onSelectTicker }) {
             disabled={!query.trim()}
             style={{
               padding: "10px 20px",
+              flexShrink: 0,
               background: !query.trim() ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
               border: "1px solid rgba(255,255,255,0.12)",
               borderRadius: 6,
-              color: !query.trim() ? "#f0f0f0" : "#f0f0f0",
+              color: "#f0f0f0",
               fontSize: 13,
               fontWeight: 700,
               cursor: !query.trim() ? "not-allowed" : "pointer",

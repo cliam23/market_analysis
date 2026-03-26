@@ -2,6 +2,18 @@ import { useState, useEffect } from "react";
 export { MONO, SANS, TEXT, GREEN, RED, AMBER } from "../lib/theme.js";
 import { MONO, SANS, TEXT } from "../lib/theme.js";
 
+/** Primary run / scan / cancel actions: dedicated row, right-aligned (Backtest, Rankings, Search, etc.). */
+export const RUN_ACTION_BAR_STYLE = {
+  display: "flex",
+  justifyContent: "flex-end",
+  alignItems: "center",
+  flexWrap: "wrap",
+  gap: 8,
+  marginTop: 12,
+  width: "100%",
+  boxSizing: "border-box"
+};
+
 export function Pill({ children, color = "#f0f0f0", style: sx = {} }) {
   return (
     <span style={{
