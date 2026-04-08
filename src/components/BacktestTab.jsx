@@ -345,6 +345,7 @@ export default function BacktestTab() {
 
   const positionSizingOptions = [
     { id: "invVol", label: "Inverse vol" },
+    { id: "invVolBlend", label: "Inv vol + 40% equal" },
     { id: "equal", label: "Equal" },
     { id: "score", label: "Score-weighted" }
   ];

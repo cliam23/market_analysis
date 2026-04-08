@@ -95,7 +95,7 @@ const COMPS_CACHE_TTL = 30 * 60 * 1000;
 const QUOTE_CACHE_TTL = 4 * 60 * 60 * 1000;
 const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 /** Bump when backtest sim inputs/outputs change (cache invalidation). */
-const BACKTEST_CACHE_VERSION = 'v33';
+const BACKTEST_CACHE_VERSION = 'v34';
 
 /** Only treat financials as knowable this many days after quarter-end (SEC filing lag heuristic). */
 const FILING_LAG_DAYS = 45;
@@ -3498,7 +3498,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
       : '';
   const adaptiveMode = amOpt === 'adaptive' || amOpt === 'conservative' ? amOpt : 'fixed';
   const psRaw = simOptions.positionSizing || (strategyClean === 'full_composite' ? 'invVol' : 'equal');
-  const positionSizing = ['equal', 'invVol', 'score'].includes(psRaw) ? psRaw : 'invVol';
+  const positionSizing = ['equal', 'invVol', 'score', 'invVolBlend'].includes(psRaw) ? psRaw : 'invVol';
   const regimeEnabled = simOptions.regimeEnabled !== false;
   const pillarOverrideNorm =
     adaptiveMode === 'fixed' && simOptions.pillarOverride != null
@@ -3886,6 +3886,8 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
         positionWeights = calculateAggressiveVolatilityWeights(topPicks);
       } else if (compositeFamilySizing && positionSizing === 'invVol') {
         positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date);
+      } else if (compositeFamilySizing && positionSizing === 'invVolBlend') {
+        positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date, { equalBlend: 0.4 });
       } else if (compositeFamilySizing && positionSizing === 'score') {
         positionWeights = calculatePositionWeightsScore(topPicks);
       } else {
@@ -5048,6 +5050,23 @@ function calculateMarketRegime(spyPrices, asOfDate, universe = null, priceHistor
     }
   }
 
+  const ret5 = btReturnForDaysAtIndex(spyPrices, i, 5);
+  let ma10 = null;
+  if (i >= 9) {
+    let s10 = 0;
+    for (let j = i - 9; j <= i; j++) s10 += spyPrices[j].close;
+    ma10 = s10 / 10;
+  }
+  if (
+    regime !== 'strong_bull' &&
+    ret5 > 0.03 &&
+    ma10 != null &&
+    current > ma10 &&
+    (REGIME_SEVERITY[regime] ?? 1) > REGIME_SEVERITY.normal
+  ) {
+    regime = 'normal';
+  }
+
   return { regime, breadthRatio };
 }
 
@@ -5233,8 +5252,11 @@ function getDailySimpleReturnsToDate(priceData, asOfDate, lookbackDays = 60) {
   return rets;
 }
 
-/** Inverse annualized vol weights (composite default), then 10% cap. */
-function calculatePositionWeightsInvVol(topPicks, priceHistory, asOfDate) {
+/**
+ * Inverse annualized vol weights (composite default), optional blend toward equal weight, then 10% cap.
+ * @param {{ equalBlend?: number }} options - equalBlend in [0,1]: e.g. 0.4 => 40% equal, 60% invVol
+ */
+function calculatePositionWeightsInvVol(topPicks, priceHistory, asOfDate, options = {}) {
   if (!topPicks.length) return [];
   const vols = topPicks.map((p) => {
     const ph = priceHistory[p.ticker];
@@ -5246,10 +5268,22 @@ function calculatePositionWeightsInvVol(topPicks, priceHistory, asOfDate) {
   });
   const inv = vols.map((v) => 1 / v);
   const s = inv.reduce((a, b) => a + b, 0);
-  const weights = topPicks.map((p, i) => ({
+  let weights = topPicks.map((p, i) => ({
     ticker: p.ticker,
     weight: s > 0 ? inv[i] / s : 1 / topPicks.length
   }));
+  const blendRaw = options.equalBlend;
+  const equalBlend =
+    blendRaw != null && Number.isFinite(Number(blendRaw)) ? Math.max(0, Math.min(1, Number(blendRaw))) : 0;
+  if (equalBlend > 0 && weights.length > 0) {
+    const eq = 1 / weights.length;
+    weights = weights.map((w) => ({
+      ...w,
+      weight: (1 - equalBlend) * w.weight + equalBlend * eq
+    }));
+    const t = weights.reduce((a, w) => a + w.weight, 0);
+    if (t > 0) weights.forEach((w) => { w.weight /= t; });
+  }
   return applyMaxPositionWeightCap(weights, MAX_POSITION_WEIGHT_BACKTEST);
 }
 
@@ -5796,7 +5830,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const strategyClean = (strategy || 'momentum_value').toLowerCase().trim();
   const psQ = positionSizingRaw != null && String(positionSizingRaw).trim() !== '' ? String(positionSizingRaw).toLowerCase().trim() : null;
   const positionSizing =
-    psQ && ['equal', 'invVol', 'score'].includes(psQ)
+    psQ && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psQ)
       ? psQ
       : strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo'
         ? 'invVol'
@@ -6221,7 +6255,8 @@ app.get('/api/backtest/:universeId', async (req, res) => {
 
 /**
  * GET /api/backtest/diagnostic/:universeId
- * Runs six full_composite backtests on one price/fundamental snapshot (bimonthly, top 15, invVol by default) for factor attribution.
+ * Runs full_composite backtests (bimonthly, top 15 by default) for factor attribution.
+ * Query ablation=1 adds five Q60/M20/V20 runs varying regime and position sizing.
  */
 app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
   const { universeId } = req.params;
@@ -6230,7 +6265,9 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
   const capital = parseFloat(String(req.query.initialCapital || '10000')) || 10000;
   const rebalanceFreq = 'bimonthly';
   const strategyClean = 'full_composite';
-  const regimeEnabled = req.query.regimeEnabled !== 'false' && req.query.regimeEnabled !== false;
+  const regimeEnabledDefault = req.query.regimeEnabled !== 'false' && req.query.regimeEnabled !== false;
+  const useAblation =
+    req.query.ablation === '1' || req.query.ablation === 'true' || String(req.query.ablation || '').toLowerCase() === 'true';
 
   const universe = UNIVERSE_TICKERS[universeId];
   if (!universe) {
@@ -6246,7 +6283,9 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
   const endDateStr = endDate.toISOString().split('T')[0];
   const backtestStartDate = startDate.toISOString().split('T')[0];
 
-  const runDefs = [
+  const optimalQ60M20V20 = { fundamental: 0.6, dcf: 0, valuation: 0, momentum: 0.2, value: 0.2 };
+
+  const factorAttributionRunDefs = [
     {
       name: 'Equal-weight five pillars',
       description: '20% each: quality, DCF, valuation, momentum, value (fixed)',
@@ -6284,6 +6323,51 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
       pillarOverride: null
     }
   ];
+
+  const ablationRunDefs = [
+    {
+      name: 'Optimal baseline',
+      description: 'Q60/M20/V20 fixed, regime on, inverse-vol sizing',
+      adaptiveMode: 'fixed',
+      pillarOverride: optimalQ60M20V20,
+      regimeEnabled: true,
+      positionSizing: 'invVol'
+    },
+    {
+      name: 'No regime (100% exposure)',
+      description: 'Same weights; regime overlay off (full exposure, no defensive top-N cut)',
+      adaptiveMode: 'fixed',
+      pillarOverride: optimalQ60M20V20,
+      regimeEnabled: false,
+      positionSizing: 'invVol'
+    },
+    {
+      name: 'Equal weight sizing',
+      description: 'Same weights; equal position sizes within top picks',
+      adaptiveMode: 'fixed',
+      pillarOverride: optimalQ60M20V20,
+      regimeEnabled: true,
+      positionSizing: 'equal'
+    },
+    {
+      name: 'No regime + equal sizing',
+      description: 'Regime off + equal weights',
+      adaptiveMode: 'fixed',
+      pillarOverride: optimalQ60M20V20,
+      regimeEnabled: false,
+      positionSizing: 'equal'
+    },
+    {
+      name: 'InvVol + 40% equal blend',
+      description: '60% inverse-vol / 40% equal blend per rebalance',
+      adaptiveMode: 'fixed',
+      pillarOverride: optimalQ60M20V20,
+      regimeEnabled: true,
+      positionSizing: 'invVolBlend'
+    }
+  ];
+
+  const runDefs = useAblation ? ablationRunDefs : factorAttributionRunDefs;
 
   try {
     clearBacktestRuntimeCaches();
@@ -6330,6 +6414,8 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
 
     const runs = [];
     for (const def of runDefs) {
+      const runRegimeEnabled = def.regimeEnabled !== undefined ? def.regimeEnabled : regimeEnabledDefault;
+      const runPositionSizing = def.positionSizing || 'invVol';
       const sim = await runBacktestSimulation(
         universe,
         priceHistory,
@@ -6344,9 +6430,9 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
         universeId,
         {
           adaptiveMode: def.adaptiveMode,
-          positionSizing: 'invVol',
+          positionSizing: runPositionSizing,
           pillarOverride: def.pillarOverride != null ? def.pillarOverride : undefined,
-          regimeEnabled,
+          regimeEnabled: runRegimeEnabled,
           // ML layers replace rules composite with model scores — would make every diagnostic run identical
           skipMlRankingAdjustments: true
         }
@@ -6360,8 +6446,8 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
           rebalanceFreq,
           topN,
           strategy: strategyClean,
-          positionSizing: 'invVol',
-          regimeEnabled,
+          positionSizing: runPositionSizing,
+          regimeEnabled: runRegimeEnabled,
           pillarOverride: def.pillarOverride != null ? normalizePillarOverride(def.pillarOverride) : null
         },
         performance
@@ -6371,12 +6457,13 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
     res.json({
       success: true,
       diagnostic: true,
+      ablation: useAblation,
       universe: universeId,
       period,
       rebalanceFreq,
       topN,
       initialCapital: capital,
-      regimeEnabled,
+      regimeEnabled: regimeEnabledDefault,
       runs
     });
   } catch (error) {
@@ -6500,10 +6587,11 @@ app.post('/api/paper-trade/init', (req, res) => {
     initialCapital = 100000,
     strategy = 'full_composite',
     universe = 'sp500_top50',
-    topN = 10,
+    topN = 15,
     mlRankWeight: mlBody,
     adaptiveMode: initAdaptive,
-    positionSizing: initPosSize
+    positionSizing: initPosSize,
+    regimeEnabled: initRegimeEnabled
   } = req.body || {};
   let mlRankWeight = parseFloat(process.env.ML_RANK_WEIGHT || '0');
   if (!Number.isFinite(mlRankWeight)) mlRankWeight = 0;
@@ -6516,11 +6604,13 @@ app.post('/api/paper-trade/init', (req, res) => {
   const amInit = amInitRaw === 'adaptive' || amInitRaw === 'conservative' ? amInitRaw : 'fixed';
   const psInitRaw = initPosSize != null && String(initPosSize).trim() !== '' ? String(initPosSize).toLowerCase().trim() : null;
   const psInit =
-    psInitRaw && ['equal', 'invVol', 'score'].includes(psInitRaw)
+    psInitRaw && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psInitRaw)
       ? psInitRaw
       : strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo'
         ? 'invVol'
         : undefined;
+  const regimeEnabledInit =
+    initRegimeEnabled === false || initRegimeEnabled === 'false' ? false : true;
   const config = {
     initialCapital: parseFloat(initialCapital),
     strategy,
@@ -6537,6 +6627,7 @@ app.post('/api/paper-trade/init', (req, res) => {
     _weightsVersion: strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo' ? 4 : undefined,
     mlRankWeight,
     adaptiveMode: amInit,
+    regimeEnabled: regimeEnabledInit,
     ...(psInit ? { positionSizing: psInit } : {})
   };
   if (!UNIVERSE_TICKERS[config.universe]) {
@@ -6629,6 +6720,48 @@ app.post('/api/paper-trade/snapshot', async (req, res) => {
 // PAPER TRADE — Portfolio (GET, with auto-snapshot)
 // =====================================================================
 
+/** Mean(portfolio return) / mean(SPY return) on SPY-up vs SPY-down days, as % (null if not computable). */
+function computePaperCaptureRatios(navHistory) {
+  if (!navHistory || navHistory.length < 2) return { upCapture: null, downCapture: null };
+  let upPortSum = 0;
+  let upBenchSum = 0;
+  let upCount = 0;
+  let downPortSum = 0;
+  let downBenchSum = 0;
+  let downCount = 0;
+  for (let i = 1; i < navHistory.length; i++) {
+    const prev = navHistory[i - 1];
+    const cur = navHistory[i];
+    const pv0 = prev.portfolioValue;
+    const pv1 = cur.portfolioValue;
+    const sv0 = prev.spyValue;
+    const sv1 = cur.spyValue;
+    if (!(pv0 > 0) || !(sv0 > 0)) continue;
+    const portRet = (pv1 - pv0) / pv0;
+    const benchRet = (sv1 - sv0) / sv0;
+    if (benchRet > 0) {
+      upPortSum += portRet;
+      upBenchSum += benchRet;
+      upCount++;
+    } else if (benchRet < 0) {
+      downPortSum += portRet;
+      downBenchSum += benchRet;
+      downCount++;
+    }
+  }
+  const upAvgBench = upCount > 0 ? upBenchSum / upCount : 0;
+  const downAvgBench = downCount > 0 ? downBenchSum / downCount : 0;
+  const upCapture =
+    upCount > 0 && Math.abs(upAvgBench) > 1e-12
+      ? (upPortSum / upCount / upAvgBench) * 100
+      : null;
+  const downCapture =
+    downCount > 0 && Math.abs(downAvgBench) > 1e-12
+      ? (downPortSum / downCount / downAvgBench) * 100
+      : null;
+  return { upCapture, downCapture };
+}
+
 app.get('/api/paper-trade/portfolio', async (req, res) => {
   try {
     let portfolio = loadPortfolio();
@@ -6693,6 +6826,36 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
         alpha: rb.report.alpha
       }));
 
+    const captures = computePaperCaptureRatios(portfolio.navHistory);
+    const lastRb =
+      portfolio.rebalanceHistory && portfolio.rebalanceHistory.length > 0
+        ? portfolio.rebalanceHistory[portfolio.rebalanceHistory.length - 1]
+        : null;
+    const stratPaper = (portfolio.config?.strategy || 'full_composite').toLowerCase().trim();
+    const notionalRegimeExposure =
+      lastRb?.regime && lastRb.regime !== 'disabled'
+        ? parseFloat((getStrategyRegimeExposure(lastRb.regime, stratPaper) * 100).toFixed(1))
+        : lastRb?.regime === 'disabled'
+          ? 100
+          : null;
+    const posWeights = enrichedHoldings.filter((h) => h.weight > 0);
+    let weightSpread = null;
+    let largestPosition = null;
+    let smallestPosition = null;
+    if (posWeights.length > 0) {
+      const byW = [...posWeights].sort((a, b) => b.weight - a.weight);
+      largestPosition = { ticker: byW[0].ticker, weight: byW[0].weight };
+      smallestPosition = { ticker: byW[byW.length - 1].ticker, weight: byW[byW.length - 1].weight };
+      if (smallestPosition.weight > 0) {
+        weightSpread = parseFloat((largestPosition.weight / smallestPosition.weight).toFixed(2));
+      }
+    }
+    const cashPct = totalValue > 0 ? parseFloat(((portfolio.cash / totalValue) * 100).toFixed(2)) : 0;
+    const cashDragRough =
+      totalValue > 0
+        ? parseFloat(((portfolio.cash / totalValue) * spyReturn).toFixed(2))
+        : null;
+
     res.json({
       success: true,
       portfolio: {
@@ -6708,7 +6871,17 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
           spyReturn: parseFloat(spyReturn.toFixed(2)),
           alpha: parseFloat(alpha.toFixed(2)),
           daysActive,
-          holdingsCount: portfolio.holdings.length
+          holdingsCount: portfolio.holdings.length,
+          upCapture: captures.upCapture != null ? parseFloat(captures.upCapture.toFixed(1)) : null,
+          downCapture: captures.downCapture != null ? parseFloat(captures.downCapture.toFixed(1)) : null,
+          currentRegime: lastRb?.regime ?? null,
+          adjustedTopN: lastRb?.adjustedTopN ?? null,
+          notionalRegimeExposure,
+          cashPct,
+          weightSpread,
+          largestPosition,
+          smallestPosition,
+          cashDragRough
         },
         navHistory: portfolio.navHistory,
         rebalanceCount: portfolio.rebalanceHistory.length,
@@ -7039,7 +7212,7 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
         ? String(portfolio.config.positionSizing).toLowerCase().trim()
         : null;
     const positionSizingPaper =
-      psPaperRaw && ['equal', 'invVol', 'score'].includes(psPaperRaw)
+      psPaperRaw && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psPaperRaw)
         ? psPaperRaw
         : strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo'
           ? 'invVol'
@@ -7146,7 +7319,10 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
       rankings = await applyMlBlendToCompositeRankings(rankings, fundamentalsLive, priceHistory, today, mlW, spyPaper);
     }
 
-    const regimeMetaPaper = calculateMarketRegime(spyPaper, today, universe, priceHistory);
+    const regimeEnabledPaper = portfolio.config.regimeEnabled !== false;
+    const regimeMetaPaper = regimeEnabledPaper
+      ? calculateMarketRegime(spyPaper, today, universe, priceHistory)
+      : { regime: 'disabled', breadthRatio: null };
     const isAggressiveStrategyPaper = strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo';
     const regimeNPaper = adjustedTopNForRegime(regimeMetaPaper.regime, topN);
     const adjustedTopNPaper = isAggressiveStrategyPaper
@@ -7280,6 +7456,8 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
         volWeights = calculateAggressiveVolatilityWeights(buyTargets);
       } else if (compositePaper && positionSizingPaper === 'invVol') {
         volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today);
+      } else if (compositePaper && positionSizingPaper === 'invVolBlend') {
+        volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today, { equalBlend: 0.4 });
       } else if (compositePaper && positionSizingPaper === 'score') {
         volWeights = calculatePositionWeightsScore(buyTargets);
       } else {
@@ -7367,6 +7545,8 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
     // Log rebalance
     const rebalanceEntry = {
       date: today,
+      regime: regimeMetaPaper.regime,
+      adjustedTopN: adjustedTopNPaper,
       sells,
       buys,
       allRankings: allRankingsEntry,

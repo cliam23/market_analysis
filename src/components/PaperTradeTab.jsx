@@ -185,7 +185,7 @@ export default function PaperTradeTab() {
     initialCapital: "100000",
     strategy: "full_composite",
     universe: "sp500_top50",
-    topN: "10"
+    topN: "15"
   });
 
   const [autoRebalanced, setAutoRebalanced] = useState(false);
@@ -247,7 +247,10 @@ export default function PaperTradeTab() {
           initialCapital: parseFloat(initForm.initialCapital),
           strategy: initForm.strategy,
           universe: initForm.universe,
-          topN: parseInt(initForm.topN)
+          topN: parseInt(initForm.topN, 10),
+          adaptiveMode: "fixed",
+          positionSizing: "invVol",
+          regimeEnabled: true
         })
       });
       const data = await safeJson(res);
@@ -497,6 +500,49 @@ export default function PaperTradeTab() {
           value={summary.daysActive}
           color="#f0f0f0"
         />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <MetricCard
+          label="UP CAPTURE"
+          value={summary.upCapture != null ? `${summary.upCapture.toFixed(0)}%` : "—"}
+          subLabel="SPY-up days"
+          subValue="mean port / mean SPY"
+          color="#f0f0f0"
+        />
+        <MetricCard
+          label="DOWN CAPTURE"
+          value={summary.downCapture != null ? `${summary.downCapture.toFixed(0)}%` : "—"}
+          subLabel="SPY-down days"
+          subValue="mean port / mean SPY"
+          color="#f0f0f0"
+        />
+      </div>
+
+      <div style={{
+        fontSize: 11,
+        color: "#a8a8a8",
+        fontFamily: MONO,
+        marginBottom: 14,
+        lineHeight: 1.6,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: "10px 18px"
+      }}>
+        <span>Regime (last rebalance): {summary.currentRegime ?? "—"}</span>
+        <span>Adj. top N: {summary.adjustedTopN != null ? summary.adjustedTopN : "—"}</span>
+        <span>Notional exposure (backtest-style): {summary.notionalRegimeExposure != null ? `${summary.notionalRegimeExposure}%` : "—"}</span>
+        <span>Cash %: {summary.cashPct != null ? `${summary.cashPct.toFixed(1)}%` : "—"}</span>
+        <span>Weight spread: {summary.weightSpread != null ? `${summary.weightSpread}×` : "—"}</span>
+        {summary.largestPosition && (
+          <span>Largest: {summary.largestPosition.ticker} {summary.largestPosition.weight?.toFixed?.(1) ?? summary.largestPosition.weight}%</span>
+        )}
+        {summary.smallestPosition && (
+          <span>Smallest: {summary.smallestPosition.ticker} {summary.smallestPosition.weight?.toFixed?.(1) ?? summary.smallestPosition.weight}%</span>
+        )}
+        {summary.cashDragRough != null && (
+          <span title="Rough heuristic: cash % × period SPY return">Cash drag (rough): {summary.cashDragRough >= 0 ? "+" : ""}{summary.cashDragRough.toFixed(2)} pp</span>
+        )}
       </div>
 
       {isCompositeStrategy(config.strategy) && activeWeights && (
