@@ -1,0 +1,401 @@
+{
+  "harness": "rl-test-harness",
+  "timestamp": "2026-04-09T01:20:24.464Z",
+  "agent_config": {
+    "TOTAL_STATES": 1920,
+    "TOTAL_ACTIONS": 48,
+    "state_features": {
+      "regimeBucket": {
+        "dims": 5,
+        "note": "from REGIME_BUCKET_MAP / regimeStringToBucket"
+      },
+      "recentAlpha": {
+        "bins": [
+          null,
+          -0.05,
+          -0.02,
+          0,
+          0.02,
+          0.05,
+          null
+        ]
+      },
+      "breadthRatio": {
+        "bins": [
+          null,
+          0.3,
+          0.5,
+          0.7,
+          null
+        ]
+      },
+      "realizedVol": {
+        "bins": [
+          null,
+          0.1,
+          0.15,
+          0.25,
+          null
+        ]
+      },
+      "avgTopScore": {
+        "bins": [
+          null,
+          55,
+          65,
+          75,
+          null
+        ]
+      }
+    },
+    "regime_bucket_map": {
+      "strong_bull": 0,
+      "normal": 1,
+      "pullback": 2,
+      "correction": 3,
+      "caution": 3,
+      "bear": 4,
+      "disabled": 1
+    },
+    "action_space": {
+      "exposure": {
+        "levels": [
+          0.5,
+          0.7,
+          0.85,
+          1
+        ],
+        "n": 4
+      },
+      "positionCount": {
+        "levels": [
+          10,
+          13,
+          15,
+          18
+        ],
+        "n": 4
+      },
+      "sizingMethod": {
+        "levels": [
+          "equal",
+          "invVol",
+          "score"
+        ],
+        "n": 3
+      }
+    },
+    "default_hyperparameters": {
+      "alpha": 0.015,
+      "beta": 0.000005,
+      "rho": 0.9
+    },
+    "imports": {
+      "rewardFn": "computeRlReward (aliased as computeReward in harness)",
+      "note": "STATE_FEATURES is synthesized here from bin exports; not a separate module export."
+    }
+  },
+  "tests": [
+    {
+      "name": "state_roundtrip",
+      "pass": true,
+      "totalStates": 1920,
+      "failures": []
+    },
+    {
+      "name": "action_roundtrip",
+      "pass": true,
+      "totalActions": 48,
+      "failures": []
+    },
+    {
+      "name": "q_convergence",
+      "pass": false,
+      "expected": 10,
+      "actual": 2,
+      "error": 8,
+      "converged": false,
+      "note": "Bellman fixed point for r=1, rho=0.9 is 1/(1-rho)=10, but setQ clips to ±Q_VALUE_CLIP so Q(0,0) caps at 2 — pass=false reflects spec vs implementation."
+    },
+    {
+      "name": "q_clipping",
+      "pass": true,
+      "extremeReward": 1000,
+      "resultingQ": 2,
+      "clipBound": 2,
+      "clipped": true
+    },
+    {
+      "name": "exploration_decay",
+      "pass": false,
+      "scenarios": [
+        {
+          "label": "fresh",
+          "visits": 0,
+          "expectedEpsilonRange": "> 0.99",
+          "actualEpsilon": 0,
+          "empiricalExploreRate": 0,
+          "matchesSpec": false
+        },
+        {
+          "label": "moderate",
+          "visits": 100000,
+          "expectedEpsilonRange": "(0.3, 0.9)",
+          "actualEpsilon": 0.6065306597126334,
+          "empiricalExploreRate": 0.603,
+          "matchesSpec": true
+        },
+        {
+          "label": "heavy",
+          "visits": 1000000,
+          "expectedEpsilonRange": "< 0.01",
+          "actualEpsilon": 0.006737946999085467,
+          "empiricalExploreRate": 0.005,
+          "matchesSpec": true
+        }
+      ],
+      "note": "Spec expects high ε at visits=0; this agent uses min-visits fallback (ε=0) before ε-decay path — scenario \"fresh\" often fails by design."
+    },
+    {
+      "name": "exploitation",
+      "pass": true,
+      "expectedAction": 3,
+      "results": {
+        "action3Count": 100,
+        "otherCount": 0
+      }
+    },
+    {
+      "name": "min_visits_fallback",
+      "pass": true,
+      "fallbackImplemented": true,
+      "behavior": "forceExploit=true skips min-visits guard; returns argmax Q (not DEFAULT_ACTION_IDX). forceExploit=false with visits<MIN uses fallback default action.",
+      "forceExploitResult": {
+        "actionIdx": 42,
+        "fallback": false,
+        "explored": false
+      },
+      "exploreModeResult": {
+        "actionIdx": 43,
+        "fallback": true,
+        "explored": false
+      }
+    },
+    {
+      "name": "reward_signs",
+      "pass": true,
+      "cases": [
+        {
+          "label": "A",
+          "inputs": {
+            "portfolioReturn": 0.05,
+            "benchmarkReturn": 0.02,
+            "vol": 0.12,
+            "maxDD": -0.03
+          },
+          "reward": 0.12500000000000003,
+          "expectedSign": "positive",
+          "correct": true
+        },
+        {
+          "label": "B",
+          "inputs": {
+            "portfolioReturn": -0.03,
+            "benchmarkReturn": 0.02,
+            "vol": 0.12,
+            "maxDD": -0.05
+          },
+          "reward": -0.20833333333333334,
+          "expectedSign": "negative",
+          "correct": true
+        },
+        {
+          "label": "C",
+          "inputs": {
+            "portfolioReturn": 0.03,
+            "benchmarkReturn": 0.03,
+            "vol": 0.15,
+            "maxDD": -0.05
+          },
+          "reward": 0,
+          "expectedSign": "nearZero",
+          "correct": true
+        },
+        {
+          "label": "D",
+          "inputs": {
+            "portfolioReturn": 0.05,
+            "benchmarkReturn": 0.02,
+            "vol": 0.12,
+            "maxDD": -0.05
+          },
+          "reward": 0.12500000000000003,
+          "expectedSign": "positive",
+          "correct": true
+        },
+        {
+          "label": "E",
+          "inputs": {
+            "portfolioReturn": 0.05,
+            "benchmarkReturn": 0.02,
+            "vol": 0.12,
+            "maxDD": -0.2
+          },
+          "reward": -0.07499999999999998,
+          "expectedSign": "r2_lt_r1",
+          "correct": true
+        },
+        {
+          "label": "F",
+          "inputs": {
+            "portfolioReturn": 0.05,
+            "benchmarkReturn": 0.02,
+            "vol": 0.08,
+            "maxDD": -0.03
+          },
+          "reward": 0.1875,
+          "expectedSign": "positive",
+          "correct": true
+        },
+        {
+          "label": "G",
+          "inputs": {
+            "portfolioReturn": 0.05,
+            "benchmarkReturn": 0.02,
+            "vol": 0.25,
+            "maxDD": -0.03
+          },
+          "reward": 0.060000000000000005,
+          "expectedSign": "positive",
+          "correct": true
+        }
+      ]
+    },
+    {
+      "name": "serialization",
+      "pass": true,
+      "qMatch": true,
+      "visitsMatch": true,
+      "updatesMatch": true,
+      "policyMatch": true,
+      "mismatchedStates": []
+    },
+    {
+      "name": "state_space",
+      "pass": true,
+      "totalStates": 1920,
+      "rangeValid": true,
+      "collisions": 95,
+      "invalidDecodes": 0,
+      "note": "collisions counts duplicate encodes among 500 random samples (not full Cartesian product)."
+    },
+    {
+      "name": "action_space",
+      "pass": true,
+      "totalActions": 48,
+      "invalidActions": []
+    },
+    {
+      "name": "learning_direction",
+      "pass": true,
+      "state0": {
+        "q_action0": 2,
+        "q_action1": 0.7999999999999595,
+        "prefersCorrect": true
+      },
+      "state1": {
+        "q_action0": 0.7999999999999514,
+        "q_action1": 2,
+        "prefersCorrect": true
+      }
+    },
+    {
+      "name": "over_pruning_detection",
+      "pass": true,
+      "conservativeAgent": {
+        "flagged": true,
+        "ratio": 0
+      },
+      "balancedAgent": {
+        "flagged": false,
+        "ratio": 0.5
+      }
+    },
+    {
+      "name": "regime_mapping",
+      "pass": true,
+      "mappings": [
+        {
+          "regime": "strong_bull",
+          "bin": 0,
+          "expectedBin": 0,
+          "stateIdx": 233,
+          "valid": true
+        },
+        {
+          "regime": "normal",
+          "bin": 1,
+          "expectedBin": 1,
+          "stateIdx": 617,
+          "valid": true
+        },
+        {
+          "regime": "pullback",
+          "bin": 2,
+          "expectedBin": 2,
+          "stateIdx": 1001,
+          "valid": true
+        },
+        {
+          "regime": "correction",
+          "bin": 3,
+          "expectedBin": 3,
+          "stateIdx": 1385,
+          "valid": true
+        },
+        {
+          "regime": "caution",
+          "bin": 3,
+          "expectedBin": 3,
+          "stateIdx": 1385,
+          "valid": true
+        },
+        {
+          "regime": "bear",
+          "bin": 4,
+          "expectedBin": 4,
+          "stateIdx": 1769,
+          "valid": true
+        },
+        {
+          "regime": "disabled",
+          "bin": 1,
+          "expectedBin": 1,
+          "stateIdx": 617,
+          "valid": true
+        }
+      ]
+    },
+    {
+      "name": "integration_smoke",
+      "pass": false,
+      "skipped": true,
+      "reason": "runBacktestSimulation is not exported from server.js; importing server.js would execute the Express app. Wire a thin export or call GET /api/rl/compare manually when the server is running.",
+      "rulesBased": null,
+      "rlRandom": null,
+      "resultsAreDifferent": null,
+      "rlIsWorse": null
+    }
+  ],
+  "summary": {
+    "total": 15,
+    "passed": 12,
+    "failed": 2,
+    "skipped": 1,
+    "all_passed": false,
+    "failed_tests": [
+      "q_convergence",
+      "exploration_decay"
+    ]
+  }
+}
