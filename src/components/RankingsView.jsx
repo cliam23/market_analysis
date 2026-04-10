@@ -128,15 +128,16 @@ export default function RankingsView({ onSelectTicker }) {
     return sorted;
   };
 
-  const scoreColor = (s) => s >= 70 ? "#22c55e" : s >= 50 ? "#eab308" : "#ef4444";
-  const gradeColor = (label) => {
-    if (!label) return "#888";
+  const scoreColor = (s) =>
+    s >= 70 ? "var(--color-positive)" : s >= 50 ? "var(--color-amber)" : "var(--color-negative)";
+  const gradePillVariant = (label) => {
+    if (!label) return "neutral";
     const l = label.toUpperCase();
-    if (l.includes("STRONG BUY") || l === "BUY") return "#22c55e";
-    if (l.includes("ACCUMULATE") || l.includes("LEAN BUY")) return "#4ade80";
-    if (l.includes("HOLD")) return "#eab308";
-    if (l.includes("LEAN SELL")) return "#f97316";
-    return "#ef4444";
+    if (l.includes("STRONG BUY") || l === "BUY") return "green";
+    if (l.includes("ACCUMULATE") || l.includes("LEAN BUY")) return "green";
+    if (l.includes("HOLD")) return "amber";
+    if (l.includes("LEAN SELL")) return "amber";
+    return "red";
   };
 
   return (
@@ -356,15 +357,22 @@ export default function RankingsView({ onSelectTicker }) {
                         ${r.currentPrice?.toFixed(2) || "—"}
                       </td>
                       <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                        <span style={{
-                          fontFamily: MONO, fontWeight: 700, color: scoreColor(r.strategyScore),
-                          background: scoreColor(r.strategyScore) + "15", padding: "3px 8px", borderRadius: 4, fontSize: 11
-                        }}>
+                        <span
+                          className="ma-mono ma-num"
+                          style={{
+                            fontWeight: 700,
+                            color: scoreColor(r.strategyScore),
+                            border: "1px solid var(--color-border)",
+                            padding: "3px 8px",
+                            borderRadius: 4,
+                            fontSize: 11
+                          }}
+                        >
                           {r.strategyScore}
                         </span>
                       </td>
                       <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                        <Pill color={gradeColor(r.strategyLabel)}>{r.strategyLabel}</Pill>
+                        <Pill variant={gradePillVariant(r.strategyLabel)}>{r.strategyLabel}</Pill>
                       </td>
                       <td style={{ padding: "10px 12px", textAlign: "right", fontFamily: MONO, color: parseFloat(r.rawMomentum) >= 0 ? "#22c55e" : "#ef4444", fontWeight: 600 }}>
                         {r.rawMomentum}%

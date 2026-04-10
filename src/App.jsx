@@ -1,13 +1,13 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import SearchView from "./components/SearchView.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
+import RLTab from "./components/RLTab.jsx";
 import PaperTradeTab from "./components/PaperTradeTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
 import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
+import Sidebar, { SidebarStandalone } from "./components/Sidebar.jsx";
 const RankingsView = lazy(() => import("./components/RankingsView.jsx"));
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
-
-import { MONO, SANS } from "./lib/theme.js";
 
 function parsePaperReportFromSearch() {
   try {
@@ -57,140 +57,76 @@ export default function App() {
     setSelectedTicker(null);
   };
 
-  const tabBtn = (id, label) => (
-    <button
-      onClick={() => {
-        setTab(id);
-        if (id === "rankings") setRankingsKey(k => k + 1);
-      }}
-      style={{
-        padding: "10px 20px",
-        background: tab === id ? "rgba(255,255,255,0.08)" : "transparent",
-        border: "none",
-        borderRadius: 6,
-        color: tab === id ? "#f0f0f0" : "#f0f0f0",
-        fontSize: 13,
-        fontWeight: 700,
-        cursor: "pointer",
-        fontFamily: MONO,
-        display: "flex",
-        alignItems: "center",
-        gap: 6
-      }}
-    >
-      {label}
-    </button>
-  );
-
-  const sharedFontsAndBase = (
-    <>
-      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        *::-webkit-scrollbar { width: 4px; height: 4px; }
-        *::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
-        *:focus { outline: none; }
-        * { box-sizing: border-box; }
-        body { margin: 0; }
-      `}</style>
-    </>
-  );
+  const goDashboard = () => {
+    const u = new URL(window.location.href);
+    u.search = "";
+    window.history.pushState({}, "", u);
+    setPaperReport(null);
+  };
 
   if (paperReport) {
     return (
-      <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
-        {sharedFontsAndBase}
-        <div style={{ textAlign: "center", paddingTop: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#f0f0f0", fontFamily: SANS }}>Market Analysis</div>
+      <div className="ma-app-shell">
+        <SidebarStandalone onHome={goDashboard} />
+        <div className="ma-main">
+          <div className="ma-main__inner">
+            <PaperRebalanceStandalone date={paperReport.date} occurrence={paperReport.occurrence} />
+          </div>
         </div>
-        <PaperRebalanceStandalone date={paperReport.date} occurrence={paperReport.occurrence} />
       </div>
     );
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#07070c", color: "#f0f0f0", fontFamily: SANS }}>
-      {sharedFontsAndBase}
+    <div className="ma-app-shell">
+      <Sidebar
+        tab={tab}
+        setTab={setTab}
+        onRankingsEnter={() => setRankingsKey((k) => k + 1)}
+      />
+      <div className="ma-main">
+        <div className="ma-main__inner">
+          {!backendConnected && (
+            <div className="ma-backend-banner">
+              Backend not connected — start with <strong>npm run dev:all</strong>
+            </div>
+          )}
 
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "24px 32px" }}>
-        {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 900, margin: 0 }}>
-            Market Analysis
-          </h1>
-          <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 5, fontFamily: MONO }}>
-            Real Time Analysis&nbsp;&nbsp;Strategy Rankings&nbsp;&nbsp;Backtest&nbsp;&nbsp;Trading
-          </p>
-        </div>
-
-        {!backendConnected && (
-          <div style={{
-            padding: "10px 14px",
-            background: "rgba(239,68,68,0.1)",
-            border: "1px solid rgba(239,68,68,0.3)",
-            borderRadius: 6,
-            marginBottom: 16,
-            fontSize: 12,
-            color: "#ef4444",
-            fontFamily: MONO
-          }}>
-            Backend not connected — start with <strong>npm run dev:all</strong>
+          <div style={{ display: tab === "search" ? "block" : "none" }}>
+            <div style={{ display: selectedTicker ? "none" : "block" }}>
+              <SearchView onSelectTicker={handleSelectTicker} />
+            </div>
+            {selectedTicker && (
+              <Suspense fallback={<div className="ma-suspend-fallback">Loading analysis...</div>}>
+                <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
+              </Suspense>
+            )}
           </div>
-        )}
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: 4, width: "fit-content", margin: "0 auto 20px" }}>
-          {tabBtn("search", "Search")}
-          {tabBtn("backtest", "Backtest")}
-          {tabBtn("rankings", "Strategy Rankings")}
-          {tabBtn("papertrade", "Trading")}
-          {tabBtn("about", "About")}
-        </div>
-
-        {/* Search tab — always mounted */}
-        <div style={{ display: tab === "search" ? "block" : "none" }}>
-          <div style={{ display: selectedTicker ? "none" : "block" }}>
-            <SearchView onSelectTicker={handleSelectTicker} />
+          <div style={{ display: tab === "backtest" ? "block" : "none" }}>
+            <BacktestTab />
           </div>
-          {selectedTicker && (
-            <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>Loading analysis...</div>}>
-              <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
+
+          <div style={{ display: tab === "rl" ? "block" : "none" }}>
+            <RLTab />
+          </div>
+
+          {tab === "rankings" && (
+            <Suspense fallback={<div className="ma-suspend-fallback">Loading...</div>}>
+              <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
             </Suspense>
           )}
-        </div>
 
-        {/* Backtest tab — always mounted */}
-        <div style={{ display: tab === "backtest" ? "block" : "none" }}>
-          <BacktestTab />
-        </div>
+          <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
+            <PaperTradeTab />
+          </div>
 
-        {/* Rankings tab — remounts fresh each time */}
-        {tab === "rankings" && (
-          <Suspense fallback={<div style={{ textAlign: "center", padding: 40, color: "#f0f0f0", fontFamily: MONO, fontSize: 13 }}>Loading...</div>}>
-            <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
-          </Suspense>
-        )}
+          <div style={{ display: tab === "about" ? "block" : "none" }}>
+            <AboutTab />
+          </div>
 
-        {/* Paper Trade tab — always mounted */}
-        <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
-          <PaperTradeTab />
-        </div>
-
-        {/* About tab — always mounted */}
-        <div style={{ display: tab === "about" ? "block" : "none" }}>
-          <AboutTab />
-        </div>
-
-        {/* Footer */}
-        <div style={{
-          marginTop: 40,
-          paddingTop: 20,
-          borderTop: "1px solid rgba(255,255,255,0.05)",
-          textAlign: "center"
-        }}>
-          <div style={{ fontSize: 11, color: "#f0f0f0", fontFamily: MONO, lineHeight: 1.8 }}>
-            <p style={{ margin: "0 0 5px" }}>Educational tool · Not financial advice · Verify independently</p>
+          <div className="ma-footer">
+            <p>Educational tool · Not financial advice · Verify independently</p>
             <p style={{ margin: 0 }}>
               Powered by Yahoo Finance · Analysis algorithms from Buffett methodology
             </p>

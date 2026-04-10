@@ -307,6 +307,8 @@ export default function BacktestTab() {
     adaptiveMode: "fixed",
     positionSizing: "invVol"
   });
+  /** Composite-only: server defaults to RL when trained agent exists; UI sends explicit true/false. */
+  const [rlAgentOn, setRlAgentOn] = useState(true);
 
   const updateSetting = (key, value) => {
     setSettings(s => ({ ...s, [key]: value }));
@@ -391,7 +393,8 @@ export default function BacktestTab() {
     settings.strategy,
     settings.initialCapital,
     settings.adaptiveMode,
-    settings.positionSizing
+    settings.positionSizing,
+    rlAgentOn
   ]);
 
   const runBacktest = async () => {
@@ -413,7 +416,10 @@ export default function BacktestTab() {
         optimize: "false",
         _t: Date.now()
       });
-      
+      if (isCompositeFamily(settings.strategy)) {
+        params.set("rlAgent", rlAgentOn ? "true" : "false");
+      }
+
       const response = await fetch(`/api/backtest/${settings.universe}?${params}`, { signal });
       const rawText = await response.text();
       let data;
@@ -564,6 +570,21 @@ export default function BacktestTab() {
             onChange={(v) => updateSetting("positionSizing", v)}
             options={positionSizingOptions}
           />
+          {isCompositeFamily(settings.strategy) && (
+            <Select
+              label="RL AGENT"
+              value={rlAgentOn ? "on" : "off"}
+              onChange={(v) => {
+                setRlAgentOn(v === "on");
+                setResults(null);
+                setError(null);
+              }}
+              options={[
+                { id: "on", label: "On (Q-learning)" },
+                { id: "off", label: "Off (rules only)" }
+              ]}
+            />
+          )}
         </div>
         <div style={RUN_ACTION_BAR_STYLE}>
           <button
@@ -633,7 +654,26 @@ export default function BacktestTab() {
                 Benchmark: {benchDescription}
               </div>
             ) : null}
-            
+
+            {results.rlEnabled && (
+              <div
+                style={{
+                  marginBottom: 12,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(167,243,208,0.25)",
+                  background: "rgba(34,197,94,0.06)",
+                  fontFamily: MONO,
+                  fontSize: 11,
+                  color: "#a7f3d0",
+                  letterSpacing: 0.5
+                }}
+              >
+                Q-learning active — {results.rlStatesVisited ?? 0} states visited ·{" "}
+                {(Number(results.rlTotalUpdates) || 0).toLocaleString()} training updates
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <MetricCard 
                 label="TOTAL RETURN" 
@@ -1147,6 +1187,40 @@ export default function BacktestTab() {
               </div>
             )}
           </Box>
+
+          {Array.isArray(results.rlLog) && results.rlLog.length > 0 && (
+            <Box>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+                RL DECISIONS (rebalance dates)
+              </div>
+              <div style={{ overflowX: "auto", maxHeight: "min(50vh, 420px)", overflowY: "auto", borderRadius: 6, border: "1px solid rgba(255,255,255,0.06)" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
+                  <thead>
+                    <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <th style={{ textAlign: "left", padding: "8px 10px" }}>Date</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px" }}>Exposure</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px" }}>Positions</th>
+                      <th style={{ textAlign: "left", padding: "8px 10px" }}>Sizing</th>
+                      <th style={{ textAlign: "right", padding: "8px 10px" }}>State</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {results.rlLog.map((r) => (
+                      <tr key={r.date} style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+                        <td style={{ padding: "6px 10px", color: "#e5e5e5" }}>{r.date}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: "#e5e5e5" }}>
+                          {typeof r.exposure === "number" ? `${(r.exposure * 100).toFixed(0)}%` : "—"}
+                        </td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: "#e5e5e5" }}>{r.positionCount ?? "—"}</td>
+                        <td style={{ padding: "6px 10px", color: "#c4c4c4" }}>{r.sizingMethod ?? "—"}</td>
+                        <td style={{ padding: "6px 10px", textAlign: "right", color: "#888" }}>{r.stateIdx ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Box>
+          )}
           
           {/* Monthly Returns Heatmap */}
           <Box>

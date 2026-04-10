@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { Box, SH } from "./shared.jsx";
 
-import { MONO } from "../lib/theme.js";
-
 export default function SearchView({ onSelectTicker }) {
   const [query, setQuery] = useState("");
 
@@ -30,6 +28,7 @@ export default function SearchView({ onSelectTicker }) {
         >
           <input
             type="text"
+            className="ma-input ma-mono"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Enter ticker symbol (e.g., AAPL)"
@@ -37,34 +36,12 @@ export default function SearchView({ onSelectTicker }) {
               minWidth: 0,
               width: "100%",
               boxSizing: "border-box",
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.1)",
-              borderRadius: 6,
-              padding: "10px 14px",
-              color: "#f0f0f0",
-              fontSize: 14,
-              fontFamily: MONO,
-              outline: "none"
+              fontSize: 14
             }}
             autoFocus
           />
-          <button
-            type="submit"
-            disabled={!query.trim()}
-            style={{
-              padding: "10px 20px",
-              flexShrink: 0,
-              background: !query.trim() ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 6,
-              color: "#f0f0f0",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: !query.trim() ? "not-allowed" : "pointer",
-              fontFamily: MONO
-            }}
-          >
-            ANALYZE
+          <button type="submit" disabled={!query.trim()} className="ma-btn-primary ma-mono">
+            Analyze
           </button>
         </form>
       </Box>
