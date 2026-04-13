@@ -27,6 +27,9 @@ export const N_SIGNAL = 4;
 
 export const TOTAL_STATES = N_REGIME * N_ALPHA * N_BREADTH * N_VOL * N_SIGNAL;
 
+/** Monthly rebalances per quarterly episode (coupled Q-learning). */
+export const N_SUBPERIODS = 3;
+
 export const ACTION_SPACE = {
   exposure: { levels: [0.5, 0.65, 0.8, 1.0], n: 4 },
   positionCount: { levels: [7, 10, 13, 15], n: 4 },
@@ -119,6 +122,25 @@ export class QLearningTradingAgent {
     this.totalUpdates = 0;
     this.statesVisited = 0;
     this._initializeQ();
+
+    // ── Coupled Q-learning (AI planning) ────────────────────────────────────────
+    // When coupledMode:true, three separate Q-tables are maintained — one per
+    // subperiod within a quarterly episode — and updates bootstrap across them
+    // via backward induction (Dou 2026, slides 20-21).
+    // When coupledMode:false (default) the agent behaves exactly as before.
+    this.coupledMode = config?.coupledMode ?? false;
+    if (this.coupledMode) {
+      // Q_h[h] is a flat Float64Array of length nStates * nActions, same layout as this.Q
+      // h=0: first monthly rebalance, h=1: second, h=2: third (terminal — wraps to next episode)
+      this.Q_h = Array.from({ length: N_SUBPERIODS }, () => {
+        const arr = new Float64Array(this.nStates * this.nActions);
+        const initValue = 0.15;
+        for (let i = 0; i < arr.length; i++) {
+          arr[i] = initValue + (Math.random() - 0.5) * 0.03;
+        }
+        return arr;
+      });
+    }
   }
 
   _initializeQ() {
@@ -193,6 +215,73 @@ export class QLearningTradingAgent {
     this.totalUpdates++;
   }
 
+  // Coupled Q-learning update (AI planning).
+  // Call instead of update() when coupledMode:true.
+  //
+  // Args:
+  //   subperiod   {number}  0 | 1 | 2 — which rebalance within the episode
+  //   stateIdx    {number}  encoded state index (same encoding as reactive agent)
+  //   actionIdx   {number}  action taken
+  //   reward      {number}  realized reward for this subperiod (0 for h<2, full reward at h=2)
+  //   nextStateIdx{number}  encoded state at next subperiod (or next episode h=0 if terminal)
+  //   episode     {number}  episode counter (used to decay epsilon)
+  //
+  // Update rule (mirrors slide 20):
+  //   For h = 0, 1:  Q_h[s,a] ← α[r + max_a' Q_{h+1}[s',a']] + (1-α)Q_h[s,a]
+  //   For h = 2:     Q_h[s,a] ← α[r + ρ·max_a' Q_0[s',a']]   + (1-α)Q_h[s,a]
+  coupledUpdate(subperiod, stateIdx, actionIdx, reward, nextStateIdx, _episode) {
+    if (!this.coupledMode) throw new Error('coupledUpdate called on reactive agent');
+
+    const idx = stateIdx * this.nActions + actionIdx;
+    const isTerminal = subperiod === N_SUBPERIODS - 1;
+
+    // Bootstrap from next subperiod's Q-table (or episode-discounted Q_0 if terminal)
+    const nextTable = isTerminal ? this.Q_h[0] : this.Q_h[subperiod + 1];
+    const discount = isTerminal ? this.rho : 1.0; // only apply ρ at episode boundary
+
+    let maxNextQ = -Infinity;
+    for (let a = 0; a < this.nActions; a++) {
+      const q = nextTable[nextStateIdx * this.nActions + a];
+      if (q > maxNextQ) maxNextQ = q;
+    }
+
+    const target = reward + discount * maxNextQ;
+    const current = this.Q_h[subperiod][idx];
+    const updated = this.alpha * target + (1 - this.alpha) * current;
+
+    // Clip Q-values (same guard as reactive agent)
+    this.Q_h[subperiod][idx] = Math.max(
+      -Q_VALUE_CLIP,
+      Math.min(Q_VALUE_CLIP, updated)
+    );
+
+    this.visitCounts[stateIdx]++;
+    this.totalUpdates++;
+  }
+
+  // Coupled-mode action selection. Uses the subperiod-specific Q-table.
+  // Drop-in replacement for selectAction() when coupledMode:true (epsilon uses episode).
+  coupledChooseAction(subperiod, stateIdx, episode) {
+    if (!this.coupledMode) throw new Error('coupledChooseAction called on reactive agent');
+
+    const epsilon = Math.max(0.01, Math.exp(-this.beta * episode));
+    if (Math.random() < epsilon) {
+      return Math.floor(Math.random() * this.nActions); // explore
+    }
+    // Exploit: argmax over subperiod's Q-table
+    const table = this.Q_h[subperiod];
+    let bestAction = 0;
+    let bestQ = -Infinity;
+    for (let a = 0; a < this.nActions; a++) {
+      const q = table[stateIdx * this.nActions + a];
+      if (q > bestQ) {
+        bestQ = q;
+        bestAction = a;
+      }
+    }
+    return bestAction;
+  }
+
   getPolicy() {
     const policy = new Map();
     for (let s = 0; s < this.nStates; s++) {
@@ -230,6 +319,10 @@ export class QLearningTradingAgent {
       nStates: this.nStates,
       nActions: this.nActions,
       Q: Array.from(this.Q),
+      coupledMode: this.coupledMode,
+      ...(this.coupledMode && this.Q_h
+        ? { Q_h: this.Q_h.map((t) => Array.from(t)) }
+        : {}),
       visitCounts: Array.from(this.visitCounts),
       totalUpdates: this.totalUpdates,
       statesVisited: this.statesVisited
@@ -251,6 +344,18 @@ export class QLearningTradingAgent {
     if (Array.isArray(data.Q) && data.Q.length === agent.Q.length) {
       agent.Q = new Float64Array(data.Q);
       agent.recomputeStatesVisitedFromQ();
+    }
+    agent.coupledMode = false;
+    if (
+      data.coupledMode === true &&
+      Array.isArray(data.Q_h) &&
+      data.Q_h.length === N_SUBPERIODS &&
+      data.Q_h.every(
+        (row) => Array.isArray(row) && row.length === agent.nStates * agent.nActions
+      )
+    ) {
+      agent.coupledMode = true;
+      agent.Q_h = data.Q_h.map((row) => new Float64Array(row));
     }
     return agent;
   }
