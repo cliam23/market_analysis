@@ -6,7 +6,6 @@ import PaperTradeTab from "./components/PaperTradeTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
 import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
 import Sidebar, { SidebarStandalone } from "./components/Sidebar.jsx";
-const RankingsView = lazy(() => import("./components/RankingsView.jsx"));
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
 
 function parsePaperReportFromSearch() {
@@ -25,7 +24,6 @@ export default function App() {
   const [tab, setTab] = useState("search");
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [backendConnected, setBackendConnected] = useState(true);
-  const [rankingsKey, setRankingsKey] = useState(0);
 
   useEffect(() => {
     checkBackend();
@@ -79,11 +77,7 @@ export default function App() {
 
   return (
     <div className="ma-app-shell">
-      <Sidebar
-        tab={tab}
-        setTab={setTab}
-        onRankingsEnter={() => setRankingsKey((k) => k + 1)}
-      />
+      <Sidebar tab={tab} setTab={setTab} />
       <div className="ma-main">
         <div className="ma-main__inner">
           {!backendConnected && (
@@ -111,14 +105,8 @@ export default function App() {
             <RLTab />
           </div>
 
-          {tab === "rankings" && (
-            <Suspense fallback={<div className="ma-suspend-fallback">Loading...</div>}>
-              <RankingsView onSelectTicker={handleSelectTicker} key={`rankings-${rankingsKey}`} />
-            </Suspense>
-          )}
-
           <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
-            <PaperTradeTab />
+            <PaperTradeTab visible={tab === "papertrade"} />
           </div>
 
           <div style={{ display: tab === "about" ? "block" : "none" }}>

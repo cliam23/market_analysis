@@ -59,7 +59,7 @@ Many other toggles (adaptive weights debug, ML ranking, trailing stops, RL train
 
 ## How the project is wired
 
-1. **Frontend** (`src/`) — React tabs: search, rankings, single-ticker analysis, **backtest**, **paper trade**, **RL** (training/status), about/help.
+1. **Frontend** (`src/`) — React tabs: search, single-ticker analysis, **backtest**, **paper trade**, **RL** (training/status), about/help.
 2. **Backend** (`server.js`) — Express app: Yahoo Finance (prices, fundamentals, PIT where used), FRED CPI, composite ranking, **backtest cache**, **paper portfolio** (`paper-portfolio.json`), **RL agent file** (`rl-agent.json`), ML hooks to Python when enabled.
 3. **Shared logic** — `analysis-engine.js`, `adaptiveWeights.js`, `q-learning-agent.js` (RL state/action space and Q-table serialize/deserialize).
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import {
   Line,
@@ -14,6 +14,42 @@ import {
 
 import { Box, Pill, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
+
+const PAPER_TRADE_SESSION_KEY = "ma-paper-trade-session-v1";
+
+function readPaperTradeSessionCache() {
+  if (typeof sessionStorage === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(PAPER_TRADE_SESSION_KEY);
+    if (!raw) return null;
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object") return null;
+    return { portfolio: o.portfolio ?? null, history: o.history ?? null };
+  } catch {
+    return null;
+  }
+}
+
+function writePaperTradeSessionCache(portfolio, history) {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    if (!portfolio) {
+      sessionStorage.removeItem(PAPER_TRADE_SESSION_KEY);
+      return;
+    }
+    sessionStorage.setItem(PAPER_TRADE_SESSION_KEY, JSON.stringify({ portfolio, history }));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+function clearPaperTradeSessionCache() {
+  try {
+    sessionStorage.removeItem(PAPER_TRADE_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
 
 const PILLAR_BAR_COLORS = {
   fundamental: "var(--color-accent)",
@@ -207,10 +243,11 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
   );
 }
 
-export default function PaperTradeTab() {
-  const [portfolio, setPortfolio] = useState(null);
-  const [history, setHistory] = useState(null);
-  const [loading, setLoading] = useState(true);
+export default function PaperTradeTab({ visible = false }) {
+  const sessionSnapshot = useMemo(() => readPaperTradeSessionCache(), []);
+  const [portfolio, setPortfolio] = useState(() => sessionSnapshot?.portfolio ?? null);
+  const [history, setHistory] = useState(() => sessionSnapshot?.history ?? null);
+  const [loading, setLoading] = useState(() => !(sessionSnapshot?.portfolio));
   const [rebalancing, setRebalancing] = useState(false);
   const [error, setError] = useState(null);
   const [expandedRebalance, setExpandedRebalance] = useState(null);
@@ -230,8 +267,25 @@ export default function PaperTradeTab() {
   const [loadBtnHover, setLoadBtnHover] = useState(false);
   const [rebalBtnHover, setRebalBtnHover] = useState(false);
   const paperApi = useAbortableApi();
+  /** Skip one "tab became visible" refresh when Trading is the initial tab (bootstrap already loads). */
+  const skipVisibleRefreshOnce = useRef(visible);
 
-  useEffect(() => { fetchPortfolio(); }, []);
+  // Load (or revalidate) as soon as the app mounts so data is ready before the user opens Trading.
+  useEffect(() => {
+    fetchPortfolio(!sessionSnapshot?.portfolio);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- session snapshot is stable for the tab lifetime
+  }, []);
+
+  // When switching to Trading, refresh quietly so NAV/holdings stay current without a full-page block.
+  useEffect(() => {
+    if (!visible) return;
+    if (skipVisibleRefreshOnce.current) {
+      skipVisibleRefreshOnce.current = false;
+      return;
+    }
+    fetchPortfolio(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only react to tab visibility
+  }, [visible]);
 
   useEffect(() => {
     if (!portfolio || autoRebalanced || rebalancing) return;
@@ -246,9 +300,25 @@ export default function PaperTradeTab() {
   }, [portfolio]);
 
   const safeJson = async (res) => {
-    if (!res.ok) throw new Error(`Server error (${res.status}) — is the backend running?`);
     const text = await res.text();
-    try { return JSON.parse(text); } catch { throw new Error("Server returned non-JSON — backend may be down"); }
+    if (!res.ok) {
+      let serverMsg = null;
+      try {
+        const j = JSON.parse(text);
+        if (j && typeof j.error === "string" && j.error.trim()) serverMsg = j.error.trim();
+      } catch {
+        /* ignore */
+      }
+      if (serverMsg) throw new Error(serverMsg);
+      const downHint =
+        res.status === 0 || res.status >= 500 ? " — is the backend running?" : "";
+      throw new Error(`Request failed (${res.status})${downHint}`);
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error("Server returned non-JSON — backend may be down");
+    }
   };
 
   const fetchPortfolio = async (showLoader = true) => {
@@ -264,6 +334,8 @@ export default function PaperTradeTab() {
       const hData = await safeJson(hRes);
       setPortfolio(pData.portfolio);
       setHistory(hData.history);
+      if (pData.portfolio) writePaperTradeSessionCache(pData.portfolio, hData.history);
+      else clearPaperTradeSessionCache();
     } catch (e) {
       if (!isAbortError(e)) setError(e.message);
     } finally {
@@ -351,6 +423,7 @@ export default function PaperTradeTab() {
       await fetch("/api/paper-trade/reset", { method: "DELETE" });
       setPortfolio(null);
       setHistory(null);
+      clearPaperTradeSessionCache();
     } catch (e) { setError(e.message); }
   };
 
@@ -412,6 +485,13 @@ export default function PaperTradeTab() {
   if (!portfolio) {
     return (
       <div>
+        {showResetConfirm && (
+          <ConfirmModal
+            message="Are you sure? You will lose the results of the current paper trade."
+            onConfirm={resetPortfolio}
+            onCancel={() => setShowResetConfirm(false)}
+          />
+        )}
         <Box>
           <div className="ma-section-title" style={{ marginBottom: 12 }}>
             Initialize paper portfolio
@@ -505,6 +585,26 @@ export default function PaperTradeTab() {
           {error && (
             <div className="ma-mono" style={{ color: "var(--color-negative)", fontSize: 12, marginTop: 10 }}>
               {error}
+              {/already exists/i.test(error) && (
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    type="button"
+                    className="ma-btn-ghost"
+                    style={{ fontSize: 12 }}
+                    onClick={() => {
+                      setError(null);
+                      setLoading(true);
+                      fetchPortfolio(true);
+                    }}
+                  >
+                    Reload portfolio
+                  </button>
+                  {" · "}
+                  <button type="button" className="ma-btn-danger-outline" style={{ fontSize: 12 }} onClick={() => setShowResetConfirm(true)}>
+                    Reset and start over
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </Box>

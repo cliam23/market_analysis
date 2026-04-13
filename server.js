@@ -4969,6 +4969,15 @@ function daysBetween(date1, date2) {
   return Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
 }
 
+/** Calendar `iso` (YYYY-MM-DD) + `days` (may be negative); returns YYYY-MM-DD in UTC noon math. */
+function isoAddDays(iso, days) {
+  if (!iso || typeof iso !== 'string') return null;
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() + (days | 0));
+  return d.toISOString().slice(0, 10);
+}
+
 /** Latest CPI index for calendar month of isoDate (YYYY-MM-DD); FRED uses month-start dates (e.g. 2024-01-01). */
 function cpiIndexForTradeDate(sortedObs, isoDate) {
   if (!sortedObs.length) return null;
@@ -6476,7 +6485,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Unknown universe' });
   }
 
-  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825 };
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
   const days = periodDays[period] || 1095;
   const endDate = new Date();
   const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
@@ -6893,15 +6902,14 @@ app.get('/api/rl/status', (req, res) => {
     const pf = loadPortfolio();
     let paperTrade = null;
     if (pf) {
-      let nextRebalance = null;
-      if (pf.lastRebalance) nextRebalance = nextMidMonthRebalanceAfter(pf.lastRebalance);
-      else if (pf.createdAt) nextRebalance = nextMidMonthRebalanceAfter(pf.createdAt);
+      const sched = buildPaperTradeScheduleResponse(pf);
       paperTrade = {
         rlEnabled: paperPortfolioRlEnabled(pf),
         onlineLearning: pf.config?.rlOnlineLearning === true,
         weights: pf.config?.weights ?? null,
         lastRebalance: pf.lastRebalance ?? null,
-        nextRebalance,
+        nextRebalance: sched.nextRebalance,
+        rebalanceFreq: sched.rebalanceFreq,
         rlLastAction: pf._rlLastAction ?? null
       };
     }
@@ -7045,7 +7053,7 @@ app.get('/api/rl/compare', async (req, res) => {
     const universe = UNIVERSE_TICKERS[universeIdResolved];
     if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
 
-    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825 };
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
     const days = periodDays[period] || 1095;
     const endDate = new Date();
     const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
@@ -7229,7 +7237,7 @@ app.post('/api/rl/train', async (req, res) => {
     const universe = UNIVERSE_TICKERS[universeId];
     if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
 
-    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825 };
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
     const days = periodDays[period] || 1095;
     const endDate = new Date();
     const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
@@ -7518,7 +7526,7 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Unknown universe' });
   }
 
-  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825 };
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
   const days = periodDays[period] || 1095;
   const endDate = new Date();
   const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
@@ -7907,6 +7915,42 @@ function createEmptyPortfolio(config) {
   };
 }
 
+const PAPER_SCHEDULE_FREQ_ALLOWED = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
+
+function normalizePaperRebalanceFreq(portfolio) {
+  const raw = String(portfolio?.config?.rebalanceFreq || 'bimonthly').toLowerCase().trim();
+  return PAPER_SCHEDULE_FREQ_ALLOWED.includes(raw) ? raw : 'bimonthly';
+}
+
+/** Next / missed scheduled anchors for paper (uses `config.rebalanceFreq`, default bimonthly). */
+function buildPaperTradeScheduleResponse(portfolio) {
+  const today = new Date().toISOString().split('T')[0];
+  const rebalanceFreq = normalizePaperRebalanceFreq(portfolio);
+  const anchor = (portfolio.createdAt && String(portfolio.createdAt).slice(0, 10)) || today;
+  const lastRebalance = portfolio.lastRebalance || null;
+  const histDates = new Set((portfolio.rebalanceHistory || []).map((r) => r.date).filter(Boolean));
+  const endGen = isoAddDays(today, 800) || today;
+  const scheduled = getRebalanceDates(anchor, endGen, rebalanceFreq);
+  const nextRebalance = scheduled.find((d) => d >= today) || null;
+  const daysUntilNext = nextRebalance != null ? daysBetween(today, nextRebalance) : null;
+  const todayIsRebalanceDay = scheduled.includes(today);
+  const missedRebalances = [];
+  const lower = lastRebalance || '';
+  for (const d of scheduled) {
+    if (d <= lower) continue;
+    if (d > today) break;
+    if (!histDates.has(d)) missedRebalances.push(d);
+  }
+  return {
+    lastRebalance,
+    nextRebalance,
+    daysUntilNext,
+    todayIsRebalanceDay,
+    missedRebalances,
+    rebalanceFreq
+  };
+}
+
 // =====================================================================
 // OPTIMIZATION — Reset / Freeze
 // =====================================================================
@@ -8019,6 +8063,11 @@ app.post('/api/paper-trade/init', (req, res) => {
     req.body?.rlOnlineLearning === true ||
     req.body?.rlOnlineLearning === 'true' ||
     req.body?.rlOnlineLearning === '1';
+  const freqRaw =
+    req.body?.rebalanceFreq != null && req.body?.rebalanceFreq !== ''
+      ? String(req.body.rebalanceFreq).toLowerCase().trim()
+      : 'bimonthly';
+  const rebalanceFreqInit = PAPER_SCHEDULE_FREQ_ALLOWED.includes(freqRaw) ? freqRaw : 'bimonthly';
   const config = {
     initialCapital: parseFloat(initialCapital),
     strategy,
@@ -8036,6 +8085,7 @@ app.post('/api/paper-trade/init', (req, res) => {
     mlRankWeight,
     adaptiveMode: amInit,
     regimeEnabled: regimeEnabledInit,
+    rebalanceFreq: rebalanceFreqInit,
     ...(psInit ? { positionSizing: psInit } : {}),
     ...(strategy === 'full_composite' ||
     strategy === 'full_composite_aggressive' ||
@@ -8043,6 +8093,22 @@ app.post('/api/paper-trade/init', (req, res) => {
       ? { rlAgent: rlInitOn, rlOnlineLearning: rlOnlineInit }
       : {})
   };
+  const bw = req.body?.weights;
+  if (
+    bw != null &&
+    typeof bw === 'object' &&
+    !Array.isArray(bw) &&
+    (strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo') &&
+    config.weights
+  ) {
+    for (const f of FACTOR_NAMES) {
+      if (!Object.prototype.hasOwnProperty.call(bw, f)) continue;
+      const v = bw[f];
+      if (v === null || v === undefined || v === '') continue;
+      const n = typeof v === 'number' ? v : parseFloat(String(v));
+      if (Number.isFinite(n)) config.weights[f] = n;
+    }
+  }
   if (!UNIVERSE_TICKERS[config.universe]) {
     return res.status(400).json({ success: false, error: `Unknown universe: ${config.universe}` });
   }
@@ -8087,13 +8153,18 @@ app.patch('/api/paper-trade/config', (req, res) => {
       }
       portfolio.config.weights = base;
     }
+    if (body.rebalanceFreq != null && body.rebalanceFreq !== '') {
+      const fr = String(body.rebalanceFreq).toLowerCase().trim();
+      if (PAPER_SCHEDULE_FREQ_ALLOWED.includes(fr)) portfolio.config.rebalanceFreq = fr;
+    }
     savePortfolio(portfolio);
     res.json({
       success: true,
       config: {
         rlAgent: portfolio.config.rlAgent === true,
         rlOnlineLearning: portfolio.config.rlOnlineLearning === true,
-        weights: portfolio.config.weights || null
+        weights: portfolio.config.weights || null,
+        rebalanceFreq: normalizePaperRebalanceFreq(portfolio)
       }
     });
   } catch (e) {
@@ -8272,12 +8343,8 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
     const alpha = totalReturn - spyReturn;
     const daysActive = Math.floor((Date.now() - new Date(portfolio.createdAt).getTime()) / (86400000));
 
-    let nextRebalance = null;
-    if (portfolio.lastRebalance) {
-      nextRebalance = nextMidMonthRebalanceAfter(portfolio.lastRebalance);
-    } else if (portfolio.createdAt) {
-      nextRebalance = nextMidMonthRebalanceAfter(portfolio.createdAt);
-    }
+    const schedPaper = buildPaperTradeScheduleResponse(portfolio);
+    const nextRebalance = schedPaper.nextRebalance;
 
     const monthlyEventsSummary = buildPaperMonthlyEventsSummary(portfolio.rebalanceHistory);
 
@@ -8786,7 +8853,8 @@ async function paperRebalanceExecute(portfolio, persist) {
     if (compositePaper && pitPaperMeta.pitDetail && (pitPaperMeta.pitDetail.fallback > 0 || pitPaperMeta.pitDetail.stale > 0)) {
       weightsForRank = applyPitStalenessPillarHalving(weightsForRank);
     }
-    portfolio.config.weights = { ...weightsForRank };
+    // Do not persist weightsForRank to portfolio.config — adaptive/PIT paths renormalize; user/PATCH
+    // weights must stay verbatim on disk.
 
     // Run ranking (PIT fundamentals when applicable; adaptive after 6+ prior rebalances)
     let rankings;
@@ -9011,6 +9079,21 @@ async function paperRebalanceExecute(portfolio, persist) {
 
     const maxHoldingsPaper = rebalanceSlotCapPaper + HOLDINGS_OVERFLOW_SLOTS;
 
+    const currentHoldingsCountPaper = portfolio.holdings.length;
+    const rlCompositeActivePaper =
+      compositePaper &&
+      paperPortfolioRlEnabled(portfolio) &&
+      spyPaper?.length &&
+      TRAINED_RL_AGENT &&
+      rlPaperMeta;
+    const lastRebalanceRegimePaper = portfolio.lastRebalanceRegime;
+    const minHoldDaysForSell =
+      rlCompositeActivePaper &&
+      Math.abs(adjustedTopNPaper - currentHoldingsCountPaper) > 5 &&
+      lastRebalanceRegimePaper !== regimeMetaPaper.regime
+        ? 14
+        : MIN_HOLD_DAYS_BEFORE_SELL;
+
     // Current prices for held stocks
     const allRelevantTickers = [...new Set([
       ...portfolio.holdings.map(h => h.ticker),
@@ -9024,6 +9107,37 @@ async function paperRebalanceExecute(portfolio, persist) {
         currentPrices[ticker] = ph[ph.length - 1].close;
       }
     }
+
+    const holdingsForHealth = portfolio.holdings || [];
+    let positionsLocked = 0;
+    let positionsEligible = 0;
+    let oldestPosition = null;
+    let youngestPosition = null;
+    let nextEligibleDate = null;
+    for (const h of holdingsForHealth) {
+      const dh = daysBetween(h.entryDate, today);
+      if (dh < minHoldDaysForSell) {
+        positionsLocked++;
+        const clear = isoAddDays(h.entryDate, minHoldDaysForSell);
+        if (clear && (!nextEligibleDate || clear < nextEligibleDate)) nextEligibleDate = clear;
+      } else {
+        positionsEligible++;
+      }
+      const row = { ticker: h.ticker, daysHeld: dh };
+      if (!oldestPosition || dh > oldestPosition.daysHeld) oldestPosition = row;
+      if (!youngestPosition || dh < youngestPosition.daysHeld) youngestPosition = row;
+    }
+    const rlWantsHealth = rlPaperMeta ? rlPaperMeta.positionCount : null;
+    const health = {
+      positionsLocked,
+      positionsEligible,
+      oldestPosition: holdingsForHealth.length ? oldestPosition : null,
+      youngestPosition: holdingsForHealth.length ? youngestPosition : null,
+      nextEligibleDate,
+      rlPolicyMatch: !!(rlPaperMeta && holdingsForHealth.length === rlPaperMeta.positionCount),
+      rlWants: rlWantsHealth,
+      currentHoldings: holdingsForHealth.length
+    };
 
     const sells = [];
     let remainingHoldings = [...portfolio.holdings];
@@ -9064,9 +9178,9 @@ async function paperRebalanceExecute(portfolio, persist) {
       if (!allowsSellPaper(sOld)) continue;
       const sellPrice = currentPrices[h.ticker] || h.entryPrice;
       const hDays = daysBetween(h.entryDate, today);
-      if (hDays < MIN_HOLD_DAYS_BEFORE_SELL) {
+      if (hDays < minHoldDaysForSell) {
         if (turnoverDebugEnabled()) {
-          console.log(`[HOLD] paper keep ${h.ticker} — ${hDays}d < min ${MIN_HOLD_DAYS_BEFORE_SELL}d`);
+          console.log(`[HOLD] paper keep ${h.ticker} — ${hDays}d < min ${minHoldDaysForSell}d`);
         }
         continue;
       }
@@ -9076,8 +9190,10 @@ async function paperRebalanceExecute(portfolio, persist) {
     while (remainingHoldings.length > maxHoldingsPaper) {
       const pool = remainingHoldings.filter((h) => !topTickers.has(h.ticker));
       if (!pool.length) break;
-      pool.sort((a, b) => scorePaper(a.ticker) - scorePaper(b.ticker));
-      const h = pool[0];
+      const eligiblePool = pool.filter((h) => daysBetween(h.entryDate, today) >= minHoldDaysForSell);
+      if (!eligiblePool.length) break;
+      eligiblePool.sort((a, b) => scorePaper(a.ticker) - scorePaper(b.ticker));
+      const h = eligiblePool[0];
       if (!allowsSellPaper(scorePaper(h.ticker))) break;
       const sellPrice = currentPrices[h.ticker] || h.entryPrice;
       pushRotationSell(h, sellPrice);
@@ -9234,7 +9350,10 @@ async function paperRebalanceExecute(portfolio, persist) {
     }
     portfolio.rebalanceHistory.push(rebalanceEntry);
 
-    if (persist) savePortfolio(portfolio);
+    if (persist) {
+      portfolio.lastRebalanceRegime = regimeMetaPaper.regime;
+      savePortfolio(portfolio);
+    }
 
     const isCompositePaper = strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo';
     const activeWeightsPct = isCompositePaper
@@ -9283,6 +9402,7 @@ async function paperRebalanceExecute(portfolio, persist) {
       adjustedTopN: adjustedTopNPaper,
       sizingMethod: positionSizingPaper,
       rlDecision: rlDecisionHoisted,
+      health,
       buys: buysHoisted,
       sells: sellsHoisted,
       stops: stopsHoisted,
@@ -9364,6 +9484,18 @@ app.get('/api/paper-trade/preview', async (req, res) => {
   }
 });
 
+app.get('/api/paper-trade/schedule', (req, res) => {
+  try {
+    const portfolio = loadPortfolio();
+    if (!portfolio) {
+      return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
+    }
+    res.json({ success: true, ...buildPaperTradeScheduleResponse(portfolio) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 // =====================================================================
 // PAPER TRADE — History
 // =====================================================================
@@ -9439,12 +9571,18 @@ app.get('/api/health', (req, res) => {
 });
 
 
-const server = app.listen(PORT, () => {
+// Express 5 wires the listen() callback to `server.once('error', done)` as well as
+// success — so a single (err?) => ... cb can run on EADDRINUSE and falsely log "running".
+// Use explicit `listening` / `error` handlers instead of passing a callback to listen().
+const server = app.listen(PORT);
+server.once('listening', () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is already in use. Kill the existing process or use a different port.`);
+    console.error(
+      `Port ${PORT} is already in use. Run \`npm run server:free\` then \`npm run server\`, or use \`npm run dev:all\` (frees the port first). Or set PORT=3002 in .env.`,
+    );
   } else {
     console.error('Server error:', err);
   }
