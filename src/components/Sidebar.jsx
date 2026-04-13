@@ -7,10 +7,30 @@ import {
   LayoutDashboard
 } from "lucide-react";
 
+function OptionsNavIcon(props) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={20}
+      height={20}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      {...props}
+    >
+      <path d="M3 3v18h18M7 16l4-4 4 4 4-8" />
+    </svg>
+  );
+}
+
 const NAV = [
   { id: "search", label: "Search", Icon: Search },
   { id: "backtest", label: "Backtest", Icon: LineChart },
   { id: "papertrade", label: "Trading", Icon: Wallet },
+  { id: "options", label: "Options", Icon: OptionsNavIcon },
   { id: "rl", label: "RL Agent", Icon: Bot }
 ];
 
