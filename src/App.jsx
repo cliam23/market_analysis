@@ -3,6 +3,7 @@ import SearchView from "./components/SearchView.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
 import RLTab from "./components/RLTab.jsx";
 import PaperTradeTab from "./components/PaperTradeTab.jsx";
+import OptionsTab from "./components/OptionsTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
 import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
 import Sidebar, { SidebarStandalone } from "./components/Sidebar.jsx";
@@ -101,12 +102,16 @@ export default function App() {
             <BacktestTab />
           </div>
 
-          <div style={{ display: tab === "rl" ? "block" : "none" }}>
-            <RLTab />
-          </div>
-
           <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
             <PaperTradeTab visible={tab === "papertrade"} />
+          </div>
+
+          <div style={{ display: tab === "options" ? "block" : "none" }}>
+            <OptionsTab visible={tab === "options"} />
+          </div>
+
+          <div style={{ display: tab === "rl" ? "block" : "none" }}>
+            <RLTab />
           </div>
 
           <div style={{ display: tab === "about" ? "block" : "none" }}>
