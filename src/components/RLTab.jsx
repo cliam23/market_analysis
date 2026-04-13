@@ -63,6 +63,7 @@ export default function RLTab() {
     setTrainLoading(true);
     setTrainErr(null);
     setTrainResult(null);
+    const clientStart = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
       const res = await fetch("/api/rl/train", {
         method: "POST",
@@ -78,7 +79,9 @@ export default function RLTab() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
-      setTrainResult(data);
+      const clientTotalMs =
+        (typeof performance !== "undefined" ? performance.now() : Date.now()) - clientStart;
+      setTrainResult({ ...data, clientTotalMs: parseFloat(clientTotalMs.toFixed(1)) });
     } catch (e) {
       setTrainErr(e.message);
     } finally {
@@ -234,6 +237,32 @@ export default function RLTab() {
         </button>
         {trainErr && (
           <div style={{ marginTop: 12, color: "#f87171", fontSize: 12, fontFamily: MONO }}>{trainErr}</div>
+        )}
+        {trainResult && (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 12,
+              fontFamily: MONO,
+              color: "#a7f3d0",
+              lineHeight: 1.5
+            }}
+          >
+            Episode loop:{" "}
+            <strong>{trainResult.trainingDurationSec ?? (trainResult.trainingDurationMs != null ? (trainResult.trainingDurationMs / 1000).toFixed(2) : "—")}s</strong>
+            {trainResult.avgEpisodeMs != null ? (
+              <>
+                {" "}
+                (~{trainResult.avgEpisodeMs.toFixed(0)} ms/episode)
+              </>
+            ) : null}
+            {trainResult.clientTotalMs != null ? (
+              <>
+                <br />
+                Client round-trip: <strong>{(trainResult.clientTotalMs / 1000).toFixed(2)}s</strong> (includes HTTP + JSON)
+              </>
+            ) : null}
+          </div>
         )}
         {trainResult && (
           <pre

@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ComposedChart, Bar } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
-import { RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 function Box({ border, children, style: sx = {} }) {
@@ -20,20 +19,37 @@ function Box({ border, children, style: sx = {} }) {
   );
 }
 
-function Select({ value, onChange, options, label, style }) {
+function Select({ value, onChange, options, label, style, compact }) {
+  const labelSize = compact ? 9 : 10;
+  const labelMb = compact ? 2 : 4;
+  const pad = compact ? "5px 8px" : "8px 10px";
+  const fontSize = compact ? 11 : 12;
   return (
     <div style={{ minWidth: 0, width: "100%", ...style }}>
-      {label && <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{label}</div>}
+      {label && (
+        <div
+          style={{
+            fontSize: labelSize,
+            color: "#f0f0f0",
+            fontWeight: 700,
+            letterSpacing: compact ? 0.6 : 1,
+            marginBottom: labelMb,
+            fontFamily: MONO
+          }}
+        >
+          {label}
+        </div>
+      )}
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
           background: "rgba(255,255,255,0.04)",
           border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: 6,
-          padding: "8px 10px",
+          borderRadius: compact ? 5 : 6,
+          padding: pad,
           color: "#f0f0f0",
-          fontSize: 12,
+          fontSize,
           fontFamily: MONO,
           cursor: "pointer",
           width: "100%",
@@ -309,6 +325,26 @@ export default function BacktestTab() {
   });
   /** Composite-only: server defaults to RL when trained agent exists; UI sends explicit true/false. */
   const [rlAgentOn, setRlAgentOn] = useState(true);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const advancedWrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!advancedOpen) return;
+    const onDown = (e) => {
+      if (advancedWrapRef.current && !advancedWrapRef.current.contains(e.target)) {
+        setAdvancedOpen(false);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === "Escape") setAdvancedOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [advancedOpen]);
 
   const updateSetting = (key, value) => {
     setSettings(s => ({ ...s, [key]: value }));
@@ -515,103 +551,187 @@ export default function BacktestTab() {
   const benchDescription = apiBench?.description ?? null;
   const strategyAboveLabel = `Strategy (above ${benchShort})`;
   const strategyBelowLabel = `Strategy (below ${benchShort})`;
-  
+
+  const btFilterGridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(6.75rem, 1fr))",
+    gap: "6px 8px",
+    alignItems: "end"
+  };
+
+  const btAdvancedPopoverGridStyle = {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fill, minmax(8.25rem, 1fr))",
+    gap: "8px 10px",
+    alignItems: "end"
+  };
+
   return (
     <div>
       {/* Controls */}
-      <Box style={{ marginBottom: 16 }}>
+      <Box style={{ marginBottom: 12, padding: "10px 12px" }}>
         <div
           style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(9.25rem, 1fr))",
-            gap: "12px 10px",
-            alignItems: "end"
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "flex-end",
+            gap: "8px 10px",
+            justifyContent: "space-between"
           }}
         >
-          <Select
-            label="UNIVERSE"
-            value={settings.universe}
-            onChange={(v) => updateSetting('universe', v)}
-            options={universeOptions}
-          />
-          <Select
-            label="PERIOD"
-            value={settings.period}
-            onChange={(v) => updateSetting('period', v)}
-            options={periodOptions}
-          />
-          <Select
-            label="REBALANCE"
-            value={settings.rebalanceFreq}
-            onChange={(v) => updateSetting('rebalanceFreq', v)}
-            options={freqOptions}
-          />
-          <Select
-            label="HOLD TOP"
-            value={settings.topN}
-            onChange={(v) => updateSetting('topN', v)}
-            options={topNOptions}
-          />
-          <Select
-            label="STRATEGY"
-            value={settings.strategy}
-            onChange={(v) => updateSetting('strategy', v)}
-            options={strategyOptions}
-          />
-          <Select
-            label="ADAPTIVE MODE"
-            value={settings.adaptiveMode}
-            onChange={(v) => updateSetting("adaptiveMode", v)}
-            options={adaptiveModeOptions}
-          />
-          <Select
-            label="POSITION SIZING"
-            value={settings.positionSizing}
-            onChange={(v) => updateSetting("positionSizing", v)}
-            options={positionSizingOptions}
-          />
-          {isCompositeFamily(settings.strategy) && (
+          <div style={{ ...btFilterGridStyle, flex: "1 1 12rem", minWidth: 0, maxWidth: "100%" }}>
             <Select
-              label="RL AGENT"
-              value={rlAgentOn ? "on" : "off"}
-              onChange={(v) => {
-                setRlAgentOn(v === "on");
-                setResults(null);
-                setError(null);
-              }}
-              options={[
-                { id: "on", label: "On (Q-learning)" },
-                { id: "off", label: "Off (rules only)" }
-              ]}
+              compact
+              label="UNIVERSE"
+              value={settings.universe}
+              onChange={(v) => updateSetting('universe', v)}
+              options={universeOptions}
             />
-          )}
-        </div>
-        <div style={RUN_ACTION_BAR_STYLE}>
-          <button
-            type="button"
-            onClick={onRunBacktestClick}
-            title={loading ? "Click to cancel the in-flight backtest" : undefined}
+            <Select
+              compact
+              label="PERIOD"
+              value={settings.period}
+              onChange={(v) => updateSetting('period', v)}
+              options={periodOptions}
+            />
+            <Select
+              compact
+              label="STRATEGY"
+              value={settings.strategy}
+              onChange={(v) => updateSetting('strategy', v)}
+              options={strategyOptions}
+            />
+          </div>
+          <div
             style={{
-              padding: "10px 20px",
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-end",
+              gap: 8,
               flexShrink: 0,
-              minWidth: "11.5rem",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.12)",
-              borderRadius: 6,
-              color: loading ? "#888" : "#f0f0f0",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: MONO,
-              boxSizing: "border-box",
-              whiteSpace: "nowrap"
+              marginLeft: "auto"
             }}
           >
-            {loading ? "RUNNING…" : "RUN BACKTEST"}
-          </button>
+            <div ref={advancedWrapRef} style={{ position: "relative" }}>
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                aria-expanded={advancedOpen}
+                aria-haspopup="dialog"
+                style={{
+                  fontFamily: MONO,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.8,
+                  color: advancedOpen ? "#e5e5e5" : "#a8a8a8",
+                  cursor: "pointer",
+                  padding: "6px 10px",
+                  userSelect: "none",
+                  background: advancedOpen ? "rgba(255,255,255,0.08)" : "rgba(255,255,255,0.04)",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  borderRadius: 6,
+                  whiteSpace: "nowrap",
+                  boxSizing: "border-box"
+                }}
+              >
+                Advanced {advancedOpen ? "▲" : "▼"}
+              </button>
+              {advancedOpen && (
+                <div
+                  role="dialog"
+                  aria-label="Advanced backtest settings"
+                  style={{
+                    position: "absolute",
+                    top: "100%",
+                    right: 0,
+                    marginTop: 6,
+                    zIndex: 50,
+                    minWidth: "min(92vw, 17.5rem)",
+                    maxWidth: "min(92vw, 34rem)",
+                    maxHeight: "min(72vh, 28rem)",
+                    overflow: "auto",
+                    padding: 12,
+                    background: "rgba(18, 18, 22, 0.98)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 10,
+                    boxShadow: "0 14px 48px rgba(0,0,0,0.5)"
+                  }}
+                >
+                  <div style={btAdvancedPopoverGridStyle}>
+                    <Select
+                      compact
+                      label="REBALANCE"
+                      value={settings.rebalanceFreq}
+                      onChange={(v) => updateSetting('rebalanceFreq', v)}
+                      options={freqOptions}
+                    />
+                    <Select
+                      compact
+                      label="HOLD TOP"
+                      value={settings.topN}
+                      onChange={(v) => updateSetting('topN', v)}
+                      options={topNOptions}
+                    />
+                    <Select
+                      compact
+                      label="ADAPTIVE MODE"
+                      value={settings.adaptiveMode}
+                      onChange={(v) => updateSetting("adaptiveMode", v)}
+                      options={adaptiveModeOptions}
+                    />
+                    <Select
+                      compact
+                      label="POSITION SIZING"
+                      value={settings.positionSizing}
+                      onChange={(v) => updateSetting("positionSizing", v)}
+                      options={positionSizingOptions}
+                    />
+                    {isCompositeFamily(settings.strategy) && (
+                      <Select
+                        compact
+                        label="RL AGENT"
+                        value={rlAgentOn ? "on" : "off"}
+                        onChange={(v) => {
+                          setRlAgentOn(v === "on");
+                          setResults(null);
+                          setError(null);
+                        }}
+                        options={[
+                          { id: "on", label: "On (Q-learning)" },
+                          { id: "off", label: "Off (rules only)" }
+                        ]}
+                      />
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onRunBacktestClick}
+              title={loading ? "Click to cancel the in-flight backtest" : undefined}
+              style={{
+                padding: "7px 14px",
+                flexShrink: 0,
+                minWidth: "9.25rem",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: loading ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)",
+                border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 6,
+                color: loading ? "#888" : "#f0f0f0",
+                fontSize: 11,
+                fontWeight: 700,
+                cursor: "pointer",
+                fontFamily: MONO,
+                boxSizing: "border-box",
+                whiteSpace: "nowrap"
+              }}
+            >
+              {loading ? "RUNNING…" : "RUN BACKTEST"}
+            </button>
+          </div>
         </div>
       </Box>
       
@@ -669,8 +789,8 @@ export default function BacktestTab() {
                   letterSpacing: 0.5
                 }}
               >
-                Q-learning active — {results.rlStatesVisited ?? 0} states visited ·{" "}
-                {(Number(results.rlTotalUpdates) || 0).toLocaleString()} training updates
+                Q-learning active — {results.rlAgentStats?.statesVisited ?? results.rlStatesVisited ?? 0} states ·{" "}
+                {(Number(results.rlAgentStats?.totalUpdates ?? results.rlTotalUpdates) || 0).toLocaleString()} updates
               </div>
             )}
 

@@ -71,9 +71,11 @@ These are created at runtime and listed in **`.gitignore`**:
 
 - **`paper-portfolio.json`** — paper trading state (holdings, rebalances, config).
 - **`rl-agent.json`** — trained Q-learning agent (large).
+- **`rl-test-report.json`** — written when you run the RL test harness (`/api/rl/test` or `node rl-test-harness.js`).
+- **`rl-train-*.json`**, **`rl-agent.backup*.json`** — training logs / backups (optional).
 - **`.cache/`** — Yahoo and other caches.
 
-New clones start without them; the UI explains how to init paper trading and how RL loads when the file exists.
+New clones start without them; the UI explains how to init paper trading and how RL loads when the file exists. **You do not need any of these files to run `npm run dev:all`** — only optional features (RL eval, paper trade persistence) expect them after you create them locally.
 
 ## Production-style run
 

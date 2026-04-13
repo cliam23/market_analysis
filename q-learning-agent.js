@@ -16,8 +16,8 @@ export const REGIME_BUCKET_MAP = {
 export const ALPHA_BINS = [-Infinity, -0.05, -0.02, 0, 0.02, 0.05, Infinity];
 export const BREADTH_BINS = [-Infinity, 0.3, 0.5, 0.7, Infinity];
 export const VOL_BINS = [-Infinity, 0.1, 0.15, 0.25, Infinity];
-/** Top-15 avg composite score on 0–100 scale */
-export const SIGNAL_BINS = [-Infinity, 55, 65, 75, Infinity];
+/** Top-15 avg composite score on 0–100 scale (edges ≈ p25/p50/p75 from 5y bimonthly full_composite backtest sample, Apr 2026). */
+export const SIGNAL_BINS = [-Infinity, 84, 89, 91, Infinity];
 
 export const N_REGIME = 5;
 export const N_ALPHA = 6;
@@ -28,8 +28,8 @@ export const N_SIGNAL = 4;
 export const TOTAL_STATES = N_REGIME * N_ALPHA * N_BREADTH * N_VOL * N_SIGNAL;
 
 export const ACTION_SPACE = {
-  exposure: { levels: [0.5, 0.7, 0.85, 1.0], n: 4 },
-  positionCount: { levels: [10, 13, 15, 18], n: 4 },
+  exposure: { levels: [0.5, 0.65, 0.8, 1.0], n: 4 },
+  positionCount: { levels: [7, 10, 13, 15], n: 4 },
   sizingMethod: { levels: ['equal', 'invVol', 'score'], n: 3 }
 };
 
@@ -38,8 +38,8 @@ export const TOTAL_ACTIONS = 4 * 4 * 3;
 export const Q_VALUE_CLIP = 2;
 export const MIN_VISITS_FOR_EXPLOIT = 10;
 
-/** Default: full exposure, 15 names, invVol → exposureIdx 3, posIdx 2, sizingIdx 1 */
-export const DEFAULT_ACTION_IDX = (3 * 4 + 2) * 3 + 1;
+/** Default: full exposure, 15 names, invVol → exposureIdx 3, posIdx 3, sizingIdx 1 */
+export const DEFAULT_ACTION_IDX = (3 * 4 + 3) * 3 + 1;
 
 export function discretize(value, bins) {
   for (let i = 1; i < bins.length; i++) {
@@ -101,29 +101,30 @@ export function encodeAction(exposureIdx, posCountIdx, sizingIdx) {
 
 export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown) {
   const alpha = portfolioReturn - benchmarkReturn;
-  const volPenalty = portfolioVol > 0 ? portfolioVol : 0.15;
-  const sharpeComponent = alpha / volPenalty;
-  const ddPenalty = maxDrawdown < -0.1 ? (maxDrawdown + 0.1) * 2 : 0;
-  return sharpeComponent * 0.5 + ddPenalty;
+  const vol = portfolioVol > 0 ? portfolioVol : 0.15;
+  const sharpeAlpha = alpha / vol;
+  const ddPenalty = maxDrawdown < -0.15 ? (maxDrawdown + 0.15) * 1.0 : 0;
+  return (sharpeAlpha * 0.7 + ddPenalty) * 3.0;
 }
 
 export class QLearningTradingAgent {
   constructor(config = {}) {
-    this.alpha = config.alpha ?? 0.015;
-    this.beta = config.beta ?? 5e-6;
+    this.alpha = config.alpha ?? 0.05;
+    this.beta = config.beta ?? 1e-5;
     this.rho = config.rho ?? 0.9;
     this.nStates = config.nStates ?? TOTAL_STATES;
     this.nActions = config.nActions ?? TOTAL_ACTIONS;
     this.Q = new Float64Array(this.nStates * this.nActions);
     this.visitCounts = new Uint32Array(this.nStates);
     this.totalUpdates = 0;
+    this.statesVisited = 0;
     this._initializeQ();
   }
 
   _initializeQ() {
-    const initValue = 0.05;
+    const initValue = 0.15;
     for (let i = 0; i < this.Q.length; i++) {
-      this.Q[i] = initValue + (Math.random() - 0.5) * 0.01;
+      this.Q[i] = initValue + (Math.random() - 0.5) * 0.03;
     }
   }
 
@@ -209,7 +210,18 @@ export class QLearningTradingAgent {
     return policy;
   }
 
+  /** Unique state indices with at least one Q entry !== 0 (used after load from disk). */
+  recomputeStatesVisitedFromQ() {
+    const visitedSet = new Set();
+    for (let i = 0; i < this.Q.length; i++) {
+      if (this.Q[i] !== 0) visitedSet.add(Math.floor(i / this.nActions));
+    }
+    this.statesVisited = visitedSet.size;
+    return this.statesVisited;
+  }
+
   serialize() {
+    this.recomputeStatesVisitedFromQ();
     return {
       version: 1,
       alpha: this.alpha,
@@ -219,7 +231,8 @@ export class QLearningTradingAgent {
       nActions: this.nActions,
       Q: Array.from(this.Q),
       visitCounts: Array.from(this.visitCounts),
-      totalUpdates: this.totalUpdates
+      totalUpdates: this.totalUpdates,
+      statesVisited: this.statesVisited
     };
   }
 
@@ -231,13 +244,14 @@ export class QLearningTradingAgent {
       nStates: data.nStates,
       nActions: data.nActions
     });
-    if (Array.isArray(data.Q) && data.Q.length === agent.Q.length) {
-      agent.Q = new Float64Array(data.Q);
-    }
     if (Array.isArray(data.visitCounts) && data.visitCounts.length === agent.visitCounts.length) {
       agent.visitCounts = new Uint32Array(data.visitCounts);
     }
-    agent.totalUpdates = data.totalUpdates | 0;
+    agent.totalUpdates = data.totalUpdates ?? 0;
+    if (Array.isArray(data.Q) && data.Q.length === agent.Q.length) {
+      agent.Q = new Float64Array(data.Q);
+      agent.recomputeStatesVisitedFromQ();
+    }
     return agent;
   }
 }

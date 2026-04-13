@@ -64,7 +64,7 @@ export default function AboutTab() {
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 4, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>ABOUT</div>
         <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0, color: "#f0f0f0" }}>How everything works</h2>
         <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 6, fontFamily: MONO }}>
-          Multi-factor scoring, historical simulation, and optional ML — one coherent pipeline
+          One scoring engine · three ways to use it (analysis, backtest, rankings, paper) · two optional “smart” layers (Python RF blend, Q-learning RL)
         </p>
       </div>
 
@@ -80,31 +80,48 @@ export default function AboutTab() {
         </p>
       </Section>
 
-      <Section title="The five screens (tabs)" defaultOpen={true}>
+      <Section title="The big picture" defaultOpen={true}>
+        <p style={{ margin: "0 0 12px" }}>
+          <strong style={{ color: "#f0f0f0" }}>Shared brain:</strong> Search, Backtest, Strategy Rankings, and Trading all rely on the same analysis and ranking code paths (pillars → composite → sort). What changes is <em>how time works</em>: Search scores one ticker “now”; Rankings scores a whole universe “now”; Backtest replays many past rebalance dates; Paper starts from today and only moves forward when you (or auto-rebalance) trigger a rebalance.
+        </p>
+        <p style={{ margin: 0 }}>
+          <strong style={{ color: "#f0f0f0" }}>Optional extras:</strong> a <strong style={{ color: "#f0f0f0" }}>Python Random Forest</strong> can blend into ranks or single-ticker composite when you configure <strong style={{ color: "#f0f0f0" }}>.env</strong> (separate from RL). A <strong style={{ color: "#f0f0f0" }}>Q-learning agent</strong> (trained in-app, saved as <strong style={{ color: "#f0f0f0" }}>rl-agent.json</strong> on the server) can steer composite <strong style={{ color: "#f0f0f0" }}>backtests</strong> and composite <strong style={{ color: "#f0f0f0" }}>paper</strong> rebalances when enabled — see the RL section below.
+        </p>
+      </Section>
+
+      <Section title="Sidebar: what each area does" defaultOpen={true}>
+        <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.65 }}>
+          Order matches the left rail: <strong style={{ color: "#f0f0f0" }}>Search</strong>, <strong style={{ color: "#f0f0f0" }}>Backtest</strong>, <strong style={{ color: "#f0f0f0" }}>Trading</strong>, <strong style={{ color: "#f0f0f0" }}>Strategy Rankings</strong>, <strong style={{ color: "#f0f0f0" }}>RL Agent</strong>. <strong style={{ color: "#f0f0f0" }}>About</strong> is under the gear at the bottom.
+        </p>
         <FlowStep
           n={1}
           title="Search"
-          body="Pick a ticker from the list or search. Opening a name loads a full analysis: composite and pillar scores, Buffett-style checklist context, DCF summary, comparables, shareholder yield, and momentum/entry timing. Deep sections may call dedicated endpoints (for example DCF detail or comps). You can go back to the list without losing the server session."
+          body="Pick a ticker from the list or type to filter. Opening a name loads a full analysis: composite and pillar scores, Buffett-style checklist context, DCF summary, comparables, shareholder yield, and momentum/entry timing. Some panels call extra endpoints (for example DCF detail or comps). Use Back to return to the list; the browser session keeps talking to the same Node server."
         />
         <FlowStep
           n={2}
           title="Backtest"
-          body="Choose universe (e.g. S&P 500 Top 50, Mag 7), calendar period, rebalance frequency, how many names to hold, and strategy. The server walks forward in time: on each rebalance it ranks the universe, applies sector limits where relevant, sizes positions, and simulates daily marks with optional stop-loss and regime-based exposure. Results include performance stats vs a benchmark, equity curve (with optional inflation baseline when data is available), monthly returns, factor attribution for composite strategies, and a trade log."
+          body="Choose universe (e.g. S&P 500 Top 50, Mag 7), calendar period, rebalance frequency, position count, and strategy. The server walks forward in time: on each rebalance it re-ranks the universe, applies sector limits where relevant, sizes positions, and marks the book daily with optional stop-loss and regime-based exposure. You get performance vs benchmark, equity curve (optional inflation / cash baseline when data exists), monthly returns, factor attribution for composite strategies, and a trade log. For composite strategies, an RL toggle runs the trained Q-agent when rl-agent.json is loaded unless you force rules-only (rlAgent=false in the request)."
         />
         <FlowStep
           n={3}
-          title="Strategy Rankings"
-          body="This is a live cross-sectional scan, not a time machine. You choose the same strategy families as the backtest (momentum-only through full composite variants), a universe, a momentum lookback (3 / 6 / 12 months), and optional smoothing. Run Scan to fetch fresh data and rank every stock in that universe today. Sort by strategy score, raw momentum, or risk-adjusted momentum. Tap a row to open that ticker in Search."
+          title="Trading (paper)"
+          body="Paper portfolio lives in a server-side file (paper-portfolio.json — not committed to git). Initialize with capital, universe, strategy, position count, and schedule; the server stores holdings, cash, next rebalance date, NAV history, and every past rebalance. Run Rebalance when you want a fresh rank-and-trade step, or rely on auto-rebalance when the due date is reached. Each step uses the same ranking machinery as backtest for your strategy. After a rebalance, the log can expose a shareable link that opens a standalone report: ?paperRebalance=YYYY-MM-DD (add paperRebalanceOcc=n if two rebalances fall on the same calendar day). Composite portfolios can turn RL on/off and optional online Q-updates via the live config toggles (or init flags); when RL is on and a trained agent exists, the rebalance may adjust exposure, how many names to buy, and sizing — the response includes an rlDecision summary when applicable."
         />
         <FlowStep
           n={4}
-          title="Trading (paper)"
-          body="Initialize a virtual portfolio with capital, universe, strategy, and how many positions to hold. The server tracks holdings, cash, next rebalance date, and history. You rebalance manually (or use auto-rebalance when the calendar reaches the scheduled date). Each rebalance recomputes rankings the same way as the backtest engine for your chosen strategy, then rebuilds the book. Performance is charted against a reference line (often SPY or universe-appropriate benchmark, depending on configuration)."
+          title="Strategy Rankings"
+          body="A live cross-sectional scan: same strategy families as Backtest (from momentum-only through full composite variants), pick universe, momentum lookback (3 / 6 / 12 months), optional smoothing. Scan pulls fresh data and ranks every symbol in that universe for today. Sort by strategy score, raw momentum, or risk-adjusted momentum. Click a row to jump to that ticker in Search."
         />
         <FlowStep
           n={5}
-          title="About"
-          body="This page — methodology, limitations, and disclaimers."
+          title="RL Agent"
+          body="Operational home for Q-learning: train the agent (POST /api/rl/train) over random rebalance episodes, inspect policy (GET /api/rl/policy), and compare rules-only vs RL-eval backtests (GET /api/rl/compare). Training overwrites the on-disk policy file the server loads at startup. This is independent of the Python Random Forest path — both can be off, one on, or both on, but they solve different problems (tabular rank blend vs discrete portfolio actions)."
+        />
+        <FlowStep
+          n={6}
+          title="About (this page)"
+          body="End-to-end map of the app: how data moves, what each screen does, pillar math, backtest and paper behavior, RL vs RF options, and limitations."
         />
       </Section>
 
@@ -115,8 +132,8 @@ export default function AboutTab() {
           Rankings for backtest, scan, and paper trade use the same underlying analysis code paths so results are comparable.
         </p>
         <p style={{ margin: 0 }}>
-          <strong style={{ color: "#f0f0f0" }}>Optional ML:</strong> if you train the Random Forest and set environment variables (see below), the server can blend a model score into composite <strong style={{ color: "#f0f0f0" }}>ranking</strong> for paper rebalance and composite <strong style={{ color: "#f0f0f0" }}>backtests</strong>, and optionally blend into the <strong style={{ color: "#f0f0f0" }}>single-ticker analysis</strong> composite.
-          The default with ML off remains fully rules-based and inspectable pillar-by-pillar.
+          <strong style={{ color: "#f0f0f0" }}>Optional Python RF:</strong> if you train the Random Forest and set environment variables (see below), the server can blend that model into composite <strong style={{ color: "#f0f0f0" }}>ranking</strong> for paper rebalance and composite <strong style={{ color: "#f0f0f0" }}>backtests</strong>, and optionally into the <strong style={{ color: "#f0f0f0" }}>single-ticker analysis</strong> composite in Search.
+          With RF off, everything stays rules-based and pillar-by-pillar inspectable. <strong style={{ color: "#f0f0f0" }}>Q-learning RL</strong> (rl-agent.json) is a separate knob and does not replace the RF variables — see the RL section.
         </p>
       </Section>
 
@@ -156,18 +173,31 @@ export default function AboutTab() {
         </ul>
       </Section>
 
-      <Section title="Paper trade vs backtest">
+      <Section title="Paper trading vs backtest (detail)">
         <p style={{ margin: "0 0 10px" }}>
-          <strong style={{ color: "#f0f0f0" }}>Backtest</strong> replays the past with your chosen dates and cadence. <strong style={{ color: "#f0f0f0" }}>Paper trade</strong> starts from “now” (or your init time) and moves forward: you see a live portfolio state, suggested next rebalance, and can apply a rebalance when you choose.
+          <strong style={{ color: "#f0f0f0" }}>Backtest</strong> replays history: you pick start/end, rebalance frequency, and the server simulates the whole period in one run. <strong style={{ color: "#f0f0f0" }}>Paper</strong> is stateful: one portfolio on disk, advancing only when you POST a rebalance (or when auto-rebalance fires). You always see current holdings, cash, next due date, and cumulative performance vs SPY (and capture stats when available).
         </p>
-        <p style={{ margin: 0 }}>
-          Composite paper portfolios can use <strong style={{ color: "#f0f0f0" }}>adaptive pillar weights</strong> informed by recent factor behavior (similar in spirit to adaptive logic in the backtest). Optional <strong style={{ color: "#f0f0f0" }}>ML rank blending</strong> applies at rebalance when configured. Execution is still model-level (prices at rebalance), not a broker simulator.
+        <p style={{ margin: "0 0 10px" }}>
+          Composite paper runs can use <strong style={{ color: "#f0f0f0" }}>adaptive pillar weights</strong> like the backtest (rolling factor behavior). <strong style={{ color: "#f0f0f0" }}>RF rank blending</strong> applies at rebalance if .env is set. <strong style={{ color: "#f0f0f0" }}>RL</strong>, when enabled for a composite book and a trained agent is loaded, participates in that same rebalance step (exposure / count / sizing), not as a separate broker.
+        </p>
+        <p style={{ margin: 0, fontSize: 12, fontFamily: MONO, lineHeight: 1.65, color: "#f0f0f0" }}>
+          APIs (for integrators): GET portfolio/history, POST init, POST rebalance, DELETE reset, PATCH config (e.g. rlAgent, rlOnlineLearning), GET rebalance-entry for standalone report pages.
         </p>
       </Section>
 
-      <Section title="Optional machine learning (admin / .env)">
+      <Section title="Q-learning reinforcement learning (RL Agent tab)">
+        <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 2 }}>
+          <li><strong style={{ color: "#f0f0f0" }}>What it is:</strong> a discrete-action Q-learning policy trained on synthetic rebalance episodes; the server persists weights in <strong style={{ color: "#f0f0f0" }}>rl-agent.json</strong> (gitignored — your machine only unless you copy it).</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Backtest:</strong> when that file loads at server start, composite backtests default to RL-on; pass <strong style={{ color: "#f0f0f0" }}>rlAgent=false</strong> to force pure rules. <strong style={{ color: "#f0f0f0" }}>rlRandomAgent=true</strong> is a diagnostic random-action mode.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Paper:</strong> init can set <strong style={{ color: "#f0f0f0" }}>rlAgent</strong> / <strong style={{ color: "#f0f0f0" }}>rlOnlineLearning</strong>; you can change them later via PATCH. If RL is off or no agent is loaded, composite paper falls back to regime-based exposure rules where applicable.</li>
+          <li><strong style={{ color: "#f0f0f0" }}>Online learning:</strong> set <strong style={{ color: "#f0f0f0" }}>RL_ONLINE_LEARNING=1</strong> in the environment or <strong style={{ color: "#f0f0f0" }}>rlOnlineLearning: true</strong> in paper config so the agent receives Q-updates from paper outcomes (reward uses portfolio vs benchmark and risk proxies).</li>
+          <li><strong style={{ color: "#f0f0f0" }}>UI tools:</strong> Train / Policy / Compare on the RL Agent tab call the HTTP endpoints above; Compare runs two short backtests (baseline vs eval) to sanity-check the policy.</li>
+        </ul>
+      </Section>
+
+      <Section title="Optional Python Random Forest (admin / .env)">
         <p style={{ margin: "0 0 10px" }}>
-          ML is <strong style={{ color: "#f0f0f0" }}>off by default</strong>. To use it you need Python dependencies (see <strong style={{ color: "#f0f0f0" }}>ml/README.md</strong>), a trained model under <strong style={{ color: "#f0f0f0" }}>models/</strong>, and typically a virtualenv the server can invoke.
+          The <strong style={{ color: "#f0f0f0" }}>tabular RF rank blend</strong> is <strong style={{ color: "#f0f0f0" }}>off by default</strong> and unrelated to Q-learning. To use it you need Python dependencies (see <strong style={{ color: "#f0f0f0" }}>ml/README.md</strong>), a trained model under <strong style={{ color: "#f0f0f0" }}>models/</strong>, and typically a virtualenv the server can invoke.
         </p>
         <ul style={{ margin: "0 0 10px", paddingLeft: 18, lineHeight: 2 }}>
           <li><strong style={{ color: "#f0f0f0" }}>ML_RANK_WEIGHT</strong> (0–1): blends the model into <strong style={{ color: "#f0f0f0" }}>composite ranking</strong> on paper rebalance and on composite <strong style={{ color: "#f0f0f0" }}>backtest</strong> rebalances. Higher values give more influence to the learned score. Requires a compatible trained RF pipeline.</li>
@@ -175,7 +205,7 @@ export default function AboutTab() {
           <li><strong style={{ color: "#f0f0f0" }}>PYTHON</strong>: optional path to the interpreter; otherwise the server prefers <strong style={{ color: "#f0f0f0" }}>.venv</strong> if present.</li>
         </ul>
         <p style={{ margin: 0, fontSize: 12, fontFamily: MONO, color: "#f0f0f0" }}>
-          Copy <strong style={{ color: "#f0f0f0" }}>.env.example</strong> to <strong style={{ color: "#f0f0f0" }}>.env</strong> for variable names. ML adds latency (Python subprocess per batch) — backtests with ML run slower.
+          Copy <strong style={{ color: "#f0f0f0" }}>.env.example</strong> to <strong style={{ color: "#f0f0f0" }}>.env</strong> for variable names. RF inference adds latency (Python subprocess per batch) — backtests with the blend enabled run slower.
         </p>
       </Section>
 
@@ -228,10 +258,10 @@ export default function AboutTab() {
             EDUCATIONAL TOOL — NOT FINANCIAL ADVICE
           </p>
           <p style={{ margin: "0 0 8px" }}>
-            This application is for learning and research. It shows how multi-factor and optional ML-augmented workflows can be structured; it should <strong style={{ color: "#f0f0f0" }}>never</strong> be the sole basis for real investment decisions.
+            This application is for learning and research. It shows how multi-factor rules, optional Random Forest rank blending, and optional Q-learning policies can be combined; it should <strong style={{ color: "#f0f0f0" }}>never</strong> be the sole basis for real investment decisions.
           </p>
           <p style={{ margin: "0 0 8px" }}>
-            Past backtest or paper results do not predict future returns. Simplifications (fundamentals, DCF, costs, execution) mean live outcomes would differ.
+            Past backtest or paper results do not predict future returns. Simplifications (fundamentals, DCF, costs, execution, and learned models fit to history) mean live outcomes would differ.
           </p>
           <p style={{ margin: 0 }}>
             Do your own due diligence, consult a licensed professional if you need advice, and only risk capital you can afford to lose. The authors accept no liability for decisions made using this tool.
