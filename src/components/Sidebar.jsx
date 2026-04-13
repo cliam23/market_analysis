@@ -2,7 +2,6 @@ import {
   Search,
   LineChart,
   Bot,
-  Trophy,
   Wallet,
   Settings,
   LayoutDashboard
@@ -12,11 +11,10 @@ const NAV = [
   { id: "search", label: "Search", Icon: Search },
   { id: "backtest", label: "Backtest", Icon: LineChart },
   { id: "papertrade", label: "Trading", Icon: Wallet },
-  { id: "rankings", label: "Strategy Rankings", Icon: Trophy },
   { id: "rl", label: "RL Agent", Icon: Bot }
 ];
 
-export default function Sidebar({ tab, setTab, onRankingsEnter }) {
+export default function Sidebar({ tab, setTab }) {
   return (
     <aside className="ma-sidebar" aria-label="Main navigation">
       <div className="ma-sidebar__brand">
@@ -31,10 +29,7 @@ export default function Sidebar({ tab, setTab, onRankingsEnter }) {
             className={
               "ma-sidebar__item" + (tab === id ? " ma-sidebar__item--active" : "")
             }
-            onClick={() => {
-              setTab(id);
-              if (id === "rankings" && onRankingsEnter) onRankingsEnter();
-            }}
+            onClick={() => setTab(id)}
             title={label}
           >
             <Icon aria-hidden />

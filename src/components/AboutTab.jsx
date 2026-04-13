@@ -64,7 +64,7 @@ export default function AboutTab() {
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 4, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO }}>ABOUT</div>
         <h2 style={{ fontSize: 20, fontWeight: 900, margin: 0, color: "#f0f0f0" }}>How everything works</h2>
         <p style={{ fontSize: 12, color: "#f0f0f0", marginTop: 6, fontFamily: MONO }}>
-          One scoring engine · three ways to use it (analysis, backtest, rankings, paper) · two optional “smart” layers (Python RF blend, Q-learning RL)
+          One scoring engine · Search, Backtest, Trading (paper), and RL Agent · two optional “smart” layers (Python RF blend, Q-learning RL)
         </p>
       </div>
 
@@ -82,7 +82,7 @@ export default function AboutTab() {
 
       <Section title="The big picture" defaultOpen={true}>
         <p style={{ margin: "0 0 12px" }}>
-          <strong style={{ color: "#f0f0f0" }}>Shared brain:</strong> Search, Backtest, Strategy Rankings, and Trading all rely on the same analysis and ranking code paths (pillars → composite → sort). What changes is <em>how time works</em>: Search scores one ticker “now”; Rankings scores a whole universe “now”; Backtest replays many past rebalance dates; Paper starts from today and only moves forward when you (or auto-rebalance) trigger a rebalance.
+          <strong style={{ color: "#f0f0f0" }}>Shared brain:</strong> Search, Backtest, and Trading all rely on the same analysis and ranking code paths (pillars → composite → sort). What changes is <em>how time works</em>: Search scores one ticker “now”; Backtest replays many past rebalance dates; Paper starts from today and only moves forward when you (or auto-rebalance) trigger a rebalance.
         </p>
         <p style={{ margin: 0 }}>
           <strong style={{ color: "#f0f0f0" }}>Optional extras:</strong> a <strong style={{ color: "#f0f0f0" }}>Python Random Forest</strong> can blend into ranks or single-ticker composite when you configure <strong style={{ color: "#f0f0f0" }}>.env</strong> (separate from RL). A <strong style={{ color: "#f0f0f0" }}>Q-learning agent</strong> (trained in-app, saved as <strong style={{ color: "#f0f0f0" }}>rl-agent.json</strong> on the server) can steer composite <strong style={{ color: "#f0f0f0" }}>backtests</strong> and composite <strong style={{ color: "#f0f0f0" }}>paper</strong> rebalances when enabled — see the RL section below.
@@ -91,7 +91,7 @@ export default function AboutTab() {
 
       <Section title="Sidebar: what each area does" defaultOpen={true}>
         <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.65 }}>
-          Order matches the left rail: <strong style={{ color: "#f0f0f0" }}>Search</strong>, <strong style={{ color: "#f0f0f0" }}>Backtest</strong>, <strong style={{ color: "#f0f0f0" }}>Trading</strong>, <strong style={{ color: "#f0f0f0" }}>Strategy Rankings</strong>, <strong style={{ color: "#f0f0f0" }}>RL Agent</strong>. <strong style={{ color: "#f0f0f0" }}>About</strong> is under the gear at the bottom.
+          Order matches the left rail: <strong style={{ color: "#f0f0f0" }}>Search</strong>, <strong style={{ color: "#f0f0f0" }}>Backtest</strong>, <strong style={{ color: "#f0f0f0" }}>Trading</strong>, <strong style={{ color: "#f0f0f0" }}>RL Agent</strong>. <strong style={{ color: "#f0f0f0" }}>About</strong> is under the gear at the bottom.
         </p>
         <FlowStep
           n={1}
@@ -110,16 +110,11 @@ export default function AboutTab() {
         />
         <FlowStep
           n={4}
-          title="Strategy Rankings"
-          body="A live cross-sectional scan: same strategy families as Backtest (from momentum-only through full composite variants), pick universe, momentum lookback (3 / 6 / 12 months), optional smoothing. Scan pulls fresh data and ranks every symbol in that universe for today. Sort by strategy score, raw momentum, or risk-adjusted momentum. Click a row to jump to that ticker in Search."
-        />
-        <FlowStep
-          n={5}
           title="RL Agent"
           body="Operational home for Q-learning: train the agent (POST /api/rl/train) over random rebalance episodes, inspect policy (GET /api/rl/policy), and compare rules-only vs RL-eval backtests (GET /api/rl/compare). Training overwrites the on-disk policy file the server loads at startup. This is independent of the Python Random Forest path — both can be off, one on, or both on, but they solve different problems (tabular rank blend vs discrete portfolio actions)."
         />
         <FlowStep
-          n={6}
+          n={5}
           title="About (this page)"
           body="End-to-end map of the app: how data moves, what each screen does, pillar math, backtest and paper behavior, RL vs RF options, and limitations."
         />
@@ -129,7 +124,7 @@ export default function AboutTab() {
         <p style={{ margin: "0 0 10px" }}>
           <strong style={{ color: "#f0f0f0" }}>Core idea:</strong> each eligible stock gets sub-scores (fundamental quality, DCF gap, dynamic valuation, momentum, price/value entry), mapped to roughly 0–100.
           They combine into a <strong style={{ color: "#f0f0f0" }}>composite</strong> using weights that depend on the strategy (conservative full composite vs aggressive vs turbo).
-          Rankings for backtest, scan, and paper trade use the same underlying analysis code paths so results are comparable.
+          Backtest and paper trade use the same underlying analysis code paths so results are comparable.
         </p>
         <p style={{ margin: 0 }}>
           <strong style={{ color: "#f0f0f0" }}>Optional Python RF:</strong> if you train the Random Forest and set environment variables (see below), the server can blend that model into composite <strong style={{ color: "#f0f0f0" }}>ranking</strong> for paper rebalance and composite <strong style={{ color: "#f0f0f0" }}>backtests</strong>, and optionally into the <strong style={{ color: "#f0f0f0" }}>single-ticker analysis</strong> composite in Search.
