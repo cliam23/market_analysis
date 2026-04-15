@@ -25,13 +25,13 @@ import {
   encodeState,
   encodeAction,
   decodeAction,
-  computeRlReward,
   regimeStringToBucket,
   computeConvergenceMetrics,
   detectOverPruning,
   TOTAL_ACTIONS,
   TOTAL_STATES
 } from './q-learning-agent.js';
+import { DQNAgent, computeRlReward as computeDqnReward } from './dqn-agent.js';
 import {
   getOptionsChain,
   getIvRank,
@@ -56,8 +56,45 @@ function saveOptionsPortfolio(portfolio) {
   writeFileSync(OPTIONS_PORTFOLIO_PATH, JSON.stringify(portfolio, null, 2), 'utf8');
 }
 const RL_AGENT_JSON_PATH = path.join(__dirname, 'rl-agent.json');
+const DQN_AGENT_JSON_PATH = path.join(__dirname, 'dqn-agent.json');
+const DQN_AGENT_BEST_JSON_PATH = path.join(__dirname, 'dqn-agent-best.json');
 
-function loadRlAgentFromDisk() {
+/** Which RL agent to load for eval/paper/backtest: `dqn` | `qlearning` (env `RL_AGENT_TYPE`, default `dqn`). */
+const RL_AGENT_TYPE = process.env.RL_AGENT_TYPE || 'dqn';
+
+function normalizeRlAgentType(t) {
+  const s = String(t ?? '').toLowerCase().trim();
+  if (s === 'qlearning' || s === 'q-learning' || s === 'q' || s === 'tabular') return 'qlearning';
+  return 'dqn';
+}
+
+function rlAgentTypeEffective() {
+  return normalizeRlAgentType(RL_AGENT_TYPE);
+}
+
+function isDqnAgentInstance(agent) {
+  return agent instanceof DQNAgent;
+}
+
+/** Policy size for cache / stats: flat Q length or DQN state×action product. */
+function rlAgentPolicyParamSize(agent) {
+  if (!agent) return 0;
+  if (agent.Q && typeof agent.Q.length === 'number') return agent.Q.length;
+  return TOTAL_STATES * TOTAL_ACTIONS;
+}
+
+function loadRlAgentFromDisk(agentTypeOverride) {
+  const kind = normalizeRlAgentType(agentTypeOverride ?? RL_AGENT_TYPE);
+  if (kind === 'dqn') {
+    try {
+      if (!existsSync(DQN_AGENT_JSON_PATH)) return new DQNAgent();
+      const raw = JSON.parse(readFileSync(DQN_AGENT_JSON_PATH, 'utf8'));
+      if (!raw || raw.kind !== 'dqn' || !Array.isArray(raw.weightsOnline)) return new DQNAgent();
+      return DQNAgent.deserialize(raw);
+    } catch {
+      return new DQNAgent();
+    }
+  }
   try {
     if (!existsSync(RL_AGENT_JSON_PATH)) return new QLearningTradingAgent();
     const raw = JSON.parse(readFileSync(RL_AGENT_JSON_PATH, 'utf8'));
@@ -84,7 +121,26 @@ function countRlStatesVisited(agent) {
 
 function refreshTrainedRlAgentFromDisk(options = {}) {
   const logLoad = options.logLoad !== false;
+  const kind = rlAgentTypeEffective();
   try {
+    if (kind === 'dqn') {
+      if (!existsSync(DQN_AGENT_JSON_PATH)) {
+        TRAINED_RL_AGENT = null;
+        return;
+      }
+      const raw = JSON.parse(readFileSync(DQN_AGENT_JSON_PATH, 'utf8'));
+      if (!raw || raw.kind !== 'dqn' || !Array.isArray(raw.weightsOnline)) {
+        TRAINED_RL_AGENT = null;
+        return;
+      }
+      TRAINED_RL_AGENT = DQNAgent.deserialize(raw);
+      if (logLoad) {
+        console.log(
+          `[RL] Loaded DQN: ${TRAINED_RL_AGENT.totalUpdates} updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited (replay trainSteps=${TRAINED_RL_AGENT.trainSteps ?? 0})`,
+        );
+      }
+      return;
+    }
     if (!existsSync(RL_AGENT_JSON_PATH)) {
       TRAINED_RL_AGENT = null;
       return;
@@ -97,7 +153,7 @@ function refreshTrainedRlAgentFromDisk(options = {}) {
     TRAINED_RL_AGENT = QLearningTradingAgent.deserialize(raw);
     if (logLoad) {
       console.log(
-        `[RL] Loaded agent: ${TRAINED_RL_AGENT.totalUpdates} Q-updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited`,
+        `[RL] Loaded Q-learning agent: ${TRAINED_RL_AGENT.totalUpdates} Q-updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited`,
       );
     }
   } catch (e) {
@@ -107,13 +163,14 @@ function refreshTrainedRlAgentFromDisk(options = {}) {
 }
 
 function writeRlAgentFileOnly(agent) {
-  writeFileSync(RL_AGENT_JSON_PATH, JSON.stringify(agent.serialize(), null, 2), 'utf8');
+  const fp = isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH;
+  writeFileSync(fp, JSON.stringify(agent.serialize(), null, 2), 'utf8');
 }
 
-/** Persist agent and reload global `TRAINED_RL_AGENT` (e.g. after training completes). */
+/** Persist agent and set global `TRAINED_RL_AGENT` (same in-memory instance). */
 function saveRlAgentToDisk(agent) {
   writeRlAgentFileOnly(agent);
-  refreshTrainedRlAgentFromDisk({ logLoad: false });
+  TRAINED_RL_AGENT = agent;
 }
 
 refreshTrainedRlAgentFromDisk({ logLoad: true });
@@ -209,7 +266,11 @@ const COMPS_CACHE_TTL = 30 * 60 * 1000;
 const QUOTE_CACHE_TTL = 4 * 60 * 60 * 1000;
 const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 /** Bump when backtest sim inputs/outputs change (cache invalidation). */
-const BACKTEST_CACHE_VERSION = 'v44';
+const BACKTEST_CACHE_VERSION = 'v53';
+
+/** Short-lived cache for GET /api/diagnostics/equity-curves (heavy 3–4 sequential sims). */
+const EQUITY_CURVES_DIAG_CACHE = new Map();
+const EQUITY_CURVES_DIAG_TTL_MS = 10 * 60 * 1000;
 
 /** Only treat financials as knowable this many days after quarter-end (SEC filing lag heuristic). */
 const FILING_LAG_DAYS = 45;
@@ -320,7 +381,58 @@ function backtestSimConfigCacheTag(extra = {}) {
   const re = extra.regimeEnabled === false ? '0' : '1';
   const po = extra.pillarOverrideKey != null ? String(extra.pillarOverrideKey) : 'none';
   const skml = extra.skipMlRankingAdjustments === false ? '0' : '1';
-  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}`;
+  const cf =
+    extra.correlationFilter === true || extra.correlationFilter === 'true' || extra.correlationFilter === 1 ? '1' : '0';
+  const mxc =
+    extra.maxCorrelated != null && Number.isFinite(extra.maxCorrelated)
+      ? String(Math.max(1, Math.floor(extra.maxCorrelated)))
+      : '3';
+  const clb =
+    extra.correlationLookbackDays != null && Number.isFinite(extra.correlationLookbackDays)
+      ? String(Math.max(20, Math.floor(extra.correlationLookbackDays)))
+      : 'd60';
+  const hd =
+    extra.hedging === true || extra.hedging === 'true' || extra.hedging === 1 ? '1' : '0';
+  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}-cf${cf}-mxc${mxc}-clb${clb}-hd${hd}`;
+}
+
+/**
+ * SPY put hedge policy (backtest + paper recommendation). Pure function.
+ * @param {string} regime — from calculateMarketRegime
+ * @param {number} portfolioValue — NAV after rebalance assembly
+ * @param {{ openDate: string, regime: string, notionalHedge: number, hedgePct: number, spyPxAtOpen: number, lastPremiumAccrualDate: string } | null} activeHedge
+ */
+function evaluateHedgeNeed(regime, portfolioValue, activeHedge) {
+  const r = regime != null ? String(regime).toLowerCase().trim() : '';
+  const pv = Number(portfolioValue);
+  const hasHedge = activeHedge != null && typeof activeHedge === 'object';
+
+  if ((r === 'caution' || r === 'bear') && !hasHedge) {
+    const hedgePct = r === 'bear' ? 0.5 : 0.3;
+    const notionalHedge = (Number.isFinite(pv) && pv > 0 ? pv : 0) * hedgePct;
+    const pctLabel = (hedgePct * 100).toFixed(0);
+    return {
+      action: 'OPEN_HEDGE',
+      hedgePct,
+      notionalHedge,
+      regime: r,
+      description: `Open SPY put hedge covering ${pctLabel}% of portfolio (~$${Math.round(notionalHedge)} notional)`
+    };
+  }
+  if ((r === 'normal' || r === 'strong_bull') && hasHedge) {
+    return { action: 'CLOSE_HEDGE', reason: `regime improved to ${r}` };
+  }
+  return { action: 'HOLD' };
+}
+
+/** Put premium drag: 0.5% of notional per 30.44-day month, pro-rated by calendar days. */
+function hedgePremiumForPeriod(activeHedge, toDateStr, notional) {
+  if (!activeHedge || !toDateStr || !activeHedge.lastPremiumAccrualDate) return 0;
+  const d = daysBetween(activeHedge.lastPremiumAccrualDate, toDateStr);
+  if (d <= 0) return 0;
+  const n = Number(notional);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return n * 0.005 * (d / 30.44);
 }
 
 const YAHOO_DISK_CACHE_DIR = path.join(__dirname, '.cache', 'yahoo');
@@ -353,6 +465,321 @@ function writeQuoteDiskCache(ticker, data) {
   } catch (e) {
     console.warn('Yahoo disk cache write failed:', e.message);
   }
+}
+
+const EARNINGS_DISK_CACHE_DIR = path.join(__dirname, '.cache', 'earnings');
+const EARNINGS_DISK_CACHE_DAYS = 7;
+const EARNINGS_DISK_CACHE_TTL_MS = EARNINGS_DISK_CACHE_DAYS * 24 * 60 * 60 * 1000;
+
+function earningsCacheFilePath(ticker) {
+  return path.join(EARNINGS_DISK_CACHE_DIR, `${String(ticker).toUpperCase()}.json`);
+}
+
+function readEarningsDiskCache(ticker) {
+  const fp = earningsCacheFilePath(ticker);
+  if (!existsSync(fp)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(fp, 'utf8'));
+    if (!raw || !raw.fetchedAt) return null;
+    const t = new Date(raw.fetchedAt).getTime();
+    if (Number.isNaN(t) || Date.now() - t > EARNINGS_DISK_CACHE_TTL_MS) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function writeEarningsDiskCache(ticker, payload) {
+  try {
+    mkdirSync(EARNINGS_DISK_CACHE_DIR, { recursive: true });
+    writeFileSync(earningsCacheFilePath(ticker), JSON.stringify(payload, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('[earnings] disk cache write failed:', e.message);
+  }
+}
+
+/** Quarter end / label from Yahoo earningsHistory row. */
+function normalizeEarningsHistoryRowDate(row) {
+  if (!row || typeof row !== 'object') return null;
+  const q = row.quarter;
+  if (q instanceof Date && !Number.isNaN(q.getTime())) return q.toISOString().slice(0, 10);
+  if (typeof q === 'string') {
+    const m = q.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  const d = row.date;
+  if (d && typeof d === 'object' && d.fmt) return String(d.fmt).slice(0, 10);
+  if (typeof d === 'string') return d.slice(0, 10);
+  if (typeof row.period === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.period)) return row.period;
+  if (typeof row.period === 'string' && /^\d{8}$/.test(row.period)) {
+    const s = row.period;
+    return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  }
+  return row.period != null ? String(row.period) : null;
+}
+
+/**
+ * Parse quoteSummary modules earningsHistory + earningsTrend (yahoo-finance2 bundle or v10 result[0]).
+ * Returns null if earningsTrend is unusable (per product rule).
+ */
+function parseYahooEarningsQuoteSummary(ticker, json) {
+  const err = json?.quoteSummary?.error;
+  if (err) return null;
+  let r0 = json?.quoteSummary?.result?.[0];
+  if (!r0 && json?.earningsHistory) r0 = json;
+  if (!r0) return null;
+  const trendArr = r0.earningsTrend?.trend;
+  if (!Array.isArray(trendArr) || trendArr.length === 0) return null;
+  const hist = r0.earningsHistory?.history;
+  if (!Array.isArray(hist) || hist.length === 0) return null;
+
+  const sortedHist = [...hist]
+    .map((h) => ({ h, d: normalizeEarningsHistoryRowDate(h) || '' }))
+    .filter((x) => x.d)
+    .sort((a, b) => b.d.localeCompare(a.d));
+  const last4 = sortedHist.slice(0, 4);
+
+  const quarters = last4.map(({ h, d }) => {
+    const epsActual = yfNum(h.epsActual);
+    const epsEstimate = yfNum(h.epsEstimate);
+    const revenue = yfNum(h.revenueActual ?? h.revenue);
+    let surprise = null;
+    if (epsEstimate != null && epsEstimate !== 0 && epsActual != null) {
+      surprise = (epsActual - epsEstimate) / epsEstimate;
+    } else {
+      const sp = yfNum(h.surprisePercent);
+      if (sp != null && Number.isFinite(sp)) {
+        surprise = Math.abs(sp) > 1.5 ? sp / 100 : sp;
+      }
+    }
+    return {
+      date: d,
+      epsActual: epsActual != null && Number.isFinite(epsActual) ? epsActual : null,
+      epsEstimate: epsEstimate != null && Number.isFinite(epsEstimate) ? epsEstimate : null,
+      surprise: surprise != null && Number.isFinite(surprise) ? parseFloat(surprise.toFixed(6)) : null,
+      revenue: revenue != null && revenue > 0 ? revenue : null
+    };
+  });
+
+  const pickTrend = (period) => trendArr.find((t) => String(t?.period) === period) || null;
+  const t0 = pickTrend('0q');
+  const t1 = pickTrend('+1q');
+  const trendRowEpsEstimate = (t) => yfNum(t?.earningsEstimate?.avg) ?? yfNum(t?.epsTrend?.current);
+  const trendRowEps90dAgo = (t) => yfNum(t?.epsTrend?.['90daysAgo']);
+
+  const epsTrend = {
+    currentQtrEstimate: trendRowEpsEstimate(t0),
+    currentQtr90dAgoEstimate: trendRowEps90dAgo(t0),
+    nextQtrEstimate: trendRowEpsEstimate(t1),
+    nextQtr90dAgoEstimate: trendRowEps90dAgo(t1)
+  };
+
+  return {
+    ticker: String(ticker).toUpperCase(),
+    fetchedAt: new Date().toISOString().split('T')[0],
+    quarters,
+    epsTrend
+  };
+}
+
+/** Same v10 quoteSummary modules as query1 URL; uses yahoo-finance2 for cookie/crumb auth. */
+async function fetchYahooEarningsQuoteSummaryModules(ticker) {
+  const apiSym = yahooApiSymbol(ticker);
+  return fetchWithTimeout(
+    () =>
+      yahooFinance.quoteSummary(apiSym, { modules: ['earningsHistory', 'earningsTrend'] }, YAHOO_QUOTE_SUMMARY_MODULE_OPTS),
+    15000
+  );
+}
+
+/**
+ * Historical earnings (EPS actual vs estimate, revenue) + EPS trend for momentum-style signals.
+ * Disk cache: .cache/earnings/TICKER.json (7-day TTL). Returns null if earningsTrend is unavailable.
+ */
+async function fetchEarningsHistory(ticker) {
+  const upper = String(ticker || '')
+    .trim()
+    .toUpperCase();
+  if (!upper) return null;
+  if (upper === 'SPY') return null;
+
+  const cached = readEarningsDiskCache(upper);
+  if (cached && cached.failed === true) {
+    return null;
+  }
+  if (cached && Array.isArray(cached.quarters) && cached.epsTrend) {
+    return { ticker: upper, fetchedAt: cached.fetchedAt, quarters: cached.quarters, epsTrend: cached.epsTrend };
+  }
+
+  let modules;
+  try {
+    modules = await fetchYahooEarningsQuoteSummaryModules(upper);
+  } catch (e) {
+    const reason = String(e?.message || e || 'error');
+    console.warn(`[earnings] fetch failed ${upper}:`, reason);
+    writeEarningsDiskCache(upper, { ticker: upper, failed: true, reason, fetchedAt: new Date().toISOString() });
+    return null;
+  }
+
+  const parsed = parseYahooEarningsQuoteSummary(upper, modules);
+  if (!parsed) {
+    writeEarningsDiskCache(upper, {
+      ticker: upper,
+      failed: true,
+      reason: 'parseYahooEarningsQuoteSummary returned null (no trend/history)',
+      fetchedAt: new Date().toISOString()
+    });
+    return null;
+  }
+  writeEarningsDiskCache(upper, parsed);
+  return parsed;
+}
+
+/**
+ * Batch earnings fetch: 5 tickers in parallel per wave, 50ms pause between waves.
+ * @returns {Promise<Map<string, object|null>>}
+ */
+async function fetchAllEarnings(tickers) {
+  const uniq = [
+    ...new Set((tickers || []).map((t) => String(t).trim().toUpperCase()).filter(Boolean))
+  ].filter((t) => t !== 'SPY');
+  const out = new Map();
+  const batchSize = 5;
+  const earningsProgressLog =
+    process.env.EARNINGS_FETCH_PROGRESS === '1' ||
+    String(process.env.EARNINGS_FETCH_PROGRESS || '').toLowerCase() === 'true';
+  for (let i = 0; i < uniq.length; i += batchSize) {
+    const batch = uniq.slice(i, i + batchSize);
+    const done = Math.min(i + batch.length, uniq.length);
+    if (earningsProgressLog) {
+      console.log(`Fetching earnings: ${done}/${uniq.length}...`);
+    }
+    const rows = await Promise.all(batch.map((t) => fetchEarningsHistory(t)));
+    for (let j = 0; j < batch.length; j++) out.set(batch[j], rows[j]);
+    if (i + batchSize < uniq.length) await sleep(50);
+  }
+  return out;
+}
+
+/** Mean (actual/estimate - 1) over quarters with usable EPS; null if none. */
+function rawAvgEarningsSurpriseRatio(earningsData) {
+  if (!earningsData?.quarters?.length) return null;
+  const parts = [];
+  for (const q of earningsData.quarters) {
+    const est = q.epsEstimate;
+    const act = q.epsActual;
+    if (est == null || Math.abs(est) < 1e-8 || act == null) continue;
+    parts.push(act / est - 1);
+  }
+  if (parts.length === 0) return null;
+  return parts.reduce((a, b) => a + b, 0) / parts.length;
+}
+
+/** EPS revision momentum vs 90d-ago consensus for current quarter. */
+function rawEpsRevisionDelta(earningsData) {
+  const t = earningsData?.epsTrend;
+  if (!t) return null;
+  const cur = t.currentQtrEstimate;
+  const ago = t.currentQtr90dAgoEstimate;
+  if (cur == null || ago == null || !Number.isFinite(cur) || !Number.isFinite(ago) || Math.abs(ago) < 1e-8) {
+    return null;
+  }
+  return (cur - ago) / Math.abs(ago);
+}
+
+/**
+ * Sequential revenue growth acceleration (newest vs prior quarter growth).
+ * True YoY needs >4 quarters of revenue; Yahoo history often omits revenue — neutral when insufficient.
+ */
+function rawRevenueAcceleration(earningsData) {
+  const q = earningsData?.quarters;
+  if (!Array.isArray(q) || q.length < 3) return null;
+  const r0 = q[0]?.revenue;
+  const r1 = q[1]?.revenue;
+  const r2 = q[2]?.revenue;
+  if (r0 == null || r1 == null || r2 == null) return null;
+  if (!(r0 > 0) || !(r1 > 0) || !(r2 > 0)) return null;
+  const g01 = (r0 - r1) / r1;
+  const g12 = (r1 - r2) / r2;
+  if (!Number.isFinite(g01) || !Number.isFinite(g12)) return null;
+  return g01 - g12;
+}
+
+/** Cross-sectional percentile → 0–100; missing raw values → 50. */
+function percentileScoresFromRaw(tickerOrder, rawByTicker) {
+  const scores = new Map();
+  const valid = tickerOrder.filter((t) => {
+    const v = rawByTicker.get(t);
+    return v != null && Number.isFinite(v);
+  });
+  if (valid.length === 0) {
+    for (const t of tickerOrder) scores.set(t, 50);
+    return scores;
+  }
+  if (valid.length === 1) {
+    for (const t of tickerOrder) scores.set(t, valid.includes(t) ? 50 : 50);
+    return scores;
+  }
+  const sorted = [...valid].sort((a, b) => rawByTicker.get(a) - rawByTicker.get(b));
+  const rankMid = new Map();
+  let i = 0;
+  while (i < sorted.length) {
+    let j = i;
+    const baseVal = rawByTicker.get(sorted[i]);
+    while (j < sorted.length && rawByTicker.get(sorted[j]) === baseVal) j++;
+    const mid = (i + j - 1) / 2;
+    for (let k = i; k < j; k++) rankMid.set(sorted[k], mid);
+    i = j;
+  }
+  const denom = sorted.length - 1;
+  for (const t of tickerOrder) {
+    if (!rankMid.has(t)) scores.set(t, 50);
+    else scores.set(t, (rankMid.get(t) / denom) * 100);
+  }
+  return scores;
+}
+
+/**
+ * Per-ticker 0–100 earnings momentum pillar (40% surprise, 40% revision, 20% revenue accel), cross-sectionally ranked.
+ * Trailing EPS actuals are backward-looking; epsTrend uses live Yahoo estimates (PIT approximation, same spirit as fundamentals snapshot).
+ */
+function buildEarningsMomentumScoreByTicker(tickers, earningsMap) {
+  const em = earningsMap instanceof Map ? earningsMap : new Map();
+  const surpriseRaw = new Map();
+  const revisionRaw = new Map();
+  const revenueRaw = new Map();
+  for (const t of tickers) {
+    const U = String(t).toUpperCase();
+    const ed = em.get(U) ?? em.get(t) ?? null;
+    surpriseRaw.set(t, rawAvgEarningsSurpriseRatio(ed));
+    revisionRaw.set(t, rawEpsRevisionDelta(ed));
+    revenueRaw.set(t, rawRevenueAcceleration(ed));
+  }
+  const sP = percentileScoresFromRaw(tickers, surpriseRaw);
+  const rP = percentileScoresFromRaw(tickers, revisionRaw);
+  const vP = percentileScoresFromRaw(tickers, revenueRaw);
+  const out = new Map();
+  for (const t of tickers) {
+    const a = sP.get(t) ?? 50;
+    const b = rP.get(t) ?? 50;
+    const c = vP.get(t) ?? 50;
+    out.set(t, Math.max(0, Math.min(100, a * 0.4 + b * 0.4 + c * 0.2)));
+  }
+  return out;
+}
+
+/**
+ * Single-name pillar score from a full-universe earnings map (rebuilds cross-section each call — prefer buildEarningsMomentumScoreByTicker in hot paths).
+ * @param {object|null} earningsData — parsed earnings for one ticker ({ ticker, quarters, epsTrend })
+ * @param {Map<string, object|null>} allEarningsData — ticker → earnings for the ranking universe
+ */
+function computeEarningsMomentumScore(earningsData, allEarningsData) {
+  if (!(allEarningsData instanceof Map) || allEarningsData.size === 0) return 50;
+  const tickers = [...allEarningsData.keys()].map((k) => String(k).toUpperCase());
+  const t0 = String(earningsData?.ticker || '').toUpperCase();
+  if (!t0) return 50;
+  const m = buildEarningsMomentumScoreByTicker(tickers, allEarningsData);
+  return m.get(t0) ?? 50;
 }
 
 /** Batch Yahoo quote — one round-trip per chunk. */
@@ -3450,9 +3877,57 @@ const UNIVERSE_TICKERS = {
   dividend_aristocrats: ['MMM', 'ABT', 'ABBV', 'AFL', 'ADP', 'BALL', 'BAC', 'CAH', 'CCL', 'CAT', 'CB', 'CINF', 'CTAS', 'CVX', 'CLX', 'KO', 'CL', 'COP', 'CTSH', 'CVS', 'SPY']
 };
 
+/** Ranks 51–100 (append after sp500_top50; overlaps deduped). */
+const SP500_TOP150_TIER2 = [
+  'ISRG', 'REGN', 'VRTX', 'MDLZ', 'SCHW', 'BSX', 'PLD', 'LRCX', 'KLAC',
+  'SNPS', 'CDNS', 'PANW', 'CRWD', 'FTNT', 'CME', 'ICE', 'MCO', 'CTAS',
+  'ORLY', 'AZO', 'FAST', 'PAYX', 'ODFL', 'SHW', 'ECL', 'APH', 'TT',
+  'IR', 'CARR', 'GWW', 'ITW', 'ROK', 'EMR', 'ETN', 'NSC', 'CSX', 'WM',
+  'RSG', 'PSA', 'O', 'AMT', 'CCI', 'EQIX', 'DLR', 'WELL', 'SPG',
+  'EXR', 'MAA', 'ARE', 'AVB'
+];
+
+/** Ranks 101–150 (append after tier 2; overlaps deduped). */
+const SP500_TOP150_TIER3 = [
+  'IDXX', 'DXCM', 'ZTS', 'ALGN', 'ILMN', 'MKTX', 'MSCI', 'CPRT',
+  'FICO', 'MPWR', 'MCHP', 'ON', 'TER', 'GLW', 'KEYS', 'ZBRA',
+  'WAT', 'A', 'TMO', 'DHR', 'BDX', 'STE', 'MTD', 'BIO', 'TECH',
+  'FTV', 'BR', 'TRMB', 'TYL', 'PAYC', 'POOL', 'WST',
+  'RMD', 'TFX', 'HOLX', 'EW', 'PODD', 'INSP', 'NVST', 'ALGM',
+  'ENTG', 'MKSI', 'LSCC', 'ANET', 'PSTG', 'SMCI', 'RVTY', 'MANH', 'GEN'
+];
+
+(function attachSp500Top150Universe() {
+  const seen = new Set();
+  const out = [];
+  for (const t of UNIVERSE_TICKERS.sp500_top50) {
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  for (const t of SP500_TOP150_TIER2) {
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  for (const t of SP500_TOP150_TIER3) {
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  }
+  UNIVERSE_TICKERS.sp500_top150 = out;
+})();
+
+/** Same ticker list as backtest `sp500_top150` for /api/universe and momentum. */
+UNIVERSES.sp500_top150 = UNIVERSE_TICKERS.sp500_top150;
+
 /** UI + chart names for equal-weight universe benchmark (must match `universeId` route param). */
 const UNIVERSE_BENCHMARK_LABELS = {
   sp500_top50: { shortLabel: 'S&P Top 50', chartLabel: 'Equal-weight S&P Top 50' },
+  sp500_top150: { shortLabel: 'S&P Top 150', chartLabel: 'Equal-weight S&P Top 150' },
   vgt: { shortLabel: 'VGT', chartLabel: 'VGT universe (equal-weight)' },
   mag7: { shortLabel: 'Mag 7', chartLabel: 'Mag 7 (equal-weight)' },
   russell_growth: { shortLabel: 'Russell growth', chartLabel: 'Russell growth (equal-weight)' },
@@ -3475,13 +3950,65 @@ function spearmanCorrelation(xs, ys) {
   return 1 - (6 * sumD2) / (n * (n * n - 1));
 }
 
-/** Diagnostic-optimized blend: quality-heavy, no DCF/dynamic valuation pillar in composite. */
-/** Tuned via GET /api/backtest/diagnostic/:id?weightsSweep=1 (3y, bimonthly, topN=15, rlAgent=false) — Sharpe winner vs expanded grid. */
-const DEFAULT_COMPOSITE_WEIGHTS = { fundamental: 0.2, dcf: 0.0, valuation: 0.0, momentum: 0.4, value: 0.4 };
-const AGGRESSIVE_COMPOSITE_WEIGHTS = { fundamental: 0.25, dcf: 0.00, valuation: 0.10, momentum: 0.40, value: 0.25 };
-const TURBO_COMPOSITE_WEIGHTS = { fundamental: 0.10, dcf: 0.00, valuation: 0.05, momentum: 0.55, value: 0.30 };
-const FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value'];
-const FACTOR_LABELS = { fundamental: 'Quality', dcf: 'DCF', valuation: 'Valuation', momentum: 'Momentum', value: 'Value' };
+function pearsonCorrelation(xs, ys) {
+  const n = xs.length;
+  if (n !== ys.length || n < 5) return null;
+  let mx = 0;
+  let my = 0;
+  for (let i = 0; i < n; i++) {
+    mx += xs[i];
+    my += ys[i];
+  }
+  mx /= n;
+  my /= n;
+  let num = 0;
+  let dx = 0;
+  let dy = 0;
+  for (let i = 0; i < n; i++) {
+    const zx = xs[i] - mx;
+    const zy = ys[i] - my;
+    num += zx * zy;
+    dx += zx * zx;
+    dy += zy * zy;
+  }
+  if (dx <= 1e-14 || dy <= 1e-14) return null;
+  return num / Math.sqrt(dx * dy);
+}
+
+/** Default full_composite pillar mix (M40/V35/Q0/E25); DCF/valuation off. */
+const DEFAULT_COMPOSITE_WEIGHTS = {
+  momentum: 0.4,
+  value: 0.35,
+  fundamental: 0,
+  earningsMomentum: 0.25,
+  dcf: 0.0,
+  valuation: 0.0
+};
+const AGGRESSIVE_COMPOSITE_WEIGHTS = {
+  fundamental: 0.25,
+  dcf: 0.0,
+  valuation: 0.1,
+  momentum: 0.4,
+  value: 0.25,
+  earningsMomentum: 0
+};
+const TURBO_COMPOSITE_WEIGHTS = {
+  fundamental: 0.1,
+  dcf: 0.0,
+  valuation: 0.05,
+  momentum: 0.55,
+  value: 0.3,
+  earningsMomentum: 0
+};
+const FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value', 'earningsMomentum'];
+const FACTOR_LABELS = {
+  fundamental: 'Quality',
+  dcf: 'DCF',
+  valuation: 'Valuation',
+  momentum: 'Momentum',
+  value: 'Value',
+  earningsMomentum: 'Earnings momentum'
+};
 
 /** Convert chart quotes (Date or string) to backtest price rows { date, close }. */
 function historicalPricesToBtSeries(prices) {
@@ -3597,7 +4124,8 @@ const WEIGHT_BOUNDS = {
   dcf:         { min: 0, max: 0.25 },
   valuation:   { min: 0.02, max: 0.35 },
   momentum:    { min: 0.02, max: 0.60 },
-  value:       { min: 0.02, max: 0.30 }
+  value:       { min: 0.02, max: 0.30 },
+  earningsMomentum: { min: 0, max: 0.35 }
 };
 
 function constrainWeightChanges(currentWeights, suggestedWeights) {
@@ -3672,7 +4200,8 @@ const EQUAL_FIXED_COMPOSITE_WEIGHTS = {
   dcf: 0.0,
   valuation: 0.0,
   momentum: DEFAULT_COMPOSITE_WEIGHTS.momentum,
-  value: DEFAULT_COMPOSITE_WEIGHTS.value
+  value: DEFAULT_COMPOSITE_WEIGHTS.value,
+  earningsMomentum: DEFAULT_COMPOSITE_WEIGHTS.earningsMomentum ?? 0
 };
 
 /**
@@ -3771,6 +4300,26 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
   /** When true, skip ML alpha / ML blend so composite ranks reflect pillar weights (factor diagnostics). */
   const skipMlRankingAdjustments = simOptions.skipMlRankingAdjustments === true;
 
+  const correlationFilter =
+    simOptions.correlationFilter === true ||
+    simOptions.correlationFilter === 'true' ||
+    simOptions.correlationFilter === 1 ||
+    String(simOptions.correlationFilter || '').toLowerCase() === 'true';
+  const maxCorrelatedPeers =
+    simOptions.maxCorrelated != null && Number.isFinite(Number(simOptions.maxCorrelated))
+      ? Math.max(1, Math.floor(Number(simOptions.maxCorrelated)))
+      : 3;
+  const correlationLookbackDays =
+    simOptions.correlationLookbackDays != null && Number.isFinite(Number(simOptions.correlationLookbackDays))
+      ? Math.max(20, Math.floor(Number(simOptions.correlationLookbackDays)))
+      : 60;
+  /** When true, composite train/eval skips `fetchAllEarnings` (avoids Yahoo 429 storm when earningsMomentum > 0). */
+  const rlTrainSkipEarningsFetch =
+    simOptions.rlTrainSkipEarningsFetch === true ||
+    simOptions.rlTrainSkipEarningsFetch === 'true' ||
+    simOptions.rlTrainSkipEarningsFetch === 1 ||
+    String(simOptions.rlTrainSkipEarningsFetch || '').toLowerCase() === 'true';
+
   const compositeFamBt =
     strategyClean === 'full_composite' ||
     strategyClean === 'full_composite_aggressive' ||
@@ -3783,7 +4332,12 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
   const rlCompositeActive = rlAgentQuery && rlMode !== 'off' && compositeFamBt;
   let rlAgentInstance = simOptions.rlQLearningAgent ?? null;
   if (rlCompositeActive && !rlAgentInstance) {
-    rlAgentInstance = rlMode === 'eval' ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk() : new QLearningTradingAgent();
+    rlAgentInstance =
+      rlMode === 'eval'
+        ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk()
+        : rlAgentTypeEffective() === 'dqn'
+          ? new DQNAgent()
+          : new QLearningTradingAgent();
   }
 
   let initialPillarWeights = null;
@@ -3794,7 +4348,32 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     weights = { ...defaults, ...(weights && typeof weights === 'object' ? weights : {}) };
     initialPillarWeights = { ...weights };
   }
+
+  const needBacktestEarningsMap =
+    compositeFamBt &&
+    !rlTrainSkipEarningsFetch &&
+    Math.max(
+      Number(weights?.earningsMomentum) || 0,
+      Number(pillarOverrideNorm?.earningsMomentum) || 0
+    ) > 1e-9;
+  const preloadedEarningsMap =
+    simOptions.preloadedEarningsMap instanceof Map ? simOptions.preloadedEarningsMap : null;
+  let simEarningsMap = null;
+  if (needBacktestEarningsMap) {
+    simEarningsMap = preloadedEarningsMap ?? (await fetchAllEarnings(universe));
+  }
+
   let cash = capital;
+  const hedgingEnabled =
+    simOptions.hedging === true ||
+    simOptions.hedging === 'true' ||
+    simOptions.hedging === 1 ||
+    String(simOptions.hedging || '').toLowerCase() === 'true';
+  let activeHedge = null;
+  let totalHedgesOpened = 0;
+  let totalHedgeCost = 0;
+  let totalHedgeGain = 0;
+
   const holdings = {};
   const tradeLog = [];
   const rebalanceLog = [];
@@ -4000,13 +4579,21 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     if (nextRebalanceIdx < rebalanceDates.length && date >= rebalanceDates[nextRebalanceIdx]) {
       const rebalDate = rebalanceDates[nextRebalanceIdx];
       nextRebalanceIdx++;
+      /** True when this rebalance is the last in the simulated window (terminal transition for RL). */
+      const rlRebalanceIsLastInWindow = nextRebalanceIdx >= rebalanceDates.length;
 
       const cooldownMap = new Map(
         Object.keys(recentSells)
           .filter((t) => daysBetween(recentSells[t].exitDate, date) < REBUY_COOLDOWN_DAYS)
           .map((t) => [t, recentSells[t]])
       );
-      console.log(`[Cooldown] ${date}: blocked tickers =`, [...cooldownMap.keys()]);
+      if (
+        cooldownMap.size > 0 ||
+        process.env.BACKTEST_COOLDOWN_LOG === '1' ||
+        String(process.env.BACKTEST_COOLDOWN_LOG || '').toLowerCase() === 'true'
+      ) {
+        console.log(`[Cooldown] ${date}: blocked tickers =`, [...cooldownMap.keys()]);
+      }
 
       if (usesFundamentals) {
         const pit = await loadPitFundamentalsForUniverse(universe, date, priceHistory);
@@ -4138,22 +4725,33 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
         );
       }
 
+      /** Earnings map is built once per simulation (quarterly data; unchanged across rebalance dates in one run). */
+      const earningsMapForRank =
+        compositeFam && (weightsRankBt?.earningsMomentum ?? 0) > 1e-9 && !rlTrainSkipEarningsFetch
+          ? simEarningsMap
+          : null;
+
       let rankings;
 
       if (strategyClean === 'momentum') rankings = bt_rankMomentumOnly(universe, priceHistory, date);
       else if (strategyClean === 'momentum_value') rankings = bt_rankMomentumValue(universe, priceHistory, date);
       else if (strategyClean === 'quality_momentum') rankings = bt_rankQualityMomentumV2(universe, priceHistory, fundamentalsLive, date);
-      else if (strategyClean === 'full_composite') rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, date, weightsRankBt);
-      else if (strategyClean === 'full_composite_aggressive') {
+      else if (strategyClean === 'full_composite') {
+        rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, date, weightsRankBt, {
+          earningsMap: earningsMapForRank
+        });
+      } else if (strategyClean === 'full_composite_aggressive') {
         rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, date, weightsRankBt, {
           momQThreshold: 10, fundamentalFloor: 15, maxVol: 1.0, strategyLabel: 'full_composite_aggressive',
-          blendMomentumWithQuality: { raw: 0.7, quality: 0.3 }
+          blendMomentumWithQuality: { raw: 0.7, quality: 0.3 },
+          earningsMap: earningsMapForRank
         });
       } else if (strategyClean === 'full_composite_turbo') {
         rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, date, weightsRankBt, {
           momQThreshold: 0, fundamentalFloor: 0, maxVol: 1.2, strategyLabel: 'full_composite_turbo',
           skipConstraintPenalty: true,
-          blendMomentumWithQuality: { raw: 0.55, quality: 0.20 }
+          blendMomentumWithQuality: { raw: 0.55, quality: 0.20 },
+          earningsMap: earningsMapForRank
         });
       } else rankings = bt_rankMomentumValue(universe, priceHistory, date);
 
@@ -4196,6 +4794,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
 
       let rlRebalMeta = null;
       let rlLastReward = null;
+      let rlSkipThisRebalance = false;
 
       let effectiveSizing = positionSizing;
       if (rlCompositeActive && rlAgentInstance) {
@@ -4222,9 +4821,9 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           const benchRet = lastRlPostBench > 0 ? benchPre / lastRlPostBench - 1 : 0;
           const volWindow =
             rlDailyReturns.length > 1 ? standardDeviation(rlDailyReturns) * Math.sqrt(252) : 0.15;
-          rlLastReward = computeRlReward(portRet, benchRet, volWindow, rlMaxDdSinceRebal);
+          rlLastReward = computeDqnReward(portRet, benchRet, volWindow, rlMaxDdSinceRebal);
           if (rlMode === 'train' && prevRlActionIdx != null) {
-            rlAgentInstance.update(prevRlStateIdx, prevRlActionIdx, rlLastReward, stateIdx);
+            rlAgentInstance.update(prevRlStateIdx, prevRlActionIdx, rlLastReward, stateIdx, rlRebalanceIsLastInWindow);
           }
         }
 
@@ -4279,10 +4878,12 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
         prevRlStateIdx = stateIdx;
         prevRlActionIdx = actionIdxUse;
         const decFinal = decodeAction(actionIdxUse);
+        rlSkipThisRebalance = (decFinal.rebalanceWait ?? 'standard') === 'skip';
         rlRebalMeta = {
           exposure: decFinal.exposure,
           positionCount: decFinal.positionCount,
           sizingMethod: decFinal.sizingMethod,
+          rebalanceWait: decFinal.rebalanceWait,
           stateIdx,
           actionIdx: actionIdxUse,
           explored: exploredUse,
@@ -4300,7 +4901,9 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           trainForcedRandom,
           exposure: decFinal.exposure,
           positionCount: decFinal.positionCount,
-          sizingMethod: decFinal.sizingMethod
+          sizingMethod: decFinal.sizingMethod,
+          rebalanceWait: decFinal.rebalanceWait,
+          reward: rlLastReward
         });
       }
 
@@ -4328,232 +4931,386 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           allRanked: rankings.map(r => ({
             ticker: r.ticker, fundamental: r.fundamentalScore, dcf: r.dcfScore,
             valuation: r.valuationScore, momentum: r.momentumScore, value: r.valueScore,
+            earningsMomentum: r.earningsMomentumScore ?? 50,
             composite: r.compositeScore, price: r.price
           }))
         });
       }
 
-      const sectorCap = getMaxSectorConcentration(strategyClean);
-      let topPicks = usesFundamentals
-        ? applySectorLimits(rankings, fundamentalsLive, adjustedTopN, sectorCap)
-        : rankings.slice(0, adjustedTopN);
-      if (
-        strategyClean === 'full_composite' ||
-        strategyClean === 'full_composite_aggressive' ||
-        strategyClean === 'full_composite_turbo'
-      ) {
-        topPicks = filterCompositePicksByRebalanceScoreFloor(topPicks);
-      }
-      const rebalanceSlotCap = topPicks.length;
+      if (!rlSkipThisRebalance) {
+        const sectorCap = getMaxSectorConcentration(strategyClean);
+        let topPicks;
+        if (compositeFamBt && correlationFilter && rankings && rankings.length > 0) {
+          const corrPoolSize = Math.min(adjustedTopN * 2, rankings.length);
+          const corrPool = usesFundamentals
+            ? applySectorLimits(rankings, fundamentalsLive, corrPoolSize, sectorCap)
+            : rankings.slice(0, corrPoolSize);
+          const corrPoolRanked = filterCompositePicksByRebalanceScoreFloor(corrPool);
+          const corrMat = computeCorrelationMatrix(
+            corrPoolRanked.map((p) => p.ticker),
+            priceHistory,
+            correlationLookbackDays,
+            date
+          );
+          const { selected } = applyCorrelationFilter(
+            corrPoolRanked,
+            corrMat,
+            adjustedTopN,
+            maxCorrelatedPeers
+          );
+          topPicks = selected;
+        } else {
+          topPicks = usesFundamentals
+            ? applySectorLimits(rankings, fundamentalsLive, adjustedTopN, sectorCap)
+            : rankings.slice(0, adjustedTopN);
+        }
+        if (
+          strategyClean === 'full_composite' ||
+          strategyClean === 'full_composite_aggressive' ||
+          strategyClean === 'full_composite_turbo'
+        ) {
+          topPicks = filterCompositePicksByRebalanceScoreFloor(topPicks);
+        }
+        const rebalanceSlotCap = topPicks.length;
 
-      let portfolioValue = cash;
-      for (const [ticker, holding] of Object.entries(holdings)) {
-        const price = dailyPx[ticker];
-        if (price) portfolioValue += holding.shares * price;
-      }
+        let portfolioValue = cash;
+        for (const [ticker, holding] of Object.entries(holdings)) {
+          const price = dailyPx[ticker];
+          if (price) portfolioValue += holding.shares * price;
+        }
 
-      const investedCapital = portfolioValue * exposure;
-      const compositeFamilySizing = strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
-      let positionWeights;
-      if (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
-        positionWeights = calculateAggressiveVolatilityWeights(topPicks);
-      } else if (compositeFamilySizing && effectiveSizing === 'invVol') {
-        positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date);
-      } else if (compositeFamilySizing && effectiveSizing === 'invVolBlend') {
-        positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date, { equalBlend: 0.4 });
-      } else if (compositeFamilySizing && effectiveSizing === 'score') {
-        positionWeights = calculatePositionWeightsScore(topPicks);
-      } else {
-        positionWeights = calculatePositionWeights(topPicks);
-      }
+        const investedCapital = portfolioValue * exposure;
+        const compositeFamilySizing = strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
+        let positionWeights;
+        if (strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') {
+          positionWeights = calculateAggressiveVolatilityWeights(topPicks);
+        } else if (compositeFamilySizing && effectiveSizing === 'invVol') {
+          positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date);
+        } else if (compositeFamilySizing && effectiveSizing === 'invVolBlend') {
+          positionWeights = calculatePositionWeightsInvVol(topPicks, priceHistory, date, { equalBlend: 0.4 });
+        } else if (compositeFamilySizing && effectiveSizing === 'score') {
+          positionWeights = calculatePositionWeightsScore(topPicks);
+        } else {
+          positionWeights = calculatePositionWeights(topPicks);
+        }
 
-      const targetAllocation = {};
-      for (const pick of topPicks) {
-        const pw = positionWeights.find(w => w.ticker === pick.ticker);
-        targetAllocation[pick.ticker] = {
-          targetDollars: pw ? investedCapital * pw.weight : investedCapital / topPicks.length,
-          score: pick.combinedScore || pick.compositeScore || 0,
-          price: pick.price
+        const targetAllocation = {};
+        for (const pick of topPicks) {
+          const pw = positionWeights.find(w => w.ticker === pick.ticker);
+          targetAllocation[pick.ticker] = {
+            targetDollars: pw ? investedCapital * pw.weight : investedCapital / topPicks.length,
+            score: pick.combinedScore || pick.compositeScore || 0,
+            price: pick.price
+          };
+        }
+
+        const heldSet = new Set(Object.keys(holdings));
+        const incomingCandidates = topPicks.filter((p) => !heldSet.has(p.ticker));
+        const lowestTopScore =
+          topPicks.length > 0
+            ? Math.min(...topPicks.map((p) => p.compositeScore ?? p.combinedScore ?? 0))
+            : null;
+        const maxHoldings = rebalanceSlotCap + HOLDINGS_OVERFLOW_SLOTS;
+
+        const scoreForTicker = (tick) => {
+          const row = rankings.find((r) => r.ticker === tick);
+          return row ? (row.compositeScore ?? row.combinedScore ?? 0) : 0;
         };
-      }
 
-      const heldSet = new Set(Object.keys(holdings));
-      const incomingCandidates = topPicks.filter((p) => !heldSet.has(p.ticker));
-      const lowestTopScore =
-        topPicks.length > 0
-          ? Math.min(...topPicks.map((p) => p.compositeScore ?? p.combinedScore ?? 0))
-          : null;
-      const maxHoldings = rebalanceSlotCap + HOLDINGS_OVERFLOW_SLOTS;
+        const turnoverAllowsSell = (sOld) => {
+          if (!incomingCandidates.length) return true;
+          if (lowestTopScore == null) return true;
+          if (!(sOld > 0)) return true;
+          return lowestTopScore >= sOld * (1 + TURNOVER_SCORE_IMPROVEMENT_THRESHOLD);
+        };
 
-      const scoreForTicker = (tick) => {
-        const row = rankings.find((r) => r.ticker === tick);
-        return row ? (row.compositeScore ?? row.combinedScore ?? 0) : 0;
-      };
+        const trades = [];
 
-      const turnoverAllowsSell = (sOld) => {
-        if (!incomingCandidates.length) return true;
-        if (lowestTopScore == null) return true;
-        if (!(sOld > 0)) return true;
-        return lowestTopScore >= sOld * (1 + TURNOVER_SCORE_IMPROVEMENT_THRESHOLD);
-      };
-
-      const trades = [];
-
-      const doRebalanceSell = (ticker, holding, sellPrice) => {
-        nameSwapCount += 1;
-        const proceeds = holding.shares * sellPrice;
-        cash += proceeds;
-        const holdingReturn = (sellPrice - holding.entryPrice) / holding.entryPrice;
-        trades.push({
-          type: 'SELL', ticker, shares: holding.shares, price: sellPrice, proceeds,
-          holdingReturn,
-          holdingDays: daysBetween(holding.entryDate, date)
-        });
-        recentSells[ticker] = { exitDate: date, exitPrice: sellPrice, exitReturn: holdingReturn };
-        delete holdings[ticker];
-        if (turnoverDebugEnabled()) {
-          console.log(`[TURNOVER] SELL ${ticker} @ ${date} holdDays=${daysBetween(holding.entryDate, date)}`);
-        }
-      };
-
-      const notInTarget = Object.keys(holdings).filter((t) => !targetAllocation[t]);
-      const sortedExit = [...notInTarget].sort((a, b) => scoreForTicker(a) - scoreForTicker(b));
-
-      for (const ticker of sortedExit) {
-        const holding = holdings[ticker];
-        if (!holding || targetAllocation[ticker]) continue;
-        const sOld = scoreForTicker(ticker);
-        if (!turnoverAllowsSell(sOld)) continue;
-        const sellPrice = dailyPx[ticker];
-        if (!sellPrice) continue;
-        const hDays = daysBetween(holding.entryDate, date);
-        if (hDays < MIN_HOLD_DAYS_BEFORE_SELL) {
+        const doRebalanceSell = (ticker, holding, sellPrice) => {
+          nameSwapCount += 1;
+          const proceeds = holding.shares * sellPrice;
+          cash += proceeds;
+          const holdingReturn = (sellPrice - holding.entryPrice) / holding.entryPrice;
+          trades.push({
+            type: 'SELL', ticker, shares: holding.shares, price: sellPrice, proceeds,
+            holdingReturn,
+            holdingDays: daysBetween(holding.entryDate, date)
+          });
+          recentSells[ticker] = { exitDate: date, exitPrice: sellPrice, exitReturn: holdingReturn };
+          delete holdings[ticker];
           if (turnoverDebugEnabled()) {
-            console.log(`[HOLD] keep ${ticker} — ${hDays}d < min ${MIN_HOLD_DAYS_BEFORE_SELL}d`);
+            console.log(`[TURNOVER] SELL ${ticker} @ ${date} holdDays=${daysBetween(holding.entryDate, date)}`);
           }
-          continue;
+        };
+
+        const notInTarget = Object.keys(holdings).filter((t) => !targetAllocation[t]);
+        const sortedExit = [...notInTarget].sort((a, b) => scoreForTicker(a) - scoreForTicker(b));
+
+        for (const ticker of sortedExit) {
+          const holding = holdings[ticker];
+          if (!holding || targetAllocation[ticker]) continue;
+          const sOld = scoreForTicker(ticker);
+          if (!turnoverAllowsSell(sOld)) continue;
+          const sellPrice = dailyPx[ticker];
+          if (!sellPrice) continue;
+          const hDays = daysBetween(holding.entryDate, date);
+          if (hDays < MIN_HOLD_DAYS_BEFORE_SELL) {
+            if (turnoverDebugEnabled()) {
+              console.log(`[HOLD] keep ${ticker} — ${hDays}d < min ${MIN_HOLD_DAYS_BEFORE_SELL}d`);
+            }
+            continue;
+          }
+          doRebalanceSell(ticker, holding, sellPrice);
         }
-        doRebalanceSell(ticker, holding, sellPrice);
-      }
 
-      while (Object.keys(holdings).length > maxHoldings) {
-        const pool = Object.keys(holdings).filter((t) => !targetAllocation[t]);
-        if (!pool.length) break;
-        pool.sort((a, b) => scoreForTicker(a) - scoreForTicker(b));
-        const ticker = pool[0];
-        const holding = holdings[ticker];
-        if (!holding) break;
-        const sOld = scoreForTicker(ticker);
-        if (!turnoverAllowsSell(sOld)) break;
-        const sellPrice = dailyPx[ticker];
-        if (!sellPrice) break;
-        doRebalanceSell(ticker, holding, sellPrice);
-      }
+        while (Object.keys(holdings).length > maxHoldings) {
+          const pool = Object.keys(holdings).filter((t) => !targetAllocation[t]);
+          if (!pool.length) break;
+          pool.sort((a, b) => scoreForTicker(a) - scoreForTicker(b));
+          const ticker = pool[0];
+          const holding = holdings[ticker];
+          if (!holding) break;
+          const sOld = scoreForTicker(ticker);
+          if (!turnoverAllowsSell(sOld)) break;
+          const sellPrice = dailyPx[ticker];
+          if (!sellPrice) break;
+          doRebalanceSell(ticker, holding, sellPrice);
+        }
 
-      for (const pick of topPicks) {
-        const ticker = pick.ticker;
-        const target = targetAllocation[ticker];
-        if (!target) continue;
-        const currentPrice = dailyPx[ticker];
-        if (!currentPrice || currentPrice <= 0) continue;
-        const isNewLine = !holdings[ticker];
-        if (isNewLine) {
-          const rs = recentSells[ticker];
-          if (rs) {
-            const ds = daysBetween(rs.exitDate, date);
-            if (ds < REBUY_COOLDOWN_DAYS) {
-              if (turnoverDebugEnabled()) {
-                console.log(`[TURNOVER] skip rebuy ${ticker} — sold ${ds}d ago (<${REBUY_COOLDOWN_DAYS}d)`);
+        for (const pick of topPicks) {
+          const ticker = pick.ticker;
+          const target = targetAllocation[ticker];
+          if (!target) continue;
+          const currentPrice = dailyPx[ticker];
+          if (!currentPrice || currentPrice <= 0) continue;
+          const isNewLine = !holdings[ticker];
+          if (isNewLine) {
+            const rs = recentSells[ticker];
+            if (rs) {
+              const ds = daysBetween(rs.exitDate, date);
+              if (ds < REBUY_COOLDOWN_DAYS) {
+                if (turnoverDebugEnabled()) {
+                  console.log(`[TURNOVER] skip rebuy ${ticker} — sold ${ds}d ago (<${REBUY_COOLDOWN_DAYS}d)`);
+                }
+                continue;
               }
+              delete recentSells[ticker];
+            }
+            const compositeForBuy = pick.compositeScore ?? pick.combinedScore ?? 0;
+            if (compositeForBuy < SCORE_FLOOR) {
               continue;
             }
-            delete recentSells[ticker];
-          }
-          const compositeForBuy = pick.compositeScore ?? pick.combinedScore ?? 0;
-          if (compositeForBuy < SCORE_FLOOR) {
-            continue;
-          }
-          const dteBt = daysUntilEarnings(ticker, date, fundamentalsLive);
-          if (dteBt !== null && dteBt >= 0 && dteBt <= 10) {
-            console.log(`[EarningsFilter] Skipping ${ticker} — earnings in ${dteBt.toFixed(1)} days`);
-            continue;
-          }
-          if (Object.keys(holdings).length >= rebalanceSlotCap) continue;
-        }
-        const currentValue = holdings[ticker] ? holdings[ticker].shares * currentPrice : 0;
-        const diffValue = target.targetDollars - currentValue;
-        if (diffValue > 50) {
-          const sharesToBuy = Math.floor(diffValue / currentPrice);
-          if (sharesToBuy > 0 && cash >= sharesToBuy * currentPrice) {
-            const cost = sharesToBuy * currentPrice;
-            cash -= cost;
-            if (holdings[ticker]) {
-              const totalShares = holdings[ticker].shares + sharesToBuy;
-              const avgPrice = (holdings[ticker].shares * holdings[ticker].entryPrice + cost) / totalShares;
-              const pk = holdings[ticker].peakPriceSinceEntry;
-              holdings[ticker] = {
-                shares: totalShares,
-                entryPrice: avgPrice,
-                entryDate: holdings[ticker].entryDate,
-                ...(trailingStopEnabled() ? { peakPriceSinceEntry: pk != null ? pk : avgPrice } : {})
-              };
-            } else {
-              holdings[ticker] = {
-                shares: sharesToBuy,
-                entryPrice: currentPrice,
-                entryDate: date,
-                ...(trailingStopEnabled() ? { peakPriceSinceEntry: currentPrice } : {})
-              };
+            const dteBt = daysUntilEarnings(ticker, date, fundamentalsLive);
+            if (dteBt !== null && dteBt >= 0 && dteBt <= 10) {
+              console.log(`[EarningsFilter] Skipping ${ticker} — earnings in ${dteBt.toFixed(1)} days`);
+              continue;
             }
-            trades.push({ type: 'BUY', ticker, shares: sharesToBuy, price: currentPrice, cost, score: target.score });
+            if (Object.keys(holdings).length >= rebalanceSlotCap) continue;
           }
+          const currentValue = holdings[ticker] ? holdings[ticker].shares * currentPrice : 0;
+          const diffValue = target.targetDollars - currentValue;
+          if (diffValue > 50) {
+            const sharesToBuy = Math.floor(diffValue / currentPrice);
+            if (sharesToBuy > 0 && cash >= sharesToBuy * currentPrice) {
+              const cost = sharesToBuy * currentPrice;
+              cash -= cost;
+              if (holdings[ticker]) {
+                const totalShares = holdings[ticker].shares + sharesToBuy;
+                const avgPrice = (holdings[ticker].shares * holdings[ticker].entryPrice + cost) / totalShares;
+                const pk = holdings[ticker].peakPriceSinceEntry;
+                holdings[ticker] = {
+                  shares: totalShares,
+                  entryPrice: avgPrice,
+                  entryDate: holdings[ticker].entryDate,
+                  ...(trailingStopEnabled() ? { peakPriceSinceEntry: pk != null ? pk : avgPrice } : {})
+                };
+              } else {
+                holdings[ticker] = {
+                  shares: sharesToBuy,
+                  entryPrice: currentPrice,
+                  entryDate: date,
+                  ...(trailingStopEnabled() ? { peakPriceSinceEntry: currentPrice } : {})
+                };
+              }
+              trades.push({ type: 'BUY', ticker, shares: sharesToBuy, price: currentPrice, cost, score: target.score });
+            }
+          }
+        }
+
+        let postValue = cash;
+        for (const [ticker, holding] of Object.entries(holdings)) {
+          const price = dailyPx[ticker];
+          if (price) postValue += holding.shares * price;
+        }
+
+        rebalanceLog.push({
+          date,
+          portfolioValue: postValue,
+          holdings: Object.keys(holdings),
+          topPicks: topPicks.map(p => p.ticker),
+          tradesExecuted: trades.length,
+          regime: regimeMeta.regime,
+          exposure,
+          ...(compositeFam && rankings && rankings.length
+            ? { avgTopScore: parseFloat(avgTopNAvgComposite(rankings, 15).toFixed(2)) }
+            : {}),
+          ...(compositeFam
+            ? {
+              pillarWeights: { ...weightsRankBt },
+              adaptiveMeta: rebalanceAdaptiveMeta,
+              requestedTopN: adjustedTopN,
+              effectiveTargetN: rebalanceSlotCap,
+              compositeScoreFloor: SCORE_FLOOR
+            }
+            : {}),
+          ...(rlRebalMeta ? { rlAgent: rlRebalMeta, adjustedTopN } : {})
+        });
+
+        tradeLog.push(...trades.map(t => ({ ...t, date })));
+      } else {
+        let postValueSkip = cash;
+        for (const [ticker, holding] of Object.entries(holdings)) {
+          const price = dailyPx[ticker];
+          if (price) postValueSkip += holding.shares * price;
+        }
+        rebalanceLog.push({
+          date,
+          portfolioValue: postValueSkip,
+          holdings: Object.keys(holdings),
+          topPicks: Object.keys(holdings),
+          tradesExecuted: 0,
+          regime: regimeMeta.regime,
+          exposure,
+          rlAction: 'SKIP_REBALANCE',
+          ...(compositeFam && rankings && rankings.length
+            ? { avgTopScore: parseFloat(avgTopNAvgComposite(rankings, 15).toFixed(2)) }
+            : {}),
+          ...(compositeFam
+            ? {
+              pillarWeights: { ...weightsRankBt },
+              adaptiveMeta: rebalanceAdaptiveMeta,
+              requestedTopN: adjustedTopN,
+              effectiveTargetN: Object.keys(holdings).length,
+              compositeScoreFloor: SCORE_FLOOR
+            }
+            : {}),
+          ...(rlRebalMeta ? { rlAgent: rlRebalMeta, adjustedTopN } : {})
+        });
+      }
+
+      let hedgePremiumThisRebal = 0;
+      let hedgePatch = {};
+      if (hedgingEnabled) {
+        let portfolioValuePostRebal = cash;
+        for (const [ticker, holding] of Object.entries(holdings)) {
+          const price = dailyPx[ticker];
+          if (price) portfolioValuePostRebal += holding.shares * price;
+        }
+        if (activeHedge) {
+          hedgePremiumThisRebal = hedgePremiumForPeriod(activeHedge, date, activeHedge.notionalHedge);
+          if (hedgePremiumThisRebal > 0) {
+            cash -= hedgePremiumThisRebal;
+            totalHedgeCost += hedgePremiumThisRebal;
+            activeHedge.lastPremiumAccrualDate = date;
+          }
+        }
+        const hedgeDec = evaluateHedgeNeed(regimeMeta.regime, portfolioValuePostRebal, activeHedge);
+        if (hedgeDec.action === 'CLOSE_HEDGE' && activeHedge) {
+          const pOpen = getPrice(spyPrices, activeHedge.openDate) || activeHedge.spyPxAtOpen;
+          const pClose = getPrice(spyPrices, date);
+          let hedgePnL = 0;
+          if (pOpen > 0 && pClose > 0) {
+            const spyRet = pClose / pOpen - 1;
+            if (spyRet < 0) hedgePnL = activeHedge.notionalHedge * Math.abs(spyRet);
+          }
+          cash += hedgePnL;
+          totalHedgeGain += hedgePnL;
+          hedgePatch = {
+            hedgeAction: 'CLOSE_HEDGE',
+            hedgeNotional: activeHedge.notionalHedge,
+            hedgeCost: parseFloat(hedgePremiumThisRebal.toFixed(2)),
+            hedgePnL: parseFloat(hedgePnL.toFixed(2)),
+            hedgeReason: hedgeDec.reason
+          };
+          activeHedge = null;
+        } else if (hedgeDec.action === 'OPEN_HEDGE') {
+          const spyPx0 = getPrice(spyPrices, date) || 0;
+          activeHedge = {
+            openDate: date,
+            regime: hedgeDec.regime,
+            notionalHedge: hedgeDec.notionalHedge,
+            hedgePct: hedgeDec.hedgePct,
+            spyPxAtOpen: spyPx0,
+            lastPremiumAccrualDate: date
+          };
+          totalHedgesOpened += 1;
+          hedgePatch = {
+            hedgeAction: 'OPEN_HEDGE',
+            hedgeNotional: hedgeDec.notionalHedge,
+            hedgeCost: 0,
+            hedgePnL: null,
+            hedgeDescription: hedgeDec.description
+          };
+        } else {
+          hedgePatch = activeHedge
+            ? {
+                hedgeAction: 'HOLD',
+                hedgeNotional: activeHedge.notionalHedge,
+                hedgeCost: parseFloat(hedgePremiumThisRebal.toFixed(2)),
+                hedgePnL: null
+              }
+            : { hedgeAction: 'HOLD', hedgeNotional: null, hedgeCost: 0, hedgePnL: null };
+        }
+        if (rebalanceLog.length > 0 && rebalanceLog[rebalanceLog.length - 1].date === date) {
+          Object.assign(rebalanceLog[rebalanceLog.length - 1], hedgePatch);
         }
       }
 
-      let postValue = cash;
-      for (const [ticker, holding] of Object.entries(holdings)) {
-        const price = dailyPx[ticker];
-        if (price) postValue += holding.shares * price;
-      }
-
-      rebalanceLog.push({
-        date,
-        portfolioValue: postValue,
-        holdings: Object.keys(holdings),
-        topPicks: topPicks.map(p => p.ticker),
-        tradesExecuted: trades.length,
-        regime: regimeMeta.regime,
-        exposure,
-        ...(compositeFam && rankings && rankings.length
-          ? { avgTopScore: parseFloat(avgTopNAvgComposite(rankings, 15).toFixed(2)) }
-          : {}),
-        ...(compositeFam
-          ? {
-            pillarWeights: { ...weightsRankBt },
-            adaptiveMeta: rebalanceAdaptiveMeta,
-            requestedTopN: adjustedTopN,
-            effectiveTargetN: rebalanceSlotCap,
-            compositeScoreFloor: SCORE_FLOOR
-          }
-          : {}),
-        ...(rlRebalMeta ? { rlAgent: rlRebalMeta, adjustedTopN } : {})
-      });
-
-      tradeLog.push(...trades.map(t => ({ ...t, date })));
       const holdingsCopy = {};
       for (const [t, h] of Object.entries(holdings)) holdingsCopy[t] = { shares: h.shares, entryPrice: h.entryPrice, entryDate: h.entryDate };
       holdingsSnapshots.push({ date, cash, holdings: holdingsCopy });
 
       if (rlCompositeActive && rlAgentInstance) {
-        rlLastPvForReturn = postValue;
-        rlPeakSinceRebal = postValue;
+        let pvPostRebal = cash;
+        for (const [ticker, holding] of Object.entries(holdings)) {
+          const price = dailyPx[ticker];
+          if (price) pvPostRebal += holding.shares * price;
+        }
+        rlLastPvForReturn = pvPostRebal;
+        rlPeakSinceRebal = pvPostRebal;
         rlMaxDdSinceRebal = 0;
         rlDailyReturns = [];
         const benchCl =
           universeBenchmarkValue(uniBench, priceHistory, date, dailyPx) ??
           (spyPxBench > 0 && spyShares ? spyPxBench * spyShares : benchPre);
-        lastRlPostPort = postValue;
+        lastRlPostPort = pvPostRebal;
         lastRlPostBench = benchCl;
+      }
+    }
+  }
+
+  if (hedgingEnabled && allTradingDays.length > 0) {
+    const hEnd = activeHedge;
+    const endD = allTradingDays[allTradingDays.length - 1];
+    if (hEnd && daysBetween(hEnd.openDate, endD) > 0) {
+      const premEnd = hedgePremiumForPeriod(hEnd, endD, hEnd.notionalHedge);
+      if (premEnd > 0) {
+        cash -= premEnd;
+        totalHedgeCost += premEnd;
+        hEnd.lastPremiumAccrualDate = endD;
+      }
+      const pOpenE = getPrice(spyPrices, hEnd.openDate) || hEnd.spyPxAtOpen;
+      const pCloseE = getPrice(spyPrices, endD);
+      let hedgePnLEnd = 0;
+      if (pOpenE > 0 && pCloseE > 0) {
+        const spyRetE = pCloseE / pOpenE - 1;
+        if (spyRetE < 0) hedgePnLEnd = hEnd.notionalHedge * Math.abs(spyRetE);
+      }
+      cash += hedgePnLEnd;
+      totalHedgeGain += hedgePnLEnd;
+      activeHedge = null;
+      if (holdingsSnapshots.length > 0) {
+        holdingsSnapshots[holdingsSnapshots.length - 1].cash = cash;
       }
     }
   }
@@ -4612,7 +5369,26 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     adaptiveMode,
     positionSizing,
     rlLog,
-    rlAgentInstance: rlCompositeActive ? rlAgentInstance : null
+    rlAgentInstance: rlCompositeActive ? rlAgentInstance : null,
+    hedgeStats: hedgingEnabled
+      ? {
+          enabled: true,
+          totalOpened: totalHedgesOpened,
+          totalHedgeCost: parseFloat(totalHedgeCost.toFixed(2)),
+          totalHedgeGain: parseFloat(totalHedgeGain.toFixed(2)),
+          netHedgeImpact: parseFloat((totalHedgeGain - totalHedgeCost).toFixed(2)),
+          costDrag: parseFloat(totalHedgeCost.toFixed(2)),
+          protectionGain: parseFloat(totalHedgeGain.toFixed(2))
+        }
+      : {
+          enabled: false,
+          totalOpened: 0,
+          totalHedgeCost: 0,
+          totalHedgeGain: 0,
+          netHedgeImpact: 0,
+          costDrag: 0,
+          protectionGain: 0
+        }
   };
 }
 
@@ -4937,7 +5713,14 @@ function computeFactorAttribution(factorSnapshots, priceHistory, rebalanceDates,
   const wSum = FACTOR_NAMES.reduce((s, f) => s + suggestedWeights[f], 0);
   for (const f of FACTOR_NAMES) suggestedWeights[f] = parseFloat((suggestedWeights[f] / wSum).toFixed(3));
 
-  const FACTOR_COLORS = { fundamental: '#22c55e', dcf: '#a78bfa', valuation: '#f59e0b', momentum: '#06b6d4', value: '#8b5cf6' };
+  const FACTOR_COLORS = {
+    fundamental: '#22c55e',
+    dcf: '#a78bfa',
+    valuation: '#f59e0b',
+    momentum: '#06b6d4',
+    value: '#8b5cf6',
+    earningsMomentum: '#ec4899'
+  };
   const best = FACTOR_NAMES.reduce((a, b) => avgIC[a] > avgIC[b] ? a : b);
   const worst = FACTOR_NAMES.reduce((a, b) => avgIC[a] < avgIC[b] ? a : b);
   let insight = `${FACTOR_LABELS[best]} had the highest average IC (${avgIC[best] >= 0 ? '+' : ''}${(avgIC[best]).toFixed(3)}, spread ${avgSpread[best] >= 0 ? '+' : ''}${(avgSpread[best] * 100).toFixed(1)}%/period).`;
@@ -5259,7 +6042,7 @@ function getRebalanceDates(startDate, endDate, frequency) {
     const month = String(current.getMonth() + 1).padStart(2, '0');
     const dateStr = `${year}-${month}-15`;
 
-    if (dateStr < endDate) {
+    if (dateStr <= endDate) {
       dates.push(dateStr);
     }
   }
@@ -5803,6 +6586,137 @@ function getDailySimpleReturnsToDate(priceData, asOfDate, lookbackDays = 60) {
   return rets;
 }
 
+/** Daily log returns keyed by bar end date (aligned across tickers on matching dates). */
+function logReturnMapByEndDate(priceData, asOfDate, lookbackDays) {
+  const avail = (priceData || [])
+    .filter((p) => p && p.date && p.date <= asOfDate)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (avail.length < lookbackDays + 2) return new Map();
+  const slice = avail.slice(-(lookbackDays + 1));
+  const m = new Map();
+  for (let i = 1; i < slice.length; i++) {
+    const a = slice[i - 1].close;
+    const b = slice[i].close;
+    if (a > 0 && b > 0) m.set(slice[i].date, Math.log(b / a));
+  }
+  return m;
+}
+
+function correlationPairKey(ta, tb) {
+  const a = String(ta);
+  const b = String(tb);
+  return a.localeCompare(b) <= 0 ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * Pairwise Pearson correlation of daily log returns over `lookbackDays` ending at `asOfDate`.
+ * @returns {{ pairs: Record<string, number>, clusters: string[][] }}
+ */
+function computeCorrelationMatrix(tickers, priceData, lookbackDays = 60, asOfDate = null) {
+  const asOf = asOfDate || new Date().toISOString().split('T')[0];
+  const uniq = [...new Set((tickers || []).map((t) => String(t).trim()).filter(Boolean))];
+  const maps = new Map();
+  for (const t of uniq) {
+    const series = priceData?.[t];
+    if (!series || !series.length) continue;
+    maps.set(t, logReturnMapByEndDate(series, asOf, lookbackDays));
+  }
+  const pairs = {};
+  for (let i = 0; i < uniq.length; i++) {
+    for (let j = i + 1; j < uniq.length; j++) {
+      const ta = uniq[i];
+      const tb = uniq[j];
+      const m1 = maps.get(ta);
+      const m2 = maps.get(tb);
+      if (!m1 || !m2 || m1.size === 0 || m2.size === 0) {
+        pairs[correlationPairKey(ta, tb)] = 0;
+        continue;
+      }
+      const xs = [];
+      const ys = [];
+      for (const [dt, r1] of m1) {
+        const r2 = m2.get(dt);
+        if (r2 != null) {
+          xs.push(r1);
+          ys.push(r2);
+        }
+      }
+      const rho = pearsonCorrelation(xs, ys);
+      pairs[correlationPairKey(ta, tb)] = rho != null && Number.isFinite(rho) ? rho : 0;
+    }
+  }
+  const adj = new Map();
+  for (const t of uniq) adj.set(t, []);
+  const thresh = 0.7;
+  for (let i = 0; i < uniq.length; i++) {
+    for (let j = i + 1; j < uniq.length; j++) {
+      const ta = uniq[i];
+      const tb = uniq[j];
+      const c = pairs[correlationPairKey(ta, tb)] ?? 0;
+      if (c > thresh) {
+        adj.get(ta).push(tb);
+        adj.get(tb).push(ta);
+      }
+    }
+  }
+  const seen = new Set();
+  const clusters = [];
+  for (const t of uniq) {
+    if (seen.has(t)) continue;
+    const comp = [];
+    const stack = [t];
+    seen.add(t);
+    while (stack.length) {
+      const u = stack.pop();
+      comp.push(u);
+      for (const v of adj.get(u) || []) {
+        if (!seen.has(v)) {
+          seen.add(v);
+          stack.push(v);
+        }
+      }
+    }
+    clusters.push(comp.sort((a, b) => a.localeCompare(b)));
+  }
+  return { pairs, clusters };
+}
+
+/**
+ * Greedy diversification: walk ranked rows; skip if already have `maxCorrelated` names with corr > 0.7.
+ * @param {object} correlationMatrix - result of computeCorrelationMatrix (`{ pairs }`)
+ */
+function applyCorrelationFilter(rankedTickers, correlationMatrix, maxPositions, maxCorrelated = 3) {
+  const pairMap =
+    correlationMatrix && typeof correlationMatrix === 'object' && correlationMatrix.pairs
+      ? correlationMatrix.pairs
+      : {};
+  const corrAB = (a, b) => {
+    if (!a || !b || a === b) return 0;
+    const k = correlationPairKey(a, b);
+    const v = pairMap[k];
+    return v != null && Number.isFinite(v) ? v : 0;
+  };
+  const selected = [];
+  const skipped = [];
+  for (const row of rankedTickers || []) {
+    if (selected.length >= maxPositions) break;
+    const t = row.ticker;
+    let highCorr = 0;
+    for (const ex of selected) {
+      if (corrAB(t, ex.ticker) > 0.7) highCorr++;
+    }
+    if (highCorr >= maxCorrelated) {
+      skipped.push({
+        ticker: t,
+        reason: `correlated_gt_0.7_with_${highCorr}_existing (maxCorrelated=${maxCorrelated})`
+      });
+    } else {
+      selected.push(row);
+    }
+  }
+  return { selected, skipped };
+}
+
 /**
  * Inverse annualized vol weights (composite default), optional blend toward equal weight, then 10% cap.
  * @param {{ equalBlend?: number }} options - equalBlend in [0,1]: e.g. 0.4 => 40% equal, 60% invVol
@@ -6060,6 +6974,7 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
   const strategyLabel = opts.strategyLabel || 'full_composite';
   const skipConstraintPenalty = !!opts.skipConstraintPenalty;
   const blendMQ = opts.blendMomentumWithQuality;
+  const earningsMap = opts.earningsMap instanceof Map ? opts.earningsMap : null;
 
   // PASS 1: collect candidates (percentiles computed only for aggressive/turbo)
   const candidates = [];
@@ -6087,6 +7002,15 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
   const usePercentileMom = strategyLabel === 'full_composite_aggressive' || strategyLabel === 'full_composite_turbo';
   const momPercentiles = usePercentileMom ? bt_momentumPercentilesForCandidates(candidates) : {};
 
+  const wEm = dynWeights?.earningsMomentum ?? 0;
+  const earningsScoreByTicker =
+    wEm > 1e-9 && earningsMap && earningsMap.size
+      ? buildEarningsMomentumScoreByTicker(
+          candidates.map((c) => c.ticker),
+          earningsMap
+        )
+      : null;
+
   // PASS 2: build final composite scores using percentile-normalized momentum
   const results = [];
   for (const c of candidates) {
@@ -6104,6 +7028,7 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
 
     const w = dynWeights || DEFAULT_COMPOSITE_WEIGHTS;
     const dcf = c.fund.dcfScore || 50;
+    const emScore = earningsScoreByTicker != null ? (earningsScoreByTicker.get(c.ticker) ?? 50) : 50;
 
     const momQBonus = blendMQ ? 0 : (c.momQ ? (c.momQ.score - 50) * 0.1 : 0);
     const fullScore = (
@@ -6111,7 +7036,8 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
       dcf * w.dcf +
       dynVal.score * w.valuation +
       momentumTerm * w.momentum +
-      c.val.valueScore * w.value
+      c.val.valueScore * w.value +
+      emScore * (w.earningsMomentum ?? 0)
     ) + momQBonus;
 
     results.push({
@@ -6124,6 +7050,7 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
       momentumQuality: c.momQ?.score || 50,
       valuationScore: dynVal.score,
       valueScore: c.val.valueScore,
+      earningsMomentumScore: emScore,
       price: c.mom.currentPrice,
       volatility: c.mom.annualizedVol,
       lookbackUsed: c.mom.lookbackUsed,
@@ -6366,6 +7293,903 @@ function extractDiagnosticPerformance(sim, capital) {
   };
 }
 
+/** One row for GET /api/diagnostics/hedge-impact (hedgeStats null when hedging off). */
+function buildHedgeImpactConfigRow(name, hedging, rl, sim, capital) {
+  const perf = extractDiagnosticPerformance(sim, capital);
+  const hedgeStats = hedging
+    ? (() => {
+        const hs = sim.hedgeStats || {};
+        return {
+          totalOpened: hs.totalOpened ?? 0,
+          netImpact: hs.netHedgeImpact ?? 0,
+          costDrag: hs.costDrag ?? 0,
+          protectionGain: hs.protectionGain ?? 0
+        };
+      })()
+    : null;
+  if (!perf) {
+    return { name, hedging, rl, totalReturn: null, alpha: null, sharpe: null, maxDrawdown: null, hedgeStats };
+  }
+  return {
+    name,
+    hedging,
+    rl,
+    totalReturn: parseFloat(perf.totalReturn),
+    alpha: parseFloat(perf.alpha),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown),
+    hedgeStats
+  };
+}
+
+function summarizeEquityCurvePerf(sim, capital) {
+  const perf = extractDiagnosticPerformance(sim, capital);
+  if (!perf) return { totalReturn: null, sharpe: null, maxDrawdown: null };
+  return {
+    totalReturn: parseFloat(perf.totalReturn),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown)
+  };
+}
+
+/** Daily points with value = portfolio (or benchmark) / capital * 100. */
+function buildNormalizedEquityPoints(dailyValues, capital, valueKey = 'portfolio') {
+  if (!dailyValues?.length || !capital || capital <= 0) return [];
+  const out = [];
+  for (const d of dailyValues) {
+    const raw = d[valueKey];
+    if (raw == null || !Number.isFinite(Number(raw))) continue;
+    const value = parseFloat(((Number(raw) / capital) * 100).toFixed(4));
+    out.push({ date: d.date, value });
+  }
+  return out;
+}
+
+function summarizeBenchmarkLegFromSim(sim, capital) {
+  const perf = extractBenchmarkLegPerformance(sim?.dailyValues, capital);
+  if (!perf) return { totalReturn: null, sharpe: null, maxDrawdown: null };
+  return {
+    totalReturn: parseFloat(perf.totalReturn),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown)
+  };
+}
+
+/** True when DQN weights exist on disk / memory with at least one training update. */
+function isDqnTrainedForEquityCurves() {
+  if (rlAgentTypeEffective() !== 'dqn') return false;
+  const agent = TRAINED_RL_AGENT ?? loadRlAgentFromDisk();
+  if (!agent || !isDqnAgentInstance(agent)) return false;
+  return (Number(agent.totalUpdates) || 0) > 0;
+}
+
+/** Numeric perf row for POST /api/rl/train auto-eval (Sharpe/alpha used for overfitRatio). */
+function extractRlTrainEvalBlock(sim, capital, periodDescription) {
+  const base = extractDiagnosticPerformance(sim, capital);
+  if (!base) {
+    return {
+      period: periodDescription,
+      totalReturn: null,
+      alpha: null,
+      sharpe: null,
+      maxDrawdown: null
+    };
+  }
+  return {
+    period: periodDescription,
+    totalReturn: parseFloat(base.totalReturn),
+    alpha: parseFloat(base.alpha),
+    sharpe: parseFloat(base.sharpe),
+    maxDrawdown: parseFloat(base.maxDrawdown),
+    span: base.period
+  };
+}
+
+/** Renormalize pillar weights for factor diagnostics (dcf/valuation allowed 0). */
+function normalizeFactorDiagWeights(raw) {
+  const o = FACTOR_NAMES.reduce((acc, f) => {
+    acc[f] = raw && typeof raw[f] === 'number' && Number.isFinite(raw[f]) ? raw[f] : 0;
+    return acc;
+  }, {});
+  const s = FACTOR_NAMES.reduce((a, f) => a + o[f], 0);
+  if (s > 0) for (const f of FACTOR_NAMES) o[f] = o[f] / s;
+  return o;
+}
+
+/** Performance of the universe equal-weight leg (benchmark series) as if it were the portfolio. */
+function extractBenchmarkLegPerformance(dailyValues, capital) {
+  if (!dailyValues || dailyValues.length < 2) return null;
+  const dv = dailyValues.map((d) => ({ ...d, portfolio: d.benchmark }));
+  return extractDiagnosticPerformance({ dailyValues: dv, tradeLog: [] }, capital);
+}
+
+function summarizeFactorDiagnosticRun(name, weightsRaw, sim, capital, priceHistory, rebalanceDates, fundamentals) {
+  const weights = normalizeFactorDiagWeights(weightsRaw);
+  const perf = extractDiagnosticPerformance(sim, capital);
+  const sells = (sim.tradeLog || []).filter((t) => t.type === 'SELL' || t.type === 'STOP');
+  let avgIC = null;
+  try {
+    const attr = computeFactorAttribution(
+      sim.factorSnapshots,
+      priceHistory,
+      rebalanceDates,
+      sells,
+      fundamentals,
+      weights
+    );
+    if (attr && attr.avgIC) {
+      avgIC = {};
+      for (const f of FACTOR_NAMES) {
+        const v = attr.avgIC[f];
+        avgIC[f] = v != null && Number.isFinite(v) ? parseFloat(v.toFixed(4)) : 0;
+      }
+    }
+  } catch {
+    avgIC = null;
+  }
+  return {
+    name,
+    weights,
+    totalReturn: parseFloat(perf.totalReturn),
+    annualizedReturn: parseFloat(perf.annualizedReturn),
+    alpha: parseFloat(perf.alpha),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown),
+    winRate: parseFloat(perf.winRate),
+    numTrades: sim.tradeLog?.length ?? 0,
+    ...(avgIC ? { avgIC } : {})
+  };
+}
+
+function factorDiagnosticSubperiodTriple(sim, capital) {
+  const perf = extractDiagnosticPerformance(sim, capital);
+  if (!perf) return { totalReturn: 0, alpha: 0, sharpe: 0, maxDrawdown: 0 };
+  return {
+    totalReturn: parseFloat(perf.totalReturn),
+    alpha: parseFloat(perf.alpha),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown)
+  };
+}
+
+/** Count windows with alpha > 0 among 1y / 2y / 3y. */
+function factorDiagnosticConsistency(subperiods) {
+  if (!subperiods) return undefined;
+  let positive = 0;
+  for (const k of ['1y', '2y', '3y']) {
+    const a = subperiods[k]?.alpha;
+    if (a != null && Number.isFinite(a) && a > 0) positive++;
+  }
+  if (positive === 3) return 'stable';
+  if (positive === 2) return 'mixed';
+  return 'unstable';
+}
+
+/** Compare trailing 1y alpha to full 3y alpha (percentage points). */
+function factorDiagnosticRecentStrength(subperiods) {
+  const a1 = subperiods?.['1y']?.alpha;
+  const a3 = subperiods?.['3y']?.alpha;
+  if (a1 == null || a3 == null || !Number.isFinite(a1) || !Number.isFinite(a3)) return null;
+  if (a1 > a3) return 'strengthening';
+  if (a1 < a3 - 2) return 'decaying';
+  return 'steady';
+}
+
+function buildFactorDiagnosticRecommendation(configs) {
+  const byName = (n) => configs.find((c) => c.name === n);
+  const singles = ['Momentum only', 'Value only', 'Quality only', 'Earnings only'].map(byName).filter(Boolean);
+  const combos = [
+    'Equal M/V/Q',
+    'Current best',
+    'M30/V30/Q15/E25',
+    'M30/V30/E40',
+    'M35/V25/Q15/E25'
+  ]
+    .map(byName)
+    .filter(Boolean);
+  const bestSharpe = (arr) => {
+    if (!arr.length) return null;
+    return arr.reduce((a, b) => (b.sharpe > a.sharpe ? b : a));
+  };
+  const bs = bestSharpe(singles);
+  const bc = bestSharpe(combos);
+  const sPart = bs ? `${bs.name} (Sharpe ${bs.sharpe})` : 'n/a';
+  const cPart = bc ? `${bc.name} (Sharpe ${bc.sharpe})` : 'n/a';
+  return `Best single factor: ${sPart}. Best combo: ${cPart}.`;
+}
+
+/**
+ * GET /api/diagnostics/factors/:universeId
+ * Sequential pillar-only and blend full_composite runs (no RL, no ML rank adjustments).
+ * Query `subperiods=true`: each config runs three backtests (1y, 2y, 3y) only; response adds
+ * `subperiods`, `consistency` (stable | mixed | unstable), and `recentStrength` (strengthening | steady | decaying).
+ */
+app.get('/api/diagnostics/factors/:universeId', async (req, res) => {
+  const { universeId } = req.params;
+  const subperiodsMode =
+    req.query.subperiods === 'true' ||
+    req.query.subperiods === true ||
+    String(req.query.subperiods || '').toLowerCase() === 'true';
+  const diagTimeoutMs = subperiodsMode ? 3600000 : 600000;
+  req.setTimeout(diagTimeoutMs);
+  res.setTimeout(diagTimeoutMs);
+  const period = String(req.query.period || '3y').trim();
+  const rebalanceFreqRaw = String(req.query.rebalanceFreq || 'bimonthly').toLowerCase().trim();
+  const allowedFreq = ['monthly', 'bimonthly', 'quarterly', 'weekly', 'biweekly'];
+  const rebalanceFreq = allowedFreq.includes(rebalanceFreqRaw) ? rebalanceFreqRaw : 'bimonthly';
+  const topN = Math.max(1, parseInt(String(req.query.topN || '15'), 10) || 15);
+  const capital = parseFloat(String(req.query.initialCapital || '10000')) || 10000;
+
+  const universe = UNIVERSE_TICKERS[universeId];
+  if (!universe) {
+    return res.status(400).json({ success: false, error: 'Unknown universe' });
+  }
+
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const mainDays = periodDays[period] || 1095;
+  const chartSpanDays = subperiodsMode ? Math.max(mainDays, periodDays['3y']) : mainDays;
+  const endDate = new Date();
+  const mainSimStart = new Date(endDate.getTime() - mainDays * 24 * 60 * 60 * 1000);
+  const chartRangeStart = new Date(endDate.getTime() - chartSpanDays * 24 * 60 * 60 * 1000);
+  const lookbackStart = new Date(chartRangeStart.getTime() - 400 * 24 * 60 * 60 * 1000);
+  const startDateStr = lookbackStart.toISOString().split('T')[0];
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const backtestStartDate = mainSimStart.toISOString().split('T')[0];
+
+  const pillarRuns = [
+    {
+      name: 'Momentum only',
+      weights: { momentum: 1, value: 0, fundamental: 0, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'Value only',
+      weights: { momentum: 0, value: 1, fundamental: 0, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'Quality only',
+      weights: { momentum: 0, value: 0, fundamental: 1, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'Equal M/V/Q',
+      weights: { momentum: 0.33, value: 0.33, fundamental: 0.34, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'Current best',
+      weights: { ...DEFAULT_COMPOSITE_WEIGHTS }
+    },
+    {
+      name: 'Earnings only',
+      weights: { earningsMomentum: 1, momentum: 0, value: 0, fundamental: 0, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'M30/V30/Q15/E25',
+      weights: { momentum: 0.3, value: 0.3, fundamental: 0.15, earningsMomentum: 0.25, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'M30/V30/E40',
+      weights: { momentum: 0.3, value: 0.3, earningsMomentum: 0.4, fundamental: 0, dcf: 0, valuation: 0 }
+    },
+    {
+      name: 'M35/V25/Q15/E25',
+      weights: { momentum: 0.35, value: 0.25, fundamental: 0.15, earningsMomentum: 0.25, dcf: 0, valuation: 0 }
+    }
+  ];
+
+  const simOptionsBase = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    rlAgent: false,
+    rlMode: 'off',
+    skipMlRankingAdjustments: true
+  };
+
+  try {
+    clearBacktestRuntimeCaches();
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices || !spyPrices.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY benchmark data. Try again.' });
+    }
+
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const start3yIso = new Date(endDate.getTime() - periodDays['3y'] * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObsStart = subperiodsMode ? subtractMonths(start3yIso, 60) : subtractMonths(simStart, 60);
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const configs = [];
+    let lastSim = null;
+    for (let ci = 0; ci < pillarRuns.length; ci++) {
+      const def = pillarRuns[ci];
+      if (subperiodsMode) {
+        const subperiods = {};
+        let sim3y = null;
+        let rebalanceDates3y = null;
+        for (const lbl of ['1y', '2y', '3y']) {
+          console.log(`Subperiod check: config ${ci + 1}/${pillarRuns.length}, period ${lbl}...`);
+          const d = periodDays[lbl];
+          const subStart = new Date(endDate.getTime() - d * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+          const rd = getRebalanceDates(subStart, endDateStr, rebalanceFreq);
+          if (rd.length < 2) {
+            subperiods[lbl] = { totalReturn: 0, alpha: 0, sharpe: 0, maxDrawdown: 0 };
+            continue;
+          }
+          const subSimStart = rd[0];
+          const { multiplierFn: cashInflSub } = buildCashInflationMultiplierFn(
+            cpiObservations,
+            subSimStart,
+            INFLATION_BASELINE_ANNUAL
+          );
+          const subSim = await runBacktestSimulation(
+            universe,
+            priceHistory,
+            fundamentals,
+            spyPrices,
+            rd,
+            topN,
+            capital,
+            'full_composite',
+            def.weights,
+            cashInflSub,
+            universeId,
+            { ...simOptionsBase }
+          );
+          if (lbl === '3y') {
+            sim3y = subSim;
+            rebalanceDates3y = rd;
+          }
+          subperiods[lbl] = factorDiagnosticSubperiodTriple(subSim, capital);
+        }
+        lastSim = sim3y;
+        if (sim3y && rebalanceDates3y) {
+          const row = summarizeFactorDiagnosticRun(
+            def.name,
+            def.weights,
+            sim3y,
+            capital,
+            priceHistory,
+            rebalanceDates3y,
+            fundamentals
+          );
+          configs.push({
+            ...row,
+            subperiods,
+            consistency: factorDiagnosticConsistency(subperiods),
+            recentStrength: factorDiagnosticRecentStrength(subperiods)
+          });
+        } else {
+          configs.push({
+            name: def.name,
+            weights: normalizeFactorDiagWeights(def.weights),
+            totalReturn: 0,
+            annualizedReturn: 0,
+            alpha: 0,
+            sharpe: 0,
+            maxDrawdown: 0,
+            winRate: 0,
+            numTrades: 0,
+            error: 'Insufficient rebalance dates for 3y window',
+            subperiods,
+            consistency: factorDiagnosticConsistency(subperiods),
+            recentStrength: factorDiagnosticRecentStrength(subperiods)
+          });
+        }
+      } else {
+        const sim = await runBacktestSimulation(
+          universe,
+          priceHistory,
+          fundamentals,
+          spyPrices,
+          rebalanceDates,
+          topN,
+          capital,
+          'full_composite',
+          def.weights,
+          cashInflationMult,
+          universeId,
+          { ...simOptionsBase }
+        );
+        lastSim = sim;
+        configs.push(summarizeFactorDiagnosticRun(def.name, def.weights, sim, capital, priceHistory, rebalanceDates, fundamentals));
+      }
+    }
+
+    if (lastSim?.dailyValues) {
+      const benchPerf = extractBenchmarkLegPerformance(lastSim.dailyValues, capital);
+      if (benchPerf) {
+        configs.push({
+          name: 'Universe equal-weight benchmark',
+          weights: null,
+          totalReturn: parseFloat(benchPerf.totalReturn),
+          annualizedReturn: parseFloat(benchPerf.annualizedReturn),
+          alpha: parseFloat(benchPerf.alpha),
+          sharpe: parseFloat(benchPerf.sharpe),
+          maxDrawdown: parseFloat(benchPerf.maxDrawdown),
+          winRate: parseFloat(benchPerf.winRate),
+          numTrades: 0,
+          note: 'Buy-and-hold equal-weight universe leg (same benchmark series as each run); not a separate simulation.'
+        });
+      }
+    }
+
+    const recommendation = buildFactorDiagnosticRecommendation(configs);
+
+    res.json({
+      success: true,
+      universe: universeId,
+      period,
+      rebalanceFreq,
+      topN,
+      initialCapital: capital,
+      ...(subperiodsMode ? { subperiods: true } : {}),
+      configs,
+      recommendation
+    });
+  } catch (error) {
+    console.error('[diagnostics/factors]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/** M40 / V40 / Q20 — locked to server default composite (diagnostic baseline). */
+const UNIVERSE_COMPARE_WEIGHTS = { ...DEFAULT_COMPOSITE_WEIGHTS };
+
+/**
+ * GET /api/diagnostics/universe-compare
+ * Sequential 3y bimonthly full_composite runs: sp500_top50 vs sp500_top150 (M40/V40/Q20, no RL).
+ */
+app.get('/api/diagnostics/universe-compare', async (req, res) => {
+  req.setTimeout(1200000);
+  res.setTimeout(1200000);
+  const period = '3y';
+  const rebalanceFreq = 'bimonthly';
+  const topN = 15;
+  const capital = 10000;
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const days = periodDays[period] || 1095;
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+  const lookbackStart = new Date(startDate.getTime() - 400 * 24 * 60 * 60 * 1000);
+  const startDateStr = lookbackStart.toISOString().split('T')[0];
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const backtestStartDate = startDate.toISOString().split('T')[0];
+
+  const simOpts = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    rlAgent: false,
+    rlMode: 'off',
+    skipMlRankingAdjustments: true
+  };
+
+  async function runOne(universeId) {
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) throw new Error(`Unknown universe: ${universeId}`);
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 2) throw new Error('Insufficient rebalance dates');
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) throw new Error('Could not fetch SPY benchmark data');
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+    const sim = await runBacktestSimulation(
+      universe,
+      priceHistory,
+      fundamentals,
+      spyPrices,
+      rebalanceDates,
+      topN,
+      capital,
+      'full_composite',
+      { ...UNIVERSE_COMPARE_WEIGHTS },
+      cashInflationMult,
+      universeId,
+      { ...simOpts }
+    );
+    const perf = extractDiagnosticPerformance(sim, capital);
+    const risk = computeStrategyRiskMetrics(sim.dailyValues, sim.tradeLog, rebalanceDates, topN);
+    const tickerLabel = universeId === 'sp500_top50' ? 50 : universeId === 'sp500_top150' ? 150 : universe.filter((t) => t && t !== 'SPY').length;
+    return {
+      universe: universeId,
+      tickers: tickerLabel,
+      totalReturn: parseFloat(perf.totalReturn),
+      alpha: parseFloat(perf.alpha),
+      sharpe: parseFloat(perf.sharpe),
+      maxDrawdown: parseFloat(perf.maxDrawdown),
+      avgTurnover: risk != null && Number.isFinite(risk.turnoverPct) ? risk.turnoverPct : null
+    };
+  }
+
+  try {
+    clearBacktestRuntimeCaches();
+    const row50 = await runOne('sp500_top50');
+    const row150 = await runOne('sp500_top150');
+    res.json({
+      success: true,
+      comparison: [row50, row150],
+      improvement: {
+        returnDelta: row150.totalReturn - row50.totalReturn,
+        alphaDelta: row150.alpha - row50.alpha,
+        sharpeDelta: row150.sharpe - row50.sharpe
+      }
+    });
+  } catch (error) {
+    console.error('[diagnostics/universe-compare]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/**
+ * GET /api/diagnostics/hedge-impact
+ * Four sequential full_composite backtests (same data): Rules vs DQN × hedge off/on.
+ * DQN rows use rlMode=eval (trained agent if present; otherwise disk/default — noisy until trained).
+ */
+app.get('/api/diagnostics/hedge-impact', async (req, res) => {
+  req.setTimeout(1800000);
+  res.setTimeout(1800000);
+
+  const universeId =
+    req.query.universeId != null && String(req.query.universeId).trim() !== ''
+      ? String(req.query.universeId).trim()
+      : 'sp500_top150';
+  const period =
+    req.query.period != null && String(req.query.period).trim() !== ''
+      ? String(req.query.period).trim()
+      : '3y';
+
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const days = periodDays[period];
+  if (days == null) {
+    return res.status(400).json({ success: false, error: `Unsupported period: ${period}` });
+  }
+
+  const rebalanceFreq = 'bimonthly';
+  const topN = 15;
+  const capital = 10000;
+  const strategyClean = 'full_composite';
+  const tradingWeights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+
+  const simBaseOpts = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    skipMlRankingAdjustments: true,
+    correlationFilter: false
+  };
+
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+  const lookbackStart = new Date(startDate.getTime() - 400 * 24 * 60 * 60 * 1000);
+  const startDateStr = lookbackStart.toISOString().split('T')[0];
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const backtestStartDate = startDate.toISOString().split('T')[0];
+
+  try {
+    clearBacktestRuntimeCaches();
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) {
+      return res.status(400).json({ success: false, error: `Unknown universe: ${universeId}` });
+    }
+
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY benchmark data' });
+    }
+
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const preloadedEarningsMap = await fetchAllEarnings(universe);
+
+    const runSim = (extra) =>
+      runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        { ...tradingWeights },
+        cashInflationMult,
+        universeId,
+        { ...simBaseOpts, preloadedEarningsMap, ...extra }
+      );
+
+    const sim1 = await runSim({ rlAgent: false, rlMode: 'off', rlRandomAgent: false, hedging: false });
+    const sim2 = await runSim({ rlAgent: true, rlMode: 'eval', rlRandomAgent: false, hedging: false });
+    const sim3 = await runSim({ rlAgent: false, rlMode: 'off', rlRandomAgent: false, hedging: true });
+    const sim4 = await runSim({ rlAgent: true, rlMode: 'eval', rlRandomAgent: false, hedging: true });
+
+    const configs = [
+      buildHedgeImpactConfigRow('Rules only', false, false, sim1, capital),
+      buildHedgeImpactConfigRow('DQN only', false, true, sim2, capital),
+      buildHedgeImpactConfigRow('Rules + Hedge', true, false, sim3, capital),
+      buildHedgeImpactConfigRow('DQN + Hedge', true, true, sim4, capital)
+    ];
+
+    res.json({
+      universeId,
+      period,
+      configs
+    });
+  } catch (error) {
+    console.error('[diagnostics/hedge-impact]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/**
+ * GET /api/diagnostics/equity-curves/:universeId
+ * Normalized daily equity (start=100): equal-weight benchmark, rules, rules+hedge, DQN+hedge (if DQN trained).
+ * Cached 10 minutes per (universeId, period).
+ */
+app.get('/api/diagnostics/equity-curves/:universeId', async (req, res) => {
+  req.setTimeout(1800000);
+  res.setTimeout(1800000);
+
+  const universeId = String(req.params.universeId || '').trim();
+  const period =
+    req.query.period != null && String(req.query.period).trim() !== ''
+      ? String(req.query.period).trim()
+      : '3y';
+
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const days = periodDays[period];
+  if (days == null) {
+    return res.status(400).json({ success: false, error: `Unsupported period: ${period}` });
+  }
+
+  const cacheKey = `equity-curves:${universeId}:${period}`;
+  const cached = EQUITY_CURVES_DIAG_CACHE.get(cacheKey);
+  if (cached && Date.now() - cached.ts < EQUITY_CURVES_DIAG_TTL_MS) {
+    return res.json(cached.payload);
+  }
+
+  const rebalanceFreq = 'bimonthly';
+  const topN = 15;
+  const capital = 10000;
+  const strategyClean = 'full_composite';
+  const tradingWeights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+
+  const simBaseOpts = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    skipMlRankingAdjustments: true,
+    correlationFilter: false
+  };
+
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+  const lookbackStart = new Date(startDate.getTime() - 400 * 24 * 60 * 60 * 1000);
+  const startDateStr = lookbackStart.toISOString().split('T')[0];
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const backtestStartDate = startDate.toISOString().split('T')[0];
+
+  const emptySumm = { totalReturn: null, sharpe: null, maxDrawdown: null };
+
+  try {
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) {
+      return res.status(400).json({ success: false, error: `Unknown universe: ${universeId}` });
+    }
+
+    clearBacktestRuntimeCaches();
+
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY benchmark data' });
+    }
+
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const preloadedEarningsMap = await fetchAllEarnings(universe);
+
+    const runSim = (extra) =>
+      runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        { ...tradingWeights },
+        cashInflationMult,
+        universeId,
+        { ...simBaseOpts, preloadedEarningsMap, ...extra }
+      );
+
+    const simRules = await runSim({ rlAgent: false, rlMode: 'off', rlRandomAgent: false, hedging: false });
+    const simRulesHedge = await runSim({ rlAgent: false, rlMode: 'off', rlRandomAgent: false, hedging: true });
+
+    let simDqnHedge = null;
+    const dqnTrained = isDqnTrainedForEquityCurves();
+    if (dqnTrained) {
+      const agent = TRAINED_RL_AGENT ?? loadRlAgentFromDisk();
+      simDqnHedge = await runSim({
+        rlAgent: true,
+        rlMode: 'eval',
+        rlRandomAgent: false,
+        hedging: true,
+        rlQLearningAgent: agent
+      });
+    }
+
+    const dvRules = simRules.dailyValues;
+    const payload = {
+      universeId,
+      period,
+      curves: {
+        benchmark: buildNormalizedEquityPoints(dvRules, capital, 'benchmark'),
+        rulesOnly: buildNormalizedEquityPoints(dvRules, capital, 'portfolio'),
+        rulesHedged: buildNormalizedEquityPoints(simRulesHedge.dailyValues, capital, 'portfolio'),
+        dqnHedged: simDqnHedge?.dailyValues?.length
+          ? buildNormalizedEquityPoints(simDqnHedge.dailyValues, capital, 'portfolio')
+          : []
+      },
+      summary: {
+        benchmark: summarizeBenchmarkLegFromSim(simRules, capital),
+        rulesOnly: summarizeEquityCurvePerf(simRules, capital),
+        rulesHedged: summarizeEquityCurvePerf(simRulesHedge, capital),
+        dqnHedged: simDqnHedge ? summarizeEquityCurvePerf(simDqnHedge, capital) : { ...emptySumm }
+      }
+    };
+
+    EQUITY_CURVES_DIAG_CACHE.set(cacheKey, { ts: Date.now(), payload });
+    res.json(payload);
+  } catch (error) {
+    console.error('[diagnostics/equity-curves]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/**
+ * GET /api/diagnostics/earnings/:ticker
+ * Returns parsed earnings history + epsTrend (or null if Yahoo has no trend data).
+ */
+app.get('/api/diagnostics/earnings/:ticker', async (req, res) => {
+  const { ticker } = req.params;
+  try {
+    const data = await fetchEarningsHistory(ticker);
+    res.json(data);
+  } catch (error) {
+    console.error('[diagnostics/earnings]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  }
+});
+
 app.get('/api/backtest/:universeId', async (req, res) => {
   req.setTimeout(300000);
   res.setTimeout(300000);
@@ -6385,7 +8209,10 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     mlRanking: mlRankingQuery,
     rlAgent: rlAgentQueryRaw,
     rlMode: rlModeQueryRaw,
-    rlRandomAgent: rlRandomQueryRaw
+    rlRandomAgent: rlRandomQueryRaw,
+    correlationFilter: correlationFilterQuery,
+    maxCorrelated: maxCorrelatedQuery,
+    correlationLookbackDays: correlationLookbackDaysQuery
   } = req.query;
 
   const rebalanceFreq = String(rebalanceFreqRaw || 'monthly').toLowerCase().trim();
@@ -6437,6 +8264,22 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       : 'eval';
   const rlModeBacktest = rlModeBacktestRaw === 'train' ? 'train' : 'eval';
 
+  const correlationFilterBacktest =
+    correlationFilterQuery === 'true' ||
+    correlationFilterQuery === true ||
+    correlationFilterQuery === '1' ||
+    correlationFilterQuery === 1;
+  const maxCorrelatedBacktestRaw = parseInt(String(maxCorrelatedQuery ?? ''), 10);
+  const maxCorrelatedBacktest = Number.isFinite(maxCorrelatedBacktestRaw)
+    ? Math.max(1, maxCorrelatedBacktestRaw)
+    : 3;
+  const correlationLbRaw = parseInt(String(correlationLookbackDaysQuery ?? ''), 10);
+  const correlationLookbackBacktest = Number.isFinite(correlationLbRaw) ? Math.max(20, correlationLbRaw) : 60;
+
+  const hedgingQuery = req.query.hedging;
+  const hedgingBacktest =
+    hedgingQuery === 'true' || hedgingQuery === true || hedgingQuery === '1';
+
   let tradingWeights = null;
   if (strategyClean === 'full_composite') {
     if (usePaperWeights) {
@@ -6462,6 +8305,39 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     }
     if (!tradingWeights) tradingWeights = { ...TURBO_COMPOSITE_WEIGHTS };
   }
+
+  // A/B pillar weights via query (full_composite family). Merges onto paper or strategy defaults.
+  // Example: &wM=0.4&wV=0.4&wQ=0.2&wE=0
+  if (
+    strategyClean === 'full_composite' ||
+    strategyClean === 'full_composite_aggressive' ||
+    strategyClean === 'full_composite_turbo'
+  ) {
+    const weightOverride = {};
+    const take = (q, key) => {
+      if (q == null || q === '') return;
+      const x = parseFloat(String(q));
+      if (Number.isFinite(x)) weightOverride[key] = x;
+    };
+    take(req.query.wM, 'momentum');
+    take(req.query.wV, 'value');
+    take(req.query.wQ, 'fundamental');
+    take(req.query.wE, 'earningsMomentum');
+    take(req.query.wD, 'dcf');
+    take(req.query.wVal, 'valuation');
+    if (Object.keys(weightOverride).length > 0) {
+      const baseDefaults =
+        strategyClean === 'full_composite_aggressive'
+          ? AGGRESSIVE_COMPOSITE_WEIGHTS
+          : strategyClean === 'full_composite_turbo'
+            ? TURBO_COMPOSITE_WEIGHTS
+            : DEFAULT_COMPOSITE_WEIGHTS;
+      const base =
+        tradingWeights && typeof tradingWeights === 'object' ? { ...tradingWeights } : { ...baseDefaults };
+      tradingWeights = { ...base, ...weightOverride };
+    }
+  }
+
   const weightsKey = tradingWeights ? JSON.stringify(tradingWeights) : 'default';
   const cpiCacheTag = process.env.FRED_API_KEY && String(process.env.FRED_API_KEY).trim() ? 'fred' : 'const';
   const simCfgTag = backtestSimConfigCacheTag({
@@ -6470,11 +8346,15 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     pitPolicy: needsFundamentals ? 'pit' : 'none',
     regimeEnabled,
     pillarOverrideKey,
-    skipMlRankingAdjustments: skipMlRankingAdjustmentsForBacktest
+    skipMlRankingAdjustments: skipMlRankingAdjustmentsForBacktest,
+    correlationFilter: correlationFilterBacktest,
+    maxCorrelated: maxCorrelatedBacktest,
+    correlationLookbackDays: correlationLookbackBacktest,
+    hedging: hedgingBacktest
   });
 
   const rlCacheTag = rlAgentBacktest
-    ? `rl1-${rlModeBacktest}-${rlRandomAgentBacktest ? 'rnd1' : 'rnd0'}-u${TRAINED_RL_AGENT?.totalUpdates ?? 0}`
+    ? `rl1-${rlAgentTypeEffective()}-${rlModeBacktest}-${rlRandomAgentBacktest ? 'rnd1' : 'rnd0'}-u${TRAINED_RL_AGENT?.totalUpdates ?? 0}`
     : 'rl0';
   const cacheKey = `${BACKTEST_CACHE_VERSION}-${universeId}-${period}-${rebalanceFreq}-${topN}-${strategyClean}-${capital}-${weightsKey}-${cpiCacheTag}-${simCfgTag}-${adaptiveMode}-${positionSizing}-${pillarOverrideKey}-${regimeEnabled ? 're1' : 're0'}-${usePaperWeights ? 'pw1' : 'pw0'}-${rlCacheTag}`;
   const cached = BACKTEST_CACHE.get(cacheKey);
@@ -6485,7 +8365,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
             rlAgentStats: {
               statesVisited: TRAINED_RL_AGENT.statesVisited,
               totalUpdates: TRAINED_RL_AGENT.totalUpdates,
-              qTableSize: TRAINED_RL_AGENT.Q.length,
+              qTableSize: rlAgentPolicyParamSize(TRAINED_RL_AGENT),
               isLoaded: true
             },
             rlStatesVisited: TRAINED_RL_AGENT.statesVisited,
@@ -6603,7 +8483,11 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         rlQLearningAgent:
           rlAgentBacktest && rlModeBacktest === 'eval'
             ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk()
-            : undefined
+            : undefined,
+        correlationFilter: correlationFilterBacktest,
+        maxCorrelated: maxCorrelatedBacktest,
+        correlationLookbackDays: correlationLookbackBacktest,
+        hedging: hedgingBacktest
       }
     );
 
@@ -6622,7 +8506,8 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       pointInTime,
       pitDetail,
       nameSwapCount,
-      rlLog
+      rlLog,
+      hedgeStats
     } = sim;
 
     if (!dailyValues || dailyValues.length < 2) {
@@ -6792,6 +8677,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       regimeEnabled,
       usePaperWeights,
       mlRankingEnabled: enableMlOnBacktest,
+      hedging: hedgingBacktest,
       rlAgent: rlAgentBacktest,
       rlEnabled: rlAgentBacktest,
       rlAgentLoaded: trainedRlAvailable,
@@ -6802,7 +8688,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
           ? {
               statesVisited: TRAINED_RL_AGENT.statesVisited,
               totalUpdates: TRAINED_RL_AGENT.totalUpdates,
-              qTableSize: TRAINED_RL_AGENT.Q.length,
+              qTableSize: rlAgentPolicyParamSize(TRAINED_RL_AGENT),
               isLoaded: true
             }
           : undefined,
@@ -6856,7 +8742,14 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         avgHoldingPeriodDays: avgHoldingPeriodDays != null ? parseFloat(avgHoldingPeriodDays.toFixed(1)) : null,
         oneMonthSellCount,
         oneMonthSellAvgReturnPct: parseFloat(oneMonthSellAvgReturnPct.toFixed(1)),
-        rebuyWithin60d
+        rebuyWithin60d,
+        hedging: {
+          enabled: !!(hedgeStats && hedgeStats.enabled),
+          totalOpened: hedgeStats?.totalOpened ?? 0,
+          netImpact: hedgeStats?.netHedgeImpact ?? 0,
+          costDrag: hedgeStats?.costDrag ?? 0,
+          protectionGain: hedgeStats?.protectionGain ?? 0
+        }
       },
 
       equityCurve: dailyValues,
@@ -6890,6 +8783,200 @@ const RL_TRAIN_MAX_EPISODES = 50000;
 const RL_TRAIN_COVERAGE_TARGET_PCT = 30;
 const RL_TRAIN_MIN_Q_UPDATES = 10000;
 
+function rlOverfitFlagFromRatio(ratio) {
+  if (ratio == null || !Number.isFinite(ratio)) return 'caution';
+  if (ratio > 2.5) return 'overfit';
+  if (ratio < 1.5) return 'healthy';
+  return 'caution';
+}
+
+/** { totalReturn, alpha, sharpe } for sweep tables (percent points, same as extractRlTrainEvalBlock). */
+function rlSweepPerfTriple(sim, capital) {
+  const b = extractRlTrainEvalBlock(sim, capital, '');
+  if (!b) return { totalReturn: null, alpha: null, sharpe: null };
+  return { totalReturn: b.totalReturn, alpha: b.alpha, sharpe: b.sharpe };
+}
+
+/**
+ * RL training episode loop (Q-learning or DQN). Caller applies agent hyperparams before calling.
+ * @returns {{ episodesRun: number, episodeLog: Array|null, episodeRlRewards: number[], trainingStopReason: string }}
+ */
+async function rlRunTrainEpisodesCore({
+  agent,
+  universe,
+  priceHistory,
+  fundamentals,
+  spyPrices,
+  trainRebalancePool,
+  topN,
+  capital,
+  strategyClean,
+  tradingWeightsTrain,
+  cashInflationMult,
+  universeId,
+  sharedTrainSimOptions,
+  userEpisodes,
+  trainUntilThresholds,
+  rlRandomAgent,
+  targetUpdateFreqEpisodes,
+  collectEpisodeLog,
+  dqnProgressLogEvery,
+  checkpointEvery,
+  savedBeta,
+  logTag
+}) {
+  const tag = logTag || '[RL/train]';
+  const maxLen0 = trainRebalancePool.length;
+  let minWindow = Math.min(24, Math.max(10, Math.floor(maxLen0 * 0.35)));
+  if (minWindow > maxLen0) {
+    minWindow = Math.max(2, Math.floor(maxLen0 * 0.65));
+    if (minWindow > maxLen0) minWindow = maxLen0;
+  }
+  const episodeLog = collectEpisodeLog ? [] : null;
+  const episodeRlRewards = [];
+  let trainingStopReason = trainUntilThresholds ? 'max_episodes' : 'episodes_completed';
+  const trainEpisodeLoopStart = performance.now();
+
+  const skipEarnTrain =
+    sharedTrainSimOptions?.rlTrainSkipEarningsFetch === true ||
+    sharedTrainSimOptions?.rlTrainSkipEarningsFetch === 'true' ||
+    sharedTrainSimOptions?.rlTrainSkipEarningsFetch === 1 ||
+    String(sharedTrainSimOptions?.rlTrainSkipEarningsFetch || '').toLowerCase() === 'true';
+  let preloadedEarningsMapForTrain = null;
+  if (
+    !skipEarnTrain &&
+    (strategyClean === 'full_composite' ||
+      strategyClean === 'full_composite_aggressive' ||
+      strategyClean === 'full_composite_turbo')
+  ) {
+    preloadedEarningsMapForTrain = await fetchAllEarnings(universe);
+  }
+
+  if (savedBeta != null) agent.beta = savedBeta * 0.1;
+  try {
+    let epCount = 0;
+    while (true) {
+      if (!trainUntilThresholds && epCount >= userEpisodes) break;
+      if (trainUntilThresholds && epCount >= RL_TRAIN_MAX_EPISODES) {
+        trainingStopReason = 'max_episodes';
+        break;
+      }
+
+      if (isDqnAgentInstance(agent)) {
+        agent.currentTrainingEpisode = epCount + 1;
+      }
+
+      const maxLen = trainRebalancePool.length;
+      const len = minWindow + Math.floor(Math.random() * (maxLen - minWindow + 1));
+      const startIx = Math.floor(Math.random() * (maxLen - len + 1));
+      const windowDates = trainRebalancePool.slice(startIx, startIx + len);
+      const updatesBefore = agent.totalUpdates;
+
+      const sim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        windowDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsTrain,
+        cashInflationMult,
+        universeId,
+        {
+          ...sharedTrainSimOptions,
+          ...(preloadedEarningsMapForTrain ? { preloadedEarningsMap: preloadedEarningsMapForTrain } : {}),
+          rlAgent: true,
+          rlMode: 'train',
+          rlQLearningAgent: agent,
+          rlRandomAgent: rlRandomAgent === true
+        }
+      );
+
+      epCount++;
+      const du = agent.totalUpdates - updatesBefore;
+      let epRlRewardSum = 0;
+      for (const row of sim.rlLog || []) {
+        if (row?.reward != null && Number.isFinite(row.reward)) epRlRewardSum += row.reward;
+      }
+      episodeRlRewards.push(epRlRewardSum);
+
+      if (episodeLog) {
+        const m = calculateBacktestMetrics(sim.dailyValues, sim.tradeLog, capital);
+        episodeLog.push({
+          episode: epCount,
+          rebalanceSteps: windowDates.length,
+          windowStart: windowDates[0],
+          windowEnd: windowDates[windowDates.length - 1],
+          qUpdatesThisEpisode: du,
+          portfolioTotalReturn: m ? m.totalReturn : null,
+          annualizedReturn: m ? m.annualizedReturn : null,
+          alphaVsBench: m ? m.alpha : null,
+          sharpe: m ? m.sharpe : null,
+          tradeCount: sim.tradeLog?.length ?? 0,
+          totalUpdatesAfter: agent.totalUpdates,
+          rlRewardSum: epRlRewardSum
+        });
+      }
+
+      const epLabel = trainUntilThresholds ? `${epCount}/${RL_TRAIN_MAX_EPISODES}` : `${epCount}/${userEpisodes}`;
+      if (rlTrainProgressLogEnabled()) {
+        const elapsedSec = ((performance.now() - trainEpisodeLoopStart) / 1000).toFixed(1);
+        console.log(
+          `${tag} episode ${epLabel} window=${windowDates[0]}..${windowDates[windowDates.length - 1]} ` +
+            `qUpdates+${du} totalUpdates=${agent.totalUpdates} elapsed=${elapsedSec}s`
+        );
+      }
+
+      if (isDqnAgentInstance(agent) && epCount % targetUpdateFreqEpisodes === 0) {
+        agent.syncTargetFromOnline();
+      }
+
+      const progEvery = dqnProgressLogEvery | 0;
+      if (isDqnAgentInstance(agent) && progEvery > 0 && epCount > 0 && epCount % progEvery === 0) {
+        const slice = episodeRlRewards.slice(-progEvery);
+        const avgR = slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : 0;
+        const eps = agent.getEpsilonForEpisode(epCount);
+        const bufLen = agent.buffer.length;
+        const lossV = Number.isFinite(agent.lastLoss) ? agent.lastLoss.toFixed(6) : 'n/a';
+        console.log(
+          `${tag}[DQN] ep=${epCount} avgReward(last${progEvery})=${avgR.toFixed(4)} epsilon=${eps.toFixed(4)} ` +
+            `replaySize=${bufLen} loss=${lossV}`
+        );
+      }
+
+      const ck = checkpointEvery | 0;
+      if (epCount > 0 && ck > 0 && epCount % ck === 0 && isDqnAgentInstance(agent)) {
+        writeRlAgentFileOnly(agent);
+        console.log(`${tag} DQN checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
+      } else if (epCount > 0 && ck > 0 && epCount % ck === 0 && !isDqnAgentInstance(agent)) {
+        writeRlAgentFileOnly(agent);
+        console.log(`${tag} checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
+      }
+
+      if (trainUntilThresholds) {
+        const convQuick = computeConvergenceMetrics(agent);
+        const cov = parseFloat(convQuick.coveragePercent);
+        if (cov >= RL_TRAIN_COVERAGE_TARGET_PCT && agent.totalUpdates >= RL_TRAIN_MIN_Q_UPDATES) {
+          trainingStopReason = 'thresholds_met';
+          break;
+        }
+      }
+    }
+  } finally {
+    if (savedBeta != null) agent.beta = savedBeta;
+  }
+
+  if (isDqnAgentInstance(agent)) {
+    agent.syncTargetFromOnline();
+  }
+
+  const episodesRun = episodeRlRewards.length;
+  const loopElapsedMs = performance.now() - trainEpisodeLoopStart;
+  return { episodesRun, episodeLog, episodeRlRewards, trainingStopReason, loopElapsedMs };
+}
+
 app.get('/api/rl/test', async (req, res) => {
   try {
     const { runRlTestHarness } = await import('./rl-test-harness.js');
@@ -6905,10 +8992,12 @@ app.get('/api/rl/status', (req, res) => {
   try {
     const agent = TRAINED_RL_AGENT;
     const loaded = agent != null;
+    const agentType = rlAgentTypeEffective();
+    const statusPath = agentType === 'dqn' ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH;
     let agentFileMtime = null;
     try {
-      if (existsSync(RL_AGENT_JSON_PATH)) {
-        agentFileMtime = statSync(RL_AGENT_JSON_PATH).mtime.toISOString();
+      if (existsSync(statusPath)) {
+        agentFileMtime = statSync(statusPath).mtime.toISOString();
       }
     } catch {
       agentFileMtime = null;
@@ -6917,7 +9006,7 @@ app.get('/api/rl/status', (req, res) => {
     const totalActions = TOTAL_ACTIONS;
     const statesVisited = loaded ? agent.statesVisited : 0;
     const totalUpdates = loaded ? agent.totalUpdates : 0;
-    const qTableSize = loaded ? agent.Q.length : 0;
+    const qTableSize = loaded ? rlAgentPolicyParamSize(agent) : 0;
     const coveragePct =
       totalStates > 0 ? parseFloat(((statesVisited / totalStates) * 100).toFixed(1)) : 0;
     const pf = loadPortfolio();
@@ -6936,10 +9025,11 @@ app.get('/api/rl/status', (req, res) => {
     }
     res.json({
       loaded,
+      agentType,
       statesVisited,
       totalUpdates,
       qTableSize,
-      agentFile: path.basename(RL_AGENT_JSON_PATH),
+      agentFile: path.basename(statusPath),
       agentFileMtime,
       totalStates,
       totalActions,
@@ -7113,7 +9203,11 @@ app.get('/api/rl/compare', async (req, res) => {
 
     const spyPrices = priceHistory['SPY'];
     if (!spyPrices?.length) {
-      return res.status(500).json({ success: false, error: 'Missing SPY data' });
+      return res.status(500).json({
+        success: false,
+        error:
+          'Missing SPY data — Yahoo chart returned no usable daily bars for SPY. Check server logs for "[Yahoo] chart failed SPY"; retry after 30–60s if rate-limited or the network glitched.'
+      });
     }
 
     const simStart = rebalanceDates[0];
@@ -7219,6 +9313,15 @@ app.post('/api/rl/train', async (req, res) => {
       RL_TRAIN_MAX_EPISODES,
       Math.max(1, parseInt(String(body.episodes ?? DEFAULT_TRAINING_EPISODES), 10) || DEFAULT_TRAINING_EPISODES)
     );
+    const skipPostTrainEval =
+      body.skipPostTrainEval === true ||
+      body.skipPostTrainEval === 'true' ||
+      body.skipPostTrainEval === '1';
+    const rlTrainSkipEarningsFetch =
+      body.rlTrainSkipEarningsFetch === true ||
+      body.rlTrainSkipEarningsFetch === 'true' ||
+      body.rlTrainSkipEarningsFetch === '1';
+    const rlSmokeTrain = skipPostTrainEval && userEpisodes <= 50;
     const strategyClean = String(body.strategy || 'full_composite').toLowerCase().trim();
     if (
       strategyClean !== 'full_composite' &&
@@ -7226,6 +9329,17 @@ app.post('/api/rl/train', async (req, res) => {
       strategyClean !== 'full_composite_turbo'
     ) {
       return res.status(400).json({ success: false, error: 'strategy must be a full_composite variant' });
+    }
+
+    const trainAgentTypeRaw = body.agentType != null ? String(body.agentType).toLowerCase().trim() : '';
+    const trainAgentType =
+      trainAgentTypeRaw === '' || trainAgentTypeRaw === 'dqn'
+        ? 'dqn'
+        : trainAgentTypeRaw === 'qlearning' || trainAgentTypeRaw === 'q-learning' || trainAgentTypeRaw === 'q'
+          ? 'qlearning'
+          : null;
+    if (trainAgentType == null) {
+      return res.status(400).json({ success: false, error: 'agentType must be dqn or qlearning' });
     }
 
     const adaptiveRawTrain =
@@ -7291,13 +9405,23 @@ app.post('/api/rl/train', async (req, res) => {
     }
 
     const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
-    if (rebalanceDates.length < 12) {
-      return res.status(400).json({ success: false, error: 'Need at least 12 rebalance dates for RL training' });
+    const minRebalanceDatesTrain = rlSmokeTrain ? 4 : 12;
+    if (rebalanceDates.length < minRebalanceDatesTrain) {
+      return res.status(400).json({
+        success: false,
+        error: rlSmokeTrain
+          ? `Need at least ${minRebalanceDatesTrain} rebalance dates for smoke training (skipPostTrainEval and episodes<=50). Use a longer period, switch to monthly, or run a full train without skipPostTrainEval.`
+          : 'Need at least 12 rebalance dates for RL training'
+      });
     }
 
     const spyPrices = priceHistory['SPY'];
     if (!spyPrices?.length) {
-      return res.status(500).json({ success: false, error: 'Missing SPY data' });
+      return res.status(500).json({
+        success: false,
+        error:
+          'Missing SPY data — Yahoo chart returned no usable daily bars for SPY. Check server logs for "[Yahoo] chart failed SPY"; retry after 30–60s if rate-limited or the network glitched.'
+      });
     }
 
     const simStart = rebalanceDates[0];
@@ -7336,106 +9460,105 @@ app.post('/api/rl/train', async (req, res) => {
       if (!tradingWeightsTrain) tradingWeightsTrain = { ...TURBO_COMPOSITE_WEIGHTS };
     }
 
+    const correlationFilterTrain =
+      body.correlationFilter === true ||
+      body.correlationFilter === 'true' ||
+      body.correlationFilter === 1 ||
+      String(body.correlationFilter || '').toLowerCase() === 'true';
+
+    let holdoutFraction = Number(body.holdoutFraction ?? 0.2);
+    if (!Number.isFinite(holdoutFraction)) holdoutFraction = 0.2;
+    holdoutFraction = Math.min(0.45, Math.max(0.05, holdoutFraction));
+    const trainCutoffIdx = Math.floor(rebalanceDates.length * (1 - holdoutFraction));
+    let trainRebalancePool = rebalanceDates.slice(0, trainCutoffIdx);
+    let holdoutRebalanceDates = rebalanceDates.slice(trainCutoffIdx);
+    if (rlSmokeTrain) {
+      trainRebalancePool = rebalanceDates.slice();
+      holdoutRebalanceDates = [];
+    } else if (trainRebalancePool.length < 10 || holdoutRebalanceDates.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'holdoutFraction leaves too few rebalance dates for training or holdout; lower holdoutFraction or use a longer period'
+      });
+    }
+
     const sharedTrainSimOptions = {
       adaptiveMode: adaptiveModeTrain,
       positionSizing: positionSizingTrain,
       pillarOverride: pillarTrainNorm || undefined,
       regimeEnabled: regimeEnabledTrain,
-      skipMlRankingAdjustments: skipMlTrain
+      skipMlRankingAdjustments: skipMlTrain,
+      correlationFilter: correlationFilterTrain,
+      rlTrainSkipEarningsFetch
     };
 
-    const agent = loadRlAgentFromDisk();
-    const savedBeta = agent.beta;
-    agent.beta = savedBeta * 0.1;
-    const minWindow = Math.min(24, Math.max(10, Math.floor(rebalanceDates.length * 0.35)));
-    const episodeLog = [];
-    let episodesRun = 0;
-    let trainingStopReason = trainUntilThresholds ? 'max_episodes' : 'episodes_completed';
-
-    const trainEpisodeLoopStart = performance.now();
-    try {
-      let epCount = 0;
-      while (true) {
-        if (!trainUntilThresholds && epCount >= userEpisodes) break;
-        if (trainUntilThresholds && epCount >= RL_TRAIN_MAX_EPISODES) {
-          trainingStopReason = 'max_episodes';
-          break;
-        }
-
-        const maxLen = rebalanceDates.length;
-        const len = minWindow + Math.floor(Math.random() * (maxLen - minWindow + 1));
-        const startIx = Math.floor(Math.random() * (maxLen - len + 1));
-        const windowDates = rebalanceDates.slice(startIx, startIx + len);
-        const updatesBefore = agent.totalUpdates;
-
-        const sim = await runBacktestSimulation(
-          universe,
-          priceHistory,
-          fundamentals,
-          spyPrices,
-          windowDates,
-          topN,
-          capital,
-          strategyClean,
-          tradingWeightsTrain,
-          cashInflationMult,
-          universeId,
-          {
-            ...sharedTrainSimOptions,
-            rlAgent: true,
-            rlMode: 'train',
-            rlQLearningAgent: agent,
-            rlRandomAgent: body.rlRandomAgent === true
-          }
-        );
-
-        epCount++;
-        episodesRun = epCount;
-        const m = calculateBacktestMetrics(sim.dailyValues, sim.tradeLog, capital);
-        const du = agent.totalUpdates - updatesBefore;
-        episodeLog.push({
-          episode: epCount,
-          rebalanceSteps: windowDates.length,
-          windowStart: windowDates[0],
-          windowEnd: windowDates[windowDates.length - 1],
-          qUpdatesThisEpisode: du,
-          portfolioTotalReturn: m ? m.totalReturn : null,
-          annualizedReturn: m ? m.annualizedReturn : null,
-          alphaVsBench: m ? m.alpha : null,
-          sharpe: m ? m.sharpe : null,
-          tradeCount: sim.tradeLog?.length ?? 0,
-          totalUpdatesAfter: agent.totalUpdates
-        });
-        const epLabel = trainUntilThresholds ? `${epCount}/${RL_TRAIN_MAX_EPISODES}` : `${epCount}/${userEpisodes}`;
-        if (rlTrainProgressLogEnabled()) {
-          const elapsedSec = ((performance.now() - trainEpisodeLoopStart) / 1000).toFixed(1);
-          console.log(
-            `[RL/train] episode ${epLabel} window=${windowDates[0]}..${windowDates[windowDates.length - 1]} ` +
-              `qUpdates+${du} totalUpdates=${agent.totalUpdates} elapsed=${elapsedSec}s`
-          );
-        }
-
-        if (epCount > 0 && epCount % 5000 === 0) {
-          writeRlAgentFileOnly(agent);
-          console.log(
-            `[RL/train] checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`
-          );
-        }
-
-        if (trainUntilThresholds) {
-          const convQuick = computeConvergenceMetrics(agent);
-          const cov = parseFloat(convQuick.coveragePercent);
-          if (cov >= RL_TRAIN_COVERAGE_TARGET_PCT && agent.totalUpdates >= RL_TRAIN_MIN_Q_UPDATES) {
-            trainingStopReason = 'thresholds_met';
-            break;
-          }
-        }
-      }
-    } finally {
-      agent.beta = savedBeta;
+    if (userEpisodes >= 50 && !skipPostTrainEval) {
+      console.warn(
+        `[RL/train] Long job: ${userEpisodes} episodes (${universeId}, ${period}) — ` +
+          'the HTTP body is sent only after all episodes plus 3 full eval backtests. ' +
+          'Use a much larger curl -m (e.g. 14400), fewer episodes, or skipPostTrainEval:true for smoke tests. ' +
+          'If Yahoo returns 429 on earnings, set rlTrainSkipEarningsFetch:true (faster; no per-rebalance earnings map).'
+      );
     }
 
-    const trainingDurationMs = performance.now() - trainEpisodeLoopStart;
+    const agent = loadRlAgentFromDisk(trainAgentType);
+    const savedBeta = typeof agent.beta === 'number' ? agent.beta : null;
+
+    const dqnBatchSize = Math.min(256, Math.max(8, parseInt(String(body.batchSize ?? '32'), 10) || 32));
+    const dqnReplayCap = Math.min(
+      500000,
+      Math.max(1000, parseInt(String(body.replayBufferSize ?? '50000'), 10) || 50000)
+    );
+    const targetUpdateFreqEpisodes = Math.max(1, parseInt(String(body.targetUpdateFreq ?? '100'), 10) || 100);
+    const dqnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '1')) || 1));
+    const dqnEpsEnd = Math.min(dqnEpsStart, Math.max(0.01, parseFloat(String(body.epsilonEnd ?? '0.05')) || 0.05));
+    const dqnEpsDecayEp = Math.max(100, parseInt(String(body.epsilonDecayEpisodes ?? '10000'), 10) || 10000);
+
+    if (isDqnAgentInstance(agent)) {
+      agent.batchSize = dqnBatchSize;
+      if (dqnReplayCap !== agent.replayCapacity) {
+        agent.replayCapacity = dqnReplayCap;
+        if (agent.buffer.length > agent.replayCapacity) {
+          agent.buffer = agent.buffer.slice(-agent.replayCapacity);
+          agent.bufferWrite = agent.buffer.length;
+        }
+      }
+      agent.epsilonStart = dqnEpsStart;
+      agent.epsilonEnd = dqnEpsEnd;
+      agent.epsilonDecayEpisodes = dqnEpsDecayEp;
+    }
+
+    const {
+      episodesRun,
+      episodeLog,
+      episodeRlRewards,
+      trainingStopReason,
+      loopElapsedMs: trainingDurationMs
+    } = await rlRunTrainEpisodesCore({
+      agent,
+      universe,
+      priceHistory,
+      fundamentals,
+      spyPrices,
+      trainRebalancePool,
+      topN,
+      capital,
+      strategyClean,
+      tradingWeightsTrain,
+      cashInflationMult,
+      universeId,
+      sharedTrainSimOptions,
+      userEpisodes,
+      trainUntilThresholds,
+      rlRandomAgent: body.rlRandomAgent === true,
+      targetUpdateFreqEpisodes,
+      collectEpisodeLog: true,
+      dqnProgressLogEvery: isDqnAgentInstance(agent) ? 1000 : 0,
+      checkpointEvery: 5000,
+      savedBeta,
+      logTag: '[RL/train]'
+    });
     const trainingDurationSec = parseFloat((trainingDurationMs / 1000).toFixed(2));
     const avgEpisodeMs = episodesRun > 0 ? trainingDurationMs / episodesRun : null;
 
@@ -7443,7 +9566,9 @@ app.post('/api/rl/train', async (req, res) => {
     console.log(
       `[RL/train] ✓ COMPLETE — episodes=${episodesRun}, statesVisited=${agent.statesVisited}, totalUpdates=${agent.totalUpdates}, duration=${((Date.now() - startTime) / 1000).toFixed(1)}s`
     );
-    console.log(`[RL/train] Q-table saved to ${RL_AGENT_JSON_PATH}`);
+    console.log(
+      `[RL/train] Agent saved (${trainAgentType}) to ${isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH}`,
+    );
 
     const conv = computeConvergenceMetrics(agent);
     const over = detectOverPruning(agent);
@@ -7457,9 +9582,162 @@ app.post('/api/rl/train', async (req, res) => {
     const secondHalfAvgAlpha = avgFinite(alphas.slice(halfN));
     const coveragePct = parseFloat(conv.coveragePercent);
 
+    const lastK = episodeRlRewards.slice(-1000);
+    const avgRewardLast1000 = lastK.length ? lastK.reduce((a, b) => a + b, 0) / lastK.length : null;
+    const finalEpsilon = isDqnAgentInstance(agent) ? agent.getEpsilonForEpisode(episodesRun) : null;
+
+    const evalSimBase = {
+      ...sharedTrainSimOptions,
+      rlRandomAgent: false,
+      rlTrainSkipEarningsFetch: false
+    };
+
+    let evaluationBlock;
+    if (skipPostTrainEval) {
+      evaluationBlock = {
+        skipped: true,
+        reason:
+          'skipPostTrainEval was true — in-sample / OOS / rules eval trio was not run (faster smoke test; agent still saved).'
+      };
+    } else {
+      const inSampleSim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsTrain,
+        cashInflationMult,
+        universeId,
+        {
+          ...evalSimBase,
+          rlAgent: true,
+          rlMode: 'eval',
+          rlQLearningAgent: agent
+        }
+      );
+      const oosRlSim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        holdoutRebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsTrain,
+        cashInflationMult,
+        universeId,
+        {
+          ...evalSimBase,
+          rlAgent: true,
+          rlMode: 'eval',
+          rlQLearningAgent: agent
+        }
+      );
+      const oosRulesSim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        holdoutRebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsTrain,
+        cashInflationMult,
+        universeId,
+        {
+          ...evalSimBase,
+          rlAgent: false,
+          rlMode: 'off'
+        }
+      );
+
+      const holdoutPctLabel = `${(holdoutFraction * 100).toFixed(0)}%`;
+      const inSample = extractRlTrainEvalBlock(
+        inSampleSim,
+        capital,
+        `${period} (training window)`
+      );
+      const outOfSample = extractRlTrainEvalBlock(
+        oosRlSim,
+        capital,
+        `holdout (last ${holdoutPctLabel} of rebalance dates — agent never trained on this window)`
+      );
+      const rulesBasedOOS = extractRlTrainEvalBlock(
+        oosRulesSim,
+        capital,
+        `same holdout as OOS, rules-based (no RL)`
+      );
+
+      const dqnLift = {
+        returnDelta:
+          outOfSample.totalReturn != null && rulesBasedOOS.totalReturn != null
+            ? parseFloat((outOfSample.totalReturn - rulesBasedOOS.totalReturn).toFixed(2))
+            : null,
+        alphaDelta:
+          outOfSample.alpha != null && rulesBasedOOS.alpha != null
+            ? parseFloat((outOfSample.alpha - rulesBasedOOS.alpha).toFixed(2))
+            : null,
+        sharpeDelta:
+          outOfSample.sharpe != null && rulesBasedOOS.sharpe != null
+            ? parseFloat((outOfSample.sharpe - rulesBasedOOS.sharpe).toFixed(2))
+            : null
+      };
+
+      let overfitRatio = null;
+      if (
+        inSample.sharpe != null &&
+        outOfSample.sharpe != null &&
+        Number.isFinite(inSample.sharpe) &&
+        Number.isFinite(outOfSample.sharpe) &&
+        Math.abs(outOfSample.sharpe) > 1e-6
+      ) {
+        overfitRatio = parseFloat((inSample.sharpe / outOfSample.sharpe).toFixed(3));
+      }
+
+      evaluationBlock = {
+        inSample,
+        outOfSample,
+        rulesBasedOOS,
+        dqnLift,
+        overfitRatio
+      };
+    }
+
+    const trainingBlock = {
+      episodes: episodesRun,
+      durationSec: trainingDurationSec,
+      finalEpsilon,
+      avgRewardLast1000: avgRewardLast1000 != null ? parseFloat(avgRewardLast1000.toFixed(4)) : null,
+      holdoutFraction,
+      smokeTrainFullWindow: rlSmokeTrain,
+      trainRebalanceDates: trainRebalancePool.length,
+      holdoutRebalanceDates: holdoutRebalanceDates.length,
+      ...(isDqnAgentInstance(agent)
+        ? {
+            batchSize: dqnBatchSize,
+            replayBufferSize: agent.replayCapacity,
+            targetUpdateFreq: targetUpdateFreqEpisodes,
+            targetUpdateFreqEpisodes,
+            epsilonStart: dqnEpsStart,
+            epsilonEnd: dqnEpsEnd,
+            epsilonDecayEpisodes: dqnEpsDecayEp
+          }
+        : {})
+    };
+
     res.json({
       success: true,
       episodes: episodesRun,
+      training: trainingBlock,
+      evaluation: evaluationBlock,
+      skipPostTrainEval,
+      rlTrainSkipEarningsFetch,
       episodesRequested: trainUntilThresholds ? null : userEpisodes,
       trainingDurationMs: parseFloat(trainingDurationMs.toFixed(1)),
       trainingDurationSec,
@@ -7480,12 +9758,14 @@ app.post('/api/rl/train', async (req, res) => {
       statesVisited: countRlStatesVisited(agent),
       convergence: conv,
       overPruning: over,
-      savedPath: 'rl-agent.json',
+      agentType: trainAgentType,
+      savedPath: isDqnAgentInstance(agent) ? 'dqn-agent.json' : 'rl-agent.json',
       episodeLog,
       simConfig: {
         ...sharedTrainSimOptions,
         usePaperWeights: usePaperWeightsTrain,
-        mlRankingEnabled: enableMlTrain
+        mlRankingEnabled: enableMlTrain,
+        rlTrainSkipEarningsFetch
       },
       trainingTrend: {
         firstHalfAvgAlpha,
@@ -7508,6 +9788,334 @@ app.post('/api/rl/train', async (req, res) => {
     });
   } catch (e) {
     console.error('RL train error:', e);
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+app.post('/api/rl/hyperparameter-sweep', async (req, res) => {
+  const startTime = Date.now();
+  try {
+    clearBacktestRuntimeCaches();
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const configs = Array.isArray(body.configs) ? body.configs : null;
+    if (!configs || configs.length === 0) {
+      return res.status(400).json({ success: false, error: 'body.configs must be a non-empty array' });
+    }
+
+    const universeId = body.universeId || 'sp500_top150';
+    const period = body.period || '5y';
+    const rebalanceFreq = String(body.rebalanceFreq || 'bimonthly').toLowerCase().trim();
+    const allowedFreq = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
+    if (!allowedFreq.includes(rebalanceFreq)) {
+      return res.status(400).json({ success: false, error: `Invalid rebalanceFreq` });
+    }
+    const topN = parseInt(String(body.topN ?? '15'), 10) || 15;
+    const capital = parseFloat(String(body.initialCapital ?? '10000')) || 10000;
+    const episodesPerConfig = Math.min(
+      RL_TRAIN_MAX_EPISODES,
+      Math.max(1, parseInt(String(body.episodesPerConfig ?? '20000'), 10) || 20000)
+    );
+    const strategyClean = 'full_composite';
+    const regimeEnabledSweep = body.regimeEnabled !== false;
+    const pillarRaw = body.weights != null ? body.weights : body.pillarOverride;
+    const pillarNorm = pillarRaw != null ? normalizePillarOverride(pillarRaw) : null;
+    const enableMlSweep =
+      body.mlRanking === true || body.mlRanking === 'true' || body.mlRanking === '1';
+    const skipMlSweep = !enableMlSweep;
+
+    const correlationFilterSweep =
+      body.correlationFilter === true ||
+      body.correlationFilter === 'true' ||
+      body.correlationFilter === 1 ||
+      String(body.correlationFilter || '').toLowerCase() === 'true';
+
+    let holdoutFraction = Number(body.holdoutFraction ?? 0.2);
+    if (!Number.isFinite(holdoutFraction)) holdoutFraction = 0.2;
+    holdoutFraction = Math.min(0.45, Math.max(0.05, holdoutFraction));
+
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
+
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+    const days = periodDays[period] || 1825;
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const lookbackStart = new Date(startDate.getTime() - 400 * 24 * 60 * 60 * 1000);
+    const startDateStr = lookbackStart.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const backtestStartDate = startDate.toISOString().split('T')[0];
+
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(Boolean);
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+
+    const fundamentals = {};
+    const fundRows = await mapWithConcurrency(
+      tickersToFetch.filter((t) => t !== 'SPY'),
+      FUNDAMENTALS_FETCH_CONCURRENCY,
+      async (ticker) => {
+        const fund = await fetchFundamentals(ticker);
+        return { ticker, fund };
+      }
+    );
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 12) {
+      return res.status(400).json({ success: false, error: 'Need at least 12 rebalance dates for RL sweep' });
+    }
+
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({
+        success: false,
+        error:
+          'Missing SPY data — Yahoo chart returned no usable daily bars for SPY. Check server logs for "[Yahoo] chart failed SPY"; retry after 30–60s if rate-limited or the network glitched.'
+      });
+    }
+
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, process.env.FRED_API_KEY);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const trainCutoffIdx = Math.floor(rebalanceDates.length * (1 - holdoutFraction));
+    const trainRebalancePool = rebalanceDates.slice(0, trainCutoffIdx);
+    const holdoutRebalanceDates = rebalanceDates.slice(trainCutoffIdx);
+    if (trainRebalancePool.length < 10 || holdoutRebalanceDates.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error:
+          'holdoutFraction leaves too few rebalance dates for training or holdout; lower holdoutFraction or use a longer period'
+      });
+    }
+
+    const sharedSim = {
+      adaptiveMode: 'fixed',
+      positionSizing: 'invVol',
+      pillarOverride: pillarNorm || undefined,
+      regimeEnabled: regimeEnabledSweep,
+      skipMlRankingAdjustments: skipMlSweep,
+      correlationFilter: correlationFilterSweep
+    };
+
+    const tradingWeightsSweep = null;
+    const evalSimBase = { ...sharedSim, rlRandomAgent: false };
+    const targetUpdateFreqEpisodes = Math.max(1, parseInt(String(body.targetUpdateFreq ?? '100'), 10) || 100);
+
+    const oosRulesSim = await runBacktestSimulation(
+      universe,
+      priceHistory,
+      fundamentals,
+      spyPrices,
+      holdoutRebalanceDates,
+      topN,
+      capital,
+      strategyClean,
+      tradingWeightsSweep,
+      cashInflationMult,
+      universeId,
+      {
+        ...evalSimBase,
+        rlAgent: false,
+        rlMode: 'off'
+      }
+    );
+    const rulesBasedOOS = rlSweepPerfTriple(oosRulesSim, capital);
+
+    const configRows = [];
+    const sweepAgentSnapshots = [];
+
+    for (let i = 0; i < configs.length; i++) {
+      const cfg = configs[i] || {};
+      const lr = Math.min(0.1, Math.max(1e-6, parseFloat(String(cfg.lr ?? '0.001')) || 0.001));
+      const gamma = Math.min(0.999, Math.max(0.5, parseFloat(String(cfg.gamma ?? '0.95')) || 0.95));
+      const batchSize = Math.min(256, Math.max(8, parseInt(String(cfg.batchSize ?? '32'), 10) || 32));
+      const hiddenSize = Math.min(512, Math.max(8, parseInt(String(cfg.hiddenSize ?? '64'), 10) || 64));
+      const hyperparams = { lr, gamma, batchSize, hiddenSize };
+
+      const agent = new DQNAgent({
+        lr,
+        gamma,
+        batchSize,
+        hiddenSize,
+        replayCapacity: Math.min(500000, Math.max(1000, parseInt(String(body.replayBufferSize ?? '50000'), 10) || 50000)),
+        targetSyncEvery: 100,
+        epsilonStart: 1,
+        epsilonEnd: 0.05,
+        epsilonDecayEpisodes: 10000
+      });
+
+      await rlRunTrainEpisodesCore({
+        agent,
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        trainRebalancePool,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsSweep,
+        cashInflationMult,
+        universeId,
+        sharedSim,
+        userEpisodes: episodesPerConfig,
+        trainUntilThresholds: false,
+        rlRandomAgent: false,
+        targetUpdateFreqEpisodes,
+        collectEpisodeLog: false,
+        dqnProgressLogEvery: 0,
+        checkpointEvery: 0,
+        savedBeta: null,
+        logTag: '[HP/sweep]'
+      });
+
+      const inSampleSim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsSweep,
+        cashInflationMult,
+        universeId,
+        {
+          ...evalSimBase,
+          rlAgent: true,
+          rlMode: 'eval',
+          rlQLearningAgent: agent
+        }
+      );
+      const oosRlSim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        holdoutRebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeightsSweep,
+        cashInflationMult,
+        universeId,
+        {
+          ...evalSimBase,
+          rlAgent: true,
+          rlMode: 'eval',
+          rlQLearningAgent: agent
+        }
+      );
+
+      const inSample = rlSweepPerfTriple(inSampleSim, capital);
+      const outOfSample = rlSweepPerfTriple(oosRlSim, capital);
+
+      let overfitRatio = null;
+      if (
+        inSample.sharpe != null &&
+        outOfSample.sharpe != null &&
+        Number.isFinite(inSample.sharpe) &&
+        Number.isFinite(outOfSample.sharpe) &&
+        Math.abs(outOfSample.sharpe) > 1e-6
+      ) {
+        overfitRatio = parseFloat((inSample.sharpe / outOfSample.sharpe).toFixed(3));
+      }
+
+      const dqnLiftOOS =
+        outOfSample.alpha != null && rulesBasedOOS.alpha != null
+          ? parseFloat((outOfSample.alpha - rulesBasedOOS.alpha).toFixed(2))
+          : null;
+
+      const overfitFlag = rlOverfitFlagFromRatio(overfitRatio);
+
+      configRows.push({
+        hyperparams,
+        inSample,
+        outOfSample,
+        overfitRatio,
+        overfitFlag,
+        dqnLiftOOS
+      });
+      sweepAgentSnapshots.push(agent.serialize());
+
+      console.log(
+        `HP sweep: config ${i + 1}/${configs.length} done (lr=${lr} gamma=${gamma} h=${hiddenSize}), ` +
+          `OOS Sharpe=${outOfSample.sharpe ?? 'n/a'}, overfitRatio=${overfitRatio ?? 'n/a'}`
+      );
+    }
+
+    const eligible = configRows.filter((r) => {
+      if (r.overfitRatio != null && r.overfitRatio > 2.5) return false;
+      if (r.dqnLiftOOS == null || r.dqnLiftOOS < 0) return false;
+      if (r.outOfSample.sharpe == null || !Number.isFinite(r.outOfSample.sharpe)) return false;
+      return true;
+    });
+    eligible.sort((a, b) => (b.outOfSample.sharpe || 0) - (a.outOfSample.sharpe || 0));
+
+    const rankedByOOSSharpe = [...configRows].sort(
+      (a, b) => (b.outOfSample.sharpe ?? -Infinity) - (a.outOfSample.sharpe ?? -Infinity)
+    );
+
+    let recommendation;
+    let bestAgentSaved = null;
+    if (eligible.length === 0) {
+      recommendation = {
+        hyperparams: null,
+        oosSharpe: null,
+        oosAlpha: null,
+        overfitRatio: null,
+        reason:
+          'All configs excluded (overfitRatio > 2.5 or negative DQN lift vs rules on holdout). DQN is not adding value — use rules-based only.'
+      };
+    } else {
+      const best = eligible[0];
+      const winIdx = configRows.indexOf(best);
+      writeFileSync(DQN_AGENT_BEST_JSON_PATH, JSON.stringify(sweepAgentSnapshots[winIdx], null, 2), 'utf8');
+      bestAgentSaved = 'dqn-agent-best.json';
+      recommendation = {
+        hyperparams: best.hyperparams,
+        oosSharpe: best.outOfSample.sharpe,
+        oosAlpha: best.outOfSample.alpha,
+        overfitRatio: best.overfitRatio,
+        reason:
+          'Best OOS Sharpe among configs with overfitRatio ≤ 2.5 and non-negative DQN lift vs rules on holdout (selection uses OOS only, not in-sample).'
+      };
+    }
+
+    res.json({
+      success: true,
+      configs: configRows,
+      rulesBasedOOS,
+      rankedByOOSSharpe,
+      recommendation,
+      bestAgentSaved,
+      universeId,
+      period,
+      rebalanceFreq,
+      episodesPerConfig,
+      holdoutFraction,
+      durationSec: parseFloat(((Date.now() - startTime) / 1000).toFixed(2))
+    });
+  } catch (e) {
+    console.error('RL hyperparameter-sweep error:', e);
     res.status(500).json({ success: false, error: e.message });
   } finally {
     clearBacktestRuntimeCaches();
@@ -8053,7 +10661,10 @@ app.post('/api/paper-trade/init', (req, res) => {
     mlRankWeight: mlBody,
     adaptiveMode: initAdaptive,
     positionSizing: initPosSize,
-    regimeEnabled: initRegimeEnabled
+    regimeEnabled: initRegimeEnabled,
+    correlationFilter: initCorrelationFilter,
+    maxCorrelated: initMaxCorrelated,
+    correlationLookbackDays: initCorrelationLookback
   } = req.body || {};
   let mlRankWeight = parseFloat(process.env.ML_RANK_WEIGHT || '0');
   if (!Number.isFinite(mlRankWeight)) mlRankWeight = 0;
@@ -8073,6 +10684,15 @@ app.post('/api/paper-trade/init', (req, res) => {
         : undefined;
   const regimeEnabledInit =
     initRegimeEnabled === false || initRegimeEnabled === 'false' ? false : true;
+  const correlationFilterInit =
+    initCorrelationFilter === true ||
+    initCorrelationFilter === 'true' ||
+    initCorrelationFilter === '1' ||
+    initCorrelationFilter === 1;
+  const initMxcRaw = parseInt(String(initMaxCorrelated ?? ''), 10);
+  const maxCorrelatedInit = Number.isFinite(initMxcRaw) ? Math.max(1, initMxcRaw) : 3;
+  const initClbRaw = parseInt(String(initCorrelationLookback ?? ''), 10);
+  const correlationLookbackInit = Number.isFinite(initClbRaw) ? Math.max(20, initClbRaw) : 60;
   const bodyRl = req.body?.rlAgent;
   const rlInitOn =
     bodyRl === false || bodyRl === 'false' || bodyRl === '0'
@@ -8111,7 +10731,13 @@ app.post('/api/paper-trade/init', (req, res) => {
     ...(strategy === 'full_composite' ||
     strategy === 'full_composite_aggressive' ||
     strategy === 'full_composite_turbo'
-      ? { rlAgent: rlInitOn, rlOnlineLearning: rlOnlineInit }
+      ? {
+          rlAgent: rlInitOn,
+          rlOnlineLearning: rlOnlineInit,
+          correlationFilter: correlationFilterInit,
+          maxCorrelated: maxCorrelatedInit,
+          correlationLookbackDays: correlationLookbackInit
+        }
       : {})
   };
   const bw = req.body?.weights;
@@ -8178,6 +10804,25 @@ app.patch('/api/paper-trade/config', (req, res) => {
       const fr = String(body.rebalanceFreq).toLowerCase().trim();
       if (PAPER_SCHEDULE_FREQ_ALLOWED.includes(fr)) portfolio.config.rebalanceFreq = fr;
     }
+    if (body.correlationFilter !== undefined) {
+      portfolio.config.correlationFilter =
+        body.correlationFilter === true ||
+        body.correlationFilter === 'true' ||
+        body.correlationFilter === '1' ||
+        body.correlationFilter === 1;
+    }
+    if (body.maxCorrelated !== undefined && body.maxCorrelated !== null && body.maxCorrelated !== '') {
+      const n = parseInt(String(body.maxCorrelated), 10);
+      if (Number.isFinite(n)) portfolio.config.maxCorrelated = Math.max(1, n);
+    }
+    if (
+      body.correlationLookbackDays !== undefined &&
+      body.correlationLookbackDays !== null &&
+      body.correlationLookbackDays !== ''
+    ) {
+      const n = parseInt(String(body.correlationLookbackDays), 10);
+      if (Number.isFinite(n)) portfolio.config.correlationLookbackDays = Math.max(20, n);
+    }
     savePortfolio(portfolio);
     res.json({
       success: true,
@@ -8185,7 +10830,17 @@ app.patch('/api/paper-trade/config', (req, res) => {
         rlAgent: portfolio.config.rlAgent === true,
         rlOnlineLearning: portfolio.config.rlOnlineLearning === true,
         weights: portfolio.config.weights || null,
-        rebalanceFreq: normalizePaperRebalanceFreq(portfolio)
+        rebalanceFreq: normalizePaperRebalanceFreq(portfolio),
+        correlationFilter: portfolio.config.correlationFilter === true,
+        maxCorrelated:
+          portfolio.config.maxCorrelated != null && Number.isFinite(Number(portfolio.config.maxCorrelated))
+            ? Math.max(1, Math.floor(Number(portfolio.config.maxCorrelated)))
+            : 3,
+        correlationLookbackDays:
+          portfolio.config.correlationLookbackDays != null &&
+          Number.isFinite(Number(portfolio.config.correlationLookbackDays))
+            ? Math.max(20, Math.floor(Number(portfolio.config.correlationLookbackDays)))
+            : 60
       }
     });
   } catch (e) {
@@ -8477,7 +11132,7 @@ function paperRlOnlineReward(portfolio, spySeries, asOfDate) {
   const volRaw = spySeries?.length ? spyRealizedVolAnnualized(spySeries, asOfDate) : 0.15;
   const vol = Number.isFinite(volRaw) && volRaw > 0 ? volRaw : 0.15;
   if (!nav || nav.length < 2) {
-    return computeRlReward(0, 0, vol, 0);
+    return computeDqnReward(0, 0, vol, 0);
   }
   const prev = nav[nav.length - 2];
   const last = nav[nav.length - 1];
@@ -8490,7 +11145,7 @@ function paperRlOnlineReward(portfolio, spySeries, asOfDate) {
     const dd = peak > 0 ? row.portfolioValue / peak - 1 : 0;
     if (dd < maxDd) maxDd = dd;
   }
-  return computeRlReward(portRet, benchRet, vol, maxDd);
+  return computeDqnReward(portRet, benchRet, vol, maxDd);
 }
 
 /**
@@ -8811,6 +11466,20 @@ async function paperRebalanceExecute(portfolio, persist) {
           ? 'invVol'
           : 'equal';
 
+    const correlationFilterPaper =
+      portfolio.config.correlationFilter === true ||
+      portfolio.config.correlationFilter === 'true' ||
+      portfolio.config.correlationFilter === 1 ||
+      String(portfolio.config.correlationFilter || '').toLowerCase() === 'true';
+    const maxCorrelatedPeersPaperRaw = parseInt(String(portfolio.config.maxCorrelated ?? ''), 10);
+    const maxCorrelatedPeersPaper = Number.isFinite(maxCorrelatedPeersPaperRaw)
+      ? Math.max(1, maxCorrelatedPeersPaperRaw)
+      : 3;
+    const correlationLbPaperRaw = parseInt(String(portfolio.config.correlationLookbackDays ?? ''), 10);
+    const correlationLookbackPaper = Number.isFinite(correlationLbPaperRaw)
+      ? Math.max(20, correlationLbPaperRaw)
+      : 60;
+
     const defaultWForAdaptive = strategy === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
       : strategy === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS
         : DEFAULT_COMPOSITE_WEIGHTS;
@@ -8877,20 +11546,29 @@ async function paperRebalanceExecute(portfolio, persist) {
     // Do not persist weightsForRank to portfolio.config — adaptive/PIT paths renormalize; user/PATCH
     // weights must stay verbatim on disk.
 
+    let earningsMapPaper = null;
+    if (compositePaper && (weightsForRank?.earningsMomentum ?? 0) > 1e-9) {
+      earningsMapPaper = await fetchAllEarnings(universe);
+    }
+
     // Run ranking (PIT fundamentals when applicable; adaptive after 6+ prior rebalances)
     let rankings;
     if (strategy === 'full_composite') {
-      rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weightsForRank);
+      rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weightsForRank, {
+        earningsMap: earningsMapPaper
+      });
     } else if (strategy === 'full_composite_aggressive') {
       rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weightsForRank, {
         momQThreshold: 10, fundamentalFloor: 15, maxVol: 1.0, strategyLabel: 'full_composite_aggressive',
-        blendMomentumWithQuality: { raw: 0.7, quality: 0.3 }
+        blendMomentumWithQuality: { raw: 0.7, quality: 0.3 },
+        earningsMap: earningsMapPaper
       });
     } else if (strategy === 'full_composite_turbo') {
       rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weightsForRank, {
         momQThreshold: 0, fundamentalFloor: 0, maxVol: 1.2, strategyLabel: 'full_composite_turbo',
         skipConstraintPenalty: true,
-        blendMomentumWithQuality: { raw: 0.55, quality: 0.20 }
+        blendMomentumWithQuality: { raw: 0.55, quality: 0.20 },
+        earningsMap: earningsMapPaper
       });
     } else if (strategy === 'quality_momentum') {
       rankings = bt_rankQualityMomentumV2(universe, priceHistory, fundamentalsLive, today);
@@ -8931,6 +11609,7 @@ async function paperRebalanceExecute(portfolio, persist) {
     let rlPaperExposure = exposureForNewBuys;
     let rlPaperMeta = null;
     let rlPaperDecisionForReport = null;
+    let rlPaperSkipRebalance = false;
     if (compositePaper && paperPortfolioRlEnabled(portfolio) && spyPaper?.length && TRAINED_RL_AGENT) {
       const agent = TRAINED_RL_AGENT;
       let navPre = portfolio.cash;
@@ -9003,12 +11682,14 @@ async function paperRebalanceExecute(portfolio, persist) {
         bullFloorAppliedPaper = true;
         console.log(`[RL-PAPER] strong_bull floor: overrode exp=${origExp} → ${decBull.exposure} on ${today}`);
       }
+      rlPaperSkipRebalance = (dec.rebalanceWait ?? 'standard') === 'skip';
       portfolio._rlPrevState = stateIdx;
       portfolio._rlPrevAction = actionIdxPaper;
       portfolio._rlLastAction = {
         exposure: dec.exposure,
         positionCount: dec.positionCount,
-        sizingMethod: dec.sizingMethod
+        sizingMethod: dec.sizingMethod,
+        rebalanceWait: dec.rebalanceWait ?? 'standard'
       };
       portfolio._rlLastStateFeatures = stateFeatures;
 
@@ -9021,6 +11702,7 @@ async function paperRebalanceExecute(portfolio, persist) {
         exposure: dec.exposure,
         positionCount: dec.positionCount,
         sizingMethod: dec.sizingMethod,
+        rebalanceWait: dec.rebalanceWait ?? 'standard',
         fallback: sel.fallback,
         bullFloorApplied: bullFloorAppliedPaper
       };
@@ -9030,6 +11712,7 @@ async function paperRebalanceExecute(portfolio, persist) {
         exposure: dec.exposure,
         positionCount: dec.positionCount,
         sizingMethod: dec.sizingMethod,
+        rebalanceWait: dec.rebalanceWait ?? 'standard',
         fallback: sel.fallback,
         bullFloorApplied: bullFloorAppliedPaper,
         stateFeatures: {
@@ -9040,10 +11723,12 @@ async function paperRebalanceExecute(portfolio, persist) {
           realizedVol: parseFloat(Number(stateFeatures.realizedVol).toFixed(4)),
           avgTopScore: parseFloat(Number(stateFeatures.avgTopScore).toFixed(1))
         },
-        note: `RL chose ${(dec.exposure * 100).toFixed(0)}% exposure, ${dec.positionCount} positions, ${dec.sizingMethod} sizing`
+        note: rlPaperSkipRebalance
+          ? 'RL chose SKIP_REBALANCE — hold portfolio until next cycle'
+          : `RL chose ${(dec.exposure * 100).toFixed(0)}% exposure, ${dec.positionCount} positions, ${dec.sizingMethod} sizing`
       };
       console.log(
-        `[RL-PAPER] Rebalance: state=${stateIdx}, exposure=${dec.exposure}, topN=${adjustedTopNPaper}, sizing=${dec.sizingMethod}, fallback=${sel.fallback}, bullFloor=${bullFloorAppliedPaper}`
+        `[RL-PAPER] Rebalance: state=${stateIdx}, exposure=${dec.exposure}, topN=${adjustedTopNPaper}, sizing=${dec.sizingMethod}, wait=${dec.rebalanceWait ?? 'standard'}, fallback=${sel.fallback}, bullFloor=${bullFloorAppliedPaper}`
       );
     }
 
@@ -9059,10 +11744,33 @@ async function paperRebalanceExecute(portfolio, persist) {
     const sectorCap = getMaxSectorConcentration(strategy);
     const usesFundamentalsPaper =
       strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo';
-    let topPicks =
-      usesFundamentalsPaper && fundamentalsLive
-        ? applySectorLimits(rankings, fundamentalsLive, adjustedTopNPaper, sectorCap)
-        : rankings.slice(0, adjustedTopNPaper);
+    let topPicks;
+    if (compositePaper && correlationFilterPaper && rankings && rankings.length > 0) {
+      const corrPoolSizePaper = Math.min(adjustedTopNPaper * 2, rankings.length);
+      const corrPoolPaper =
+        usesFundamentalsPaper && fundamentalsLive
+          ? applySectorLimits(rankings, fundamentalsLive, corrPoolSizePaper, sectorCap)
+          : rankings.slice(0, corrPoolSizePaper);
+      const corrPoolRankedPaper = filterCompositePicksByRebalanceScoreFloor(corrPoolPaper);
+      const corrMatPaper = computeCorrelationMatrix(
+        corrPoolRankedPaper.map((p) => p.ticker),
+        priceHistory,
+        correlationLookbackPaper,
+        today
+      );
+      const { selected } = applyCorrelationFilter(
+        corrPoolRankedPaper,
+        corrMatPaper,
+        adjustedTopNPaper,
+        maxCorrelatedPeersPaper
+      );
+      topPicks = selected;
+    } else {
+      topPicks =
+        usesFundamentalsPaper && fundamentalsLive
+          ? applySectorLimits(rankings, fundamentalsLive, adjustedTopNPaper, sectorCap)
+          : rankings.slice(0, adjustedTopNPaper);
+    }
     if (usesFundamentalsPaper) {
       topPicks = filterCompositePicksByRebalanceScoreFloor(topPicks);
     }
@@ -9076,7 +11784,13 @@ async function paperRebalanceExecute(portfolio, persist) {
         .filter((t) => daysBetween(portfolio.recentSells[t].exitDate, today) < REBUY_COOLDOWN_DAYS)
         .map((t) => [t, portfolio.recentSells[t]])
     );
-    console.log(`[Cooldown] ${today}: blocked tickers =`, [...cooldownMapPaper.keys()]);
+    if (
+      cooldownMapPaper.size > 0 ||
+      process.env.BACKTEST_COOLDOWN_LOG === '1' ||
+      String(process.env.BACKTEST_COOLDOWN_LOG || '').toLowerCase() === 'true'
+    ) {
+      console.log(`[Cooldown] ${today}: blocked tickers =`, [...cooldownMapPaper.keys()]);
+    }
 
     const heldSetPaper = new Set(portfolio.holdings.map((h) => h.ticker));
     const incomingCandidatesPaper = topPicks.filter((p) => !heldSetPaper.has(p.ticker));
@@ -9192,118 +11906,120 @@ async function paperRebalanceExecute(portfolio, persist) {
     const notInTop = remainingHoldings.filter((h) => !topTickers.has(h.ticker));
     const sortedExitPaper = [...notInTop].sort((a, b) => scorePaper(a.ticker) - scorePaper(b.ticker));
 
-    for (const h of sortedExitPaper) {
-      if (!remainingHoldings.some((x) => x.ticker === h.ticker)) continue;
-      if (topTickers.has(h.ticker)) continue;
-      const sOld = scorePaper(h.ticker);
-      if (!allowsSellPaper(sOld)) continue;
-      const sellPrice = currentPrices[h.ticker] || h.entryPrice;
-      const hDays = daysBetween(h.entryDate, today);
-      if (hDays < minHoldDaysForSell) {
-        if (turnoverDebugEnabled()) {
-          console.log(`[HOLD] paper keep ${h.ticker} — ${hDays}d < min ${minHoldDaysForSell}d`);
-        }
-        continue;
-      }
-      pushRotationSell(h, sellPrice);
-    }
-
-    while (remainingHoldings.length > maxHoldingsPaper) {
-      const pool = remainingHoldings.filter((h) => !topTickers.has(h.ticker));
-      if (!pool.length) break;
-      const eligiblePool = pool.filter((h) => daysBetween(h.entryDate, today) >= minHoldDaysForSell);
-      if (!eligiblePool.length) break;
-      eligiblePool.sort((a, b) => scorePaper(a.ticker) - scorePaper(b.ticker));
-      const h = eligiblePool[0];
-      if (!allowsSellPaper(scorePaper(h.ticker))) break;
-      const sellPrice = currentPrices[h.ticker] || h.entryPrice;
-      pushRotationSell(h, sellPrice);
-    }
-
-    // New buys: regime-sized topN, positionSizing for composite — matches backtest
-    const heldTickers = new Set(remainingHoldings.map(h => h.ticker));
-    const newPicks = topPicks.filter(p => !heldTickers.has(p.ticker));
-    const totalSlots = rebalanceSlotCapPaper;
-    const slotsUsed = remainingHoldings.length;
-    const slotsAvailable = totalSlots - slotsUsed;
-
     const buys = [];
-    if (slotsAvailable > 0 && newPicks.length > 0) {
-      const buyTargets = [];
-      for (const p of newPicks) {
-        if (buyTargets.length >= slotsAvailable) break;
-        const rs = portfolio.recentSells[p.ticker];
-        if (rs && daysBetween(rs.exitDate, today) < REBUY_COOLDOWN_DAYS) {
+    if (!rlPaperSkipRebalance) {
+      for (const h of sortedExitPaper) {
+        if (!remainingHoldings.some((x) => x.ticker === h.ticker)) continue;
+        if (topTickers.has(h.ticker)) continue;
+        const sOld = scorePaper(h.ticker);
+        if (!allowsSellPaper(sOld)) continue;
+        const sellPrice = currentPrices[h.ticker] || h.entryPrice;
+        const hDays = daysBetween(h.entryDate, today);
+        if (hDays < minHoldDaysForSell) {
           if (turnoverDebugEnabled()) {
-            console.log(`[TURNOVER] paper skip rebuy ${p.ticker} — cooldown`);
+            console.log(`[HOLD] paper keep ${h.ticker} — ${hDays}d < min ${minHoldDaysForSell}d`);
           }
           continue;
         }
-        const scPaper = p.compositeScore ?? p.combinedScore ?? 0;
-        if (scPaper < SCORE_FLOOR) {
-          continue;
-        }
-        const dtePaper = daysUntilEarnings(p.ticker, today, fundamentalsLive);
-        if (dtePaper !== null && dtePaper >= 0 && dtePaper <= 10) {
-          console.log(`[EarningsFilter] Skipping ${p.ticker} — earnings in ${dtePaper.toFixed(1)} days`);
-          continue;
-        }
-        buyTargets.push(p);
+        pushRotationSell(h, sellPrice);
       }
-      let volWeights;
-      if (strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo') {
-        volWeights = calculateAggressiveVolatilityWeights(buyTargets);
-      } else if (compositePaper && positionSizingPaper === 'invVol') {
-        volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today);
-      } else if (compositePaper && positionSizingPaper === 'invVolBlend') {
-        volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today, { equalBlend: 0.4 });
-      } else if (compositePaper && positionSizingPaper === 'score') {
-        volWeights = calculatePositionWeightsScore(buyTargets);
-      } else {
-        volWeights = calculatePositionWeights(buyTargets);
-      }
-      const weightByTicker = new Map(volWeights.map((vw) => [vw.ticker, vw.weight]));
-      const cashForNewBuys = portfolio.cash;
-      const equalFallback = buyTargets.length > 0 ? 1 / buyTargets.length : 0;
 
-      for (let i = 0; i < buyTargets.length; i++) {
-        const pick = buyTargets[i];
-        const buyPrice = currentPrices[pick.ticker];
-        if (!buyPrice || buyPrice <= 0) continue;
-        const w = weightByTicker.get(pick.ticker) ?? equalFallback;
-        const dollars = cashForNewBuys * w * rlPaperExposure;
-        const shares = Math.floor(dollars / buyPrice);
-        if (shares <= 0) continue;
-        const cost = shares * buyPrice;
-        portfolio.cash -= cost;
-        if (portfolio.recentSells[pick.ticker]) delete portfolio.recentSells[pick.ticker];
-        remainingHoldings.push({
-          ticker: pick.ticker,
-          shares,
-          entryPrice: buyPrice,
-          entryDate: today,
-          ...(trailingStopEnabled() ? { peakPriceSinceEntry: buyPrice } : {}),
-          scores: {
-            composite: pick.compositeScore,
-            fundamental: pick.fundamentalScore,
-            momentum: pick.momentumScore,
-            valuation: pick.valuationScore,
-            value: pick.valueScore
+      while (remainingHoldings.length > maxHoldingsPaper) {
+        const pool = remainingHoldings.filter((h) => !topTickers.has(h.ticker));
+        if (!pool.length) break;
+        const eligiblePool = pool.filter((h) => daysBetween(h.entryDate, today) >= minHoldDaysForSell);
+        if (!eligiblePool.length) break;
+        eligiblePool.sort((a, b) => scorePaper(a.ticker) - scorePaper(b.ticker));
+        const h = eligiblePool[0];
+        if (!allowsSellPaper(scorePaper(h.ticker))) break;
+        const sellPrice = currentPrices[h.ticker] || h.entryPrice;
+        pushRotationSell(h, sellPrice);
+      }
+
+      // New buys: regime-sized topN, positionSizing for composite — matches backtest
+      const heldTickers = new Set(remainingHoldings.map(h => h.ticker));
+      const newPicks = topPicks.filter(p => !heldTickers.has(p.ticker));
+      const totalSlots = rebalanceSlotCapPaper;
+      const slotsUsed = remainingHoldings.length;
+      const slotsAvailable = totalSlots - slotsUsed;
+
+      if (slotsAvailable > 0 && newPicks.length > 0) {
+        const buyTargets = [];
+        for (const p of newPicks) {
+          if (buyTargets.length >= slotsAvailable) break;
+          const rs = portfolio.recentSells[p.ticker];
+          if (rs && daysBetween(rs.exitDate, today) < REBUY_COOLDOWN_DAYS) {
+            if (turnoverDebugEnabled()) {
+              console.log(`[TURNOVER] paper skip rebuy ${p.ticker} — cooldown`);
+            }
+            continue;
           }
-        });
-        buys.push({
-          ticker: pick.ticker,
-          shares,
-          buyPrice,
-          cost: parseFloat(cost.toFixed(2)),
-          scores: {
-            composite: pick.compositeScore,
-            fundamental: pick.fundamentalScore,
-            momentum: pick.momentumScore,
-            valuation: pick.valuationScore,
-            value: pick.valueScore
+          const scPaper = p.compositeScore ?? p.combinedScore ?? 0;
+          if (scPaper < SCORE_FLOOR) {
+            continue;
           }
-        });
+          const dtePaper = daysUntilEarnings(p.ticker, today, fundamentalsLive);
+          if (dtePaper !== null && dtePaper >= 0 && dtePaper <= 10) {
+            console.log(`[EarningsFilter] Skipping ${p.ticker} — earnings in ${dtePaper.toFixed(1)} days`);
+            continue;
+          }
+          buyTargets.push(p);
+        }
+        let volWeights;
+        if (strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo') {
+          volWeights = calculateAggressiveVolatilityWeights(buyTargets);
+        } else if (compositePaper && positionSizingPaper === 'invVol') {
+          volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today);
+        } else if (compositePaper && positionSizingPaper === 'invVolBlend') {
+          volWeights = calculatePositionWeightsInvVol(buyTargets, priceHistory, today, { equalBlend: 0.4 });
+        } else if (compositePaper && positionSizingPaper === 'score') {
+          volWeights = calculatePositionWeightsScore(buyTargets);
+        } else {
+          volWeights = calculatePositionWeights(buyTargets);
+        }
+        const weightByTicker = new Map(volWeights.map((vw) => [vw.ticker, vw.weight]));
+        const cashForNewBuys = portfolio.cash;
+        const equalFallback = buyTargets.length > 0 ? 1 / buyTargets.length : 0;
+
+        for (let i = 0; i < buyTargets.length; i++) {
+          const pick = buyTargets[i];
+          const buyPrice = currentPrices[pick.ticker];
+          if (!buyPrice || buyPrice <= 0) continue;
+          const w = weightByTicker.get(pick.ticker) ?? equalFallback;
+          const dollars = cashForNewBuys * w * rlPaperExposure;
+          const shares = Math.floor(dollars / buyPrice);
+          if (shares <= 0) continue;
+          const cost = shares * buyPrice;
+          portfolio.cash -= cost;
+          if (portfolio.recentSells[pick.ticker]) delete portfolio.recentSells[pick.ticker];
+          remainingHoldings.push({
+            ticker: pick.ticker,
+            shares,
+            entryPrice: buyPrice,
+            entryDate: today,
+            ...(trailingStopEnabled() ? { peakPriceSinceEntry: buyPrice } : {}),
+            scores: {
+              composite: pick.compositeScore,
+              fundamental: pick.fundamentalScore,
+              momentum: pick.momentumScore,
+              valuation: pick.valuationScore,
+              value: pick.valueScore
+            }
+          });
+          buys.push({
+            ticker: pick.ticker,
+            shares,
+            buyPrice,
+            cost: parseFloat(cost.toFixed(2)),
+            scores: {
+              composite: pick.compositeScore,
+              fundamental: pick.fundamentalScore,
+              momentum: pick.momentumScore,
+              valuation: pick.valuationScore,
+              value: pick.valueScore
+            }
+          });
+        }
       }
     }
 
@@ -9330,7 +12046,8 @@ async function paperRebalanceExecute(portfolio, persist) {
       momentumScore: p.momentumScore,
       valuationScore: p.valuationScore,
       valueScore: p.valueScore,
-      dcfScore: p.dcfScore
+      dcfScore: p.dcfScore,
+      earningsMomentum: p.earningsMomentumScore ?? 50
     }));
 
     // Take NAV snapshot first to get live prices
@@ -9342,6 +12059,21 @@ async function paperRebalanceExecute(portfolio, persist) {
           return sum + h.shares * (currentPrices[h.ticker] || h.entryPrice);
         }, 0);
 
+    const paperHedgeState = portfolio._spyPutHedgeActive || null;
+    const hedgeRecommendation = evaluateHedgeNeed(regimeMetaPaper.regime, livePortfolioValue, paperHedgeState);
+    if (hedgeRecommendation.action === 'OPEN_HEDGE') {
+      portfolio._spyPutHedgeActive = {
+        openDate: today,
+        regime: hedgeRecommendation.regime,
+        notionalHedge: hedgeRecommendation.notionalHedge,
+        hedgePct: hedgeRecommendation.hedgePct,
+        spyPxAtOpen: getPrice(spyPaper, today) || 0,
+        lastPremiumAccrualDate: today
+      };
+    } else if (hedgeRecommendation.action === 'CLOSE_HEDGE') {
+      portfolio._spyPutHedgeActive = null;
+    }
+
     // Log rebalance
     const rebalanceEntry = {
       date: today,
@@ -9349,6 +12081,8 @@ async function paperRebalanceExecute(portfolio, persist) {
       adjustedTopN: adjustedTopNPaper,
       effectiveTargetN: rebalanceSlotCapPaper,
       compositeScoreFloor: SCORE_FLOOR,
+      hedgeRecommendation,
+      ...(rlPaperSkipRebalance ? { rlAction: 'SKIP_REBALANCE' } : {}),
       ...(rlPaperMeta ? { rlAgent: rlPaperMeta, rlExposure: rlPaperExposure } : {}),
       sells,
       buys,
@@ -9393,6 +12127,7 @@ async function paperRebalanceExecute(portfolio, persist) {
           exposure: rlPaperMeta.exposure,
           positionCount: rlPaperMeta.positionCount,
           sizingMethod: rlPaperMeta.sizingMethod,
+          rebalanceWait: rlPaperMeta.rebalanceWait ?? 'standard',
           stateIdx: rlPaperMeta.stateIdx,
           bullFloorApplied: !!rlPaperMeta.bullFloorApplied
         }
@@ -9422,6 +12157,7 @@ async function paperRebalanceExecute(portfolio, persist) {
       exposure: rlPaperExposure,
       adjustedTopN: adjustedTopNPaper,
       sizingMethod: positionSizingPaper,
+      hedgeRecommendation,
       rlDecision: rlDecisionHoisted,
       health,
       buys: buysHoisted,
@@ -9459,7 +12195,8 @@ async function paperRebalanceExecute(portfolio, persist) {
           narrative: report.narrative,
           weightChanges: report.weightChanges,
           ...(report.rlDecision ? { rlDecision: report.rlDecision } : {})
-        } : null
+        } : null,
+        hedgeRecommendation
       }
     };
 }
@@ -9613,8 +12350,10 @@ app.get('/api/options/scan', async (req, res) => {
     const pit = await loadPitFundamentalsForUniverse(universe, today, priceHistory);
     const fundamentalsLive = pit.map;
 
-    const weights = { fundamental: 0.2, momentum: 0.4, value: 0.4, dcf: 0, valuation: 0 };
-    const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weights);
+    const weights = { fundamental: 0.2, momentum: 0.4, value: 0.4, dcf: 0, valuation: 0, earningsMomentum: 0 };
+    const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weights, {
+      earningsMap: null
+    });
 
     const spySeries = priceHistory['SPY'];
     const regimeMeta =
@@ -10074,6 +12813,316 @@ app.get('/api/options/paper/portfolio', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
+/** Cartesian grid for POST /api/diagnostics/weight-sweep when `configs` is empty. */
+function generateDefaultWeightSweepConfigs() {
+  const momOpts = [0.25, 0.3, 0.35, 0.4];
+  const valOpts = [0.2, 0.25, 0.3, 0.35, 0.4];
+  const fundOpts = [0, 0.05, 0.1, 0.15];
+  const earnOpts = [0, 0.1, 0.15, 0.2, 0.25];
+  const tol = 0.01;
+  const out = [];
+  for (const m of momOpts) {
+    for (const v of valOpts) {
+      for (const f of fundOpts) {
+        for (const e of earnOpts) {
+          if (Math.abs(m + v + f + e - 1) <= tol) {
+            out.push({
+              momentum: m,
+              value: v,
+              fundamental: f,
+              earningsMomentum: e,
+              dcf: 0,
+              valuation: 0
+            });
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeWeightSweepWeights(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = {};
+  for (const f of FACTOR_NAMES) {
+    const x = raw[f];
+    o[f] = typeof x === 'number' && Number.isFinite(x) ? x : 0;
+  }
+  const s = FACTOR_NAMES.reduce((a, f) => a + o[f], 0);
+  if (s <= 0) return null;
+  for (const f of FACTOR_NAMES) o[f] = parseFloat((o[f] / s).toFixed(6));
+  return o;
+}
+
+function weightSweepPerfRow(sim, capital) {
+  const perf = extractDiagnosticPerformance(sim, capital);
+  if (!perf) {
+    return { totalReturn: 0, alpha: 0, sharpe: 0, maxDrawdown: 0, winRate: 0 };
+  }
+  return {
+    totalReturn: parseFloat(perf.totalReturn),
+    alpha: parseFloat(perf.alpha),
+    sharpe: parseFloat(perf.sharpe),
+    maxDrawdown: parseFloat(perf.maxDrawdown),
+    winRate: parseFloat(perf.winRate)
+  };
+}
+
+function weightSweepOverfitRatio(isSharpe, oosSharpe) {
+  if (oosSharpe == null || !Number.isFinite(oosSharpe) || oosSharpe <= 0) return null;
+  if (isSharpe == null || !Number.isFinite(isSharpe)) return null;
+  return parseFloat((isSharpe / oosSharpe).toFixed(4));
+}
+
+function weightSweepOverfitFlag(ratio) {
+  if (ratio == null || !Number.isFinite(ratio)) return 'overfit';
+  if (ratio < 1.5) return 'healthy';
+  if (ratio <= 2) return 'caution';
+  return 'overfit';
+}
+
+function weightSweepShortLabel(w) {
+  const pct = (x) => Math.round((Number(x) || 0) * 100);
+  return `M${pct(w.momentum)}/V${pct(w.value)}/Q${pct(w.fundamental)}/E${pct(w.earningsMomentum)}`;
+}
+
+/**
+ * POST /api/diagnostics/weight-sweep
+ * Walk-forward style screen: 3y in-sample proxy + 1y OOS per weight vector; rank by OOS Sharpe.
+ */
+app.post('/api/diagnostics/weight-sweep', async (req, res) => {
+  req.setTimeout(21600000);
+  res.setTimeout(21600000);
+  const body = req.body || {};
+  const universeId = String(body.universeId || '').trim();
+  const topN = Math.max(1, parseInt(String(body.topN ?? '15'), 10) || 15);
+  const capital = parseFloat(String(body.initialCapital ?? '10000')) || 10000;
+  const correlationFilter =
+    body.correlationFilter === true ||
+    body.correlationFilter === 'true' ||
+    body.correlationFilter === 1 ||
+    String(body.correlationFilter || '').toLowerCase() === 'true';
+  const trainPeriod = String(body.trainPeriod || '3y').trim();
+  const testPeriod = String(body.testPeriod || '1y').trim();
+  const rebalanceFreq = 'bimonthly';
+
+  const universe = UNIVERSE_TICKERS[universeId];
+  if (!universe) {
+    return res.status(400).json({ success: false, error: 'Unknown universeId' });
+  }
+
+  let weightConfigs = Array.isArray(body.configs) ? body.configs : [];
+  if (weightConfigs.length === 0) {
+    weightConfigs = generateDefaultWeightSweepConfigs();
+  } else {
+    weightConfigs = weightConfigs
+      .map((c) => normalizeWeightSweepWeights(c))
+      .filter(Boolean);
+  }
+  if (weightConfigs.length === 0) {
+    return res.status(400).json({ success: false, error: 'No valid weight configs (sum pillars to 1.0)' });
+  }
+
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const trainDays = periodDays[trainPeriod] || periodDays['3y'];
+  const testDays = periodDays[testPeriod] || periodDays['1y'];
+  const fetchDays = Math.max(trainDays, testDays, periodDays['3y']);
+  const endDate = new Date();
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const oosStartDate = new Date(endDate.getTime() - testDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const trainStartApprox = new Date(endDate.getTime() - trainDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const trainWindow = `${trainPeriod} (approx ${trainStartApprox} to ${endDateStr}; overlaps final ${testPeriod} calendar — OOS is separate ${testPeriod} run)`;
+  const testWindow = `${testPeriod} (approx ${oosStartDate} to ${endDateStr})`;
+
+  const simOptionsBase = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    rlAgent: false,
+    rlMode: 'off',
+    skipMlRankingAdjustments: true,
+    correlationFilter,
+    maxCorrelated:
+      body.maxCorrelated != null && Number.isFinite(Number(body.maxCorrelated))
+        ? Math.max(1, Math.floor(Number(body.maxCorrelated)))
+        : 3,
+    correlationLookbackDays:
+      body.correlationLookbackDays != null && Number.isFinite(Number(body.correlationLookbackDays))
+        ? Math.max(20, Math.floor(Number(body.correlationLookbackDays)))
+        : 60
+  };
+
+  const note = `Ranked by out-of-sample Sharpe. Configs with negative OOS alpha excluded from top list. In-sample is ${trainPeriod} (calendar through as-of); OOS is ${testPeriod} only.`;
+
+  try {
+    clearBacktestRuntimeCaches();
+    const dataStart = new Date(endDate.getTime() - fetchDays * 24 * 60 * 60 * 1000 - 400 * 24 * 60 * 60 * 1000);
+    const startDateStr = dataStart.toISOString().split('T')[0];
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices || !spyPrices.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY benchmark data' });
+    }
+
+    const backtestStartTrain = new Date(endDate.getTime() - trainDays * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+    const backtestStartOos = new Date(endDate.getTime() - testDays * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+    const rebalanceDatesTrain = getRebalanceDates(backtestStartTrain, endDateStr, rebalanceFreq);
+    const rebalanceDatesOos = getRebalanceDates(backtestStartOos, endDateStr, rebalanceFreq);
+    if (rebalanceDatesTrain.length < 2 || rebalanceDatesOos.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates for sweep' });
+    }
+
+    const simEnd = rebalanceDatesTrain[rebalanceDatesTrain.length - 1];
+    const cpiObsStart = subtractMonths(rebalanceDatesTrain[0], 60);
+    const fredKey = process.env.FRED_API_KEY;
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, fredKey);
+
+    const runOnePeriod = async (weights, rebalanceDates) => {
+      const simStart = rebalanceDates[0];
+      const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+        cpiObservations,
+        simStart,
+        INFLATION_BASELINE_ANNUAL
+      );
+      return runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        'full_composite',
+        weights,
+        cashInflationMult,
+        universeId,
+        { ...simOptionsBase }
+      );
+    };
+
+    const rows = [];
+    let oosNegativeAlpha = 0;
+    let bestOosSharpeSoFar = -Infinity;
+    let bestLabelSoFar = '';
+
+    for (let i = 0; i < weightConfigs.length; i++) {
+      const weights = normalizeWeightSweepWeights(weightConfigs[i]);
+      if (!weights) {
+        throw new Error(`Invalid weights at config index ${i}`);
+      }
+      const simTrain = await runOnePeriod(weights, rebalanceDatesTrain);
+      const simOos = await runOnePeriod(weights, rebalanceDatesOos);
+      const inSample = weightSweepPerfRow(simTrain, capital);
+      const outOfSample = weightSweepPerfRow(simOos, capital);
+      if (!(outOfSample.alpha > 0)) oosNegativeAlpha++;
+
+      const overfitRatio = weightSweepOverfitRatio(inSample.sharpe, outOfSample.sharpe);
+      const overfitFlag = weightSweepOverfitFlag(overfitRatio);
+      const label = weightSweepShortLabel(weights);
+      if (outOfSample.sharpe > bestOosSharpeSoFar) {
+        bestOosSharpeSoFar = outOfSample.sharpe;
+        bestLabelSoFar = label;
+      }
+      if ((i + 1) % 10 === 0 || i + 1 === weightConfigs.length) {
+        const b =
+          bestOosSharpeSoFar > -Infinity && Number.isFinite(bestOosSharpeSoFar)
+            ? bestOosSharpeSoFar.toFixed(2)
+            : 'n/a';
+        console.log(
+          `Weight sweep: ${i + 1}/${weightConfigs.length} complete, best OOS Sharpe so far: ${b} (${bestLabelSoFar || 'n/a'})`
+        );
+      }
+      rows.push({
+        weights,
+        inSample,
+        outOfSample,
+        overfitRatio,
+        overfitFlag
+      });
+    }
+
+    const survivors = rows.filter((r) => r.outOfSample.alpha > 0);
+    survivors.sort((a, b) => b.outOfSample.sharpe - a.outOfSample.sharpe);
+    const topByOOSSharpe = survivors.map((r) => ({
+      weights: r.weights,
+      inSample: r.inSample,
+      outOfSample: r.outOfSample,
+      overfitRatio: r.overfitRatio,
+      overfitFlag: r.overfitFlag
+    }));
+
+    const recommendPool = survivors.filter((r) => r.overfitFlag === 'healthy' || r.overfitFlag === 'caution');
+    let recommendation = null;
+    if (recommendPool.length > 0) {
+      recommendPool.sort((a, b) => b.outOfSample.sharpe - a.outOfSample.sharpe);
+      const pick = recommendPool[0];
+      recommendation = {
+        weights: pick.weights,
+        oosSharpe: pick.outOfSample.sharpe,
+        oosAlpha: pick.outOfSample.alpha,
+        overfitRatio: pick.overfitRatio,
+        reason: 'Highest OOS Sharpe among healthy/caution configs (OOS alpha > 0)'
+      };
+    } else if (survivors.length > 0) {
+      recommendation = {
+        weights: null,
+        oosSharpe: null,
+        oosAlpha: null,
+        overfitRatio: null,
+        reason: 'No healthy/caution config among OOS-alpha-positive runs; all remaining are overfit-flagged'
+      };
+    } else {
+      recommendation = {
+        weights: null,
+        oosSharpe: null,
+        oosAlpha: null,
+        overfitRatio: null,
+        reason: 'No config with positive OOS alpha'
+      };
+    }
+
+    res.json({
+      success: true,
+      swept: weightConfigs.length,
+      trainWindow,
+      testWindow,
+      note,
+      topByOOSSharpe,
+      oosNegativeAlpha,
+      recommendation
+    });
+  } catch (error) {
+    console.error('[diagnostics/weight-sweep]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
   }
 });
 

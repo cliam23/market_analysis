@@ -33,15 +33,17 @@ export const N_SUBPERIODS = 3;
 export const ACTION_SPACE = {
   exposure: { levels: [0.5, 0.65, 0.8, 1.0], n: 4 },
   positionCount: { levels: [7, 10, 13, 15], n: 4 },
-  sizingMethod: { levels: ['equal', 'invVol', 'score'], n: 3 }
+  sizingMethod: { levels: ['equal', 'invVol', 'score'], n: 3 },
+  rebalanceWait: { levels: ['standard', 'skip'], n: 2 }
 };
 
-export const TOTAL_ACTIONS = 4 * 4 * 3;
+/** 4 × 4 × 3 × 2 — rebalanceWait slowest so indices 0..47 match legacy (standard only). */
+export const TOTAL_ACTIONS = 4 * 4 * 3 * 2;
 
 export const Q_VALUE_CLIP = 2;
 export const MIN_VISITS_FOR_EXPLOIT = 10;
 
-/** Default: full exposure, 15 names, invVol → exposureIdx 3, posIdx 3, sizingIdx 1 */
+/** Default: full exposure, 15 names, invVol, standard rebalance → same numeric index as legacy 48-action space */
 export const DEFAULT_ACTION_IDX = (3 * 4 + 3) * 3 + 1;
 
 export function discretize(value, bins) {
@@ -85,22 +87,35 @@ export function decodeState(stateIdx) {
 export function decodeAction(actionIdx) {
   const idx = Math.max(0, Math.min(TOTAL_ACTIONS - 1, actionIdx | 0));
   const sizingIdx = idx % 3;
-  const rem = Math.floor(idx / 3);
-  const posCountIdx = rem % 4;
-  const exposureIdx = Math.floor(rem / 4);
+  let x = Math.floor(idx / 3);
+  const posCountIdx = x % 4;
+  x = Math.floor(x / 4);
+  const exposureIdx = x % 4;
+  const waitIdx = Math.floor(x / 4);
   return {
     exposure: ACTION_SPACE.exposure.levels[exposureIdx],
     positionCount: ACTION_SPACE.positionCount.levels[posCountIdx],
     sizingMethod: ACTION_SPACE.sizingMethod.levels[sizingIdx],
+    rebalanceWait: ACTION_SPACE.rebalanceWait.levels[waitIdx] ?? 'standard',
     exposureIdx,
     posCountIdx,
-    sizingIdx
+    sizingIdx,
+    waitIdx
   };
 }
 
-export function encodeAction(exposureIdx, posCountIdx, sizingIdx) {
-  return ((exposureIdx * 4 + posCountIdx) * 3 + sizingIdx) | 0;
+export function encodeAction(exposureIdx, posCountIdx, sizingIdx, waitIdx = 0) {
+  const w = Math.max(0, Math.min(1, waitIdx | 0));
+  return (sizingIdx + 3 * (posCountIdx + 4 * (exposureIdx + 4 * w))) | 0;
 }
+
+/** Policy default matching `DEFAULT_ACTION_IDX` (full exposure, 15 names, invVol, rebalance as usual). */
+export const DEFAULT_ACTION = {
+  exposure: 1.0,
+  positionCount: 15,
+  sizingMethod: 'invVol',
+  rebalanceWait: 'standard'
+};
 
 export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown) {
   const alpha = portfolioReturn - benchmarkReturn;

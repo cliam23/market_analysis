@@ -9,14 +9,15 @@ import {
   spyAbove200dma
 } from './analysis-engine.js';
 
-export const ADAPTIVE_FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value'];
+export const ADAPTIVE_FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value', 'earningsMomentum'];
 
 export const ADAPTIVE_DEFAULT_WEIGHTS = {
   fundamental: 0.35,
   dcf: 0.10,
   valuation: 0.15,
   momentum: 0.25,
-  value: 0.15
+  value: 0.15,
+  earningsMomentum: 0
 };
 
 /** Minimum pillar weight after floors / renorm (adaptive compose). */
@@ -39,7 +40,9 @@ export function normalizePrevRankedForAdaptive(row) {
     dcf: row.dcf != null ? row.dcf : row.dcfScore,
     valuation: row.valuation != null ? row.valuation : row.valuationScore,
     momentum: row.momentum != null ? row.momentum : row.momentumScore,
-    value: row.value != null ? row.value : row.valueScore
+    value: row.value != null ? row.value : row.valueScore,
+    earningsMomentum:
+      row.earningsMomentum != null ? row.earningsMomentum : (row.earningsMomentumScore ?? 50)
   };
 }
 
@@ -94,7 +97,14 @@ export function computePeriodIc(prevRankedRows, prevDateStr, asOfDateStr, priceH
   if (withReturns.length < 6) return { icByFactor: out, withReturns: [], ok: false };
 
   const returns = withReturns.map((r) => r.realized);
-  const factorKeys = { fundamental: 'fundamental', dcf: 'dcf', valuation: 'valuation', momentum: 'momentum', value: 'value' };
+  const factorKeys = {
+    fundamental: 'fundamental',
+    dcf: 'dcf',
+    valuation: 'valuation',
+    momentum: 'momentum',
+    value: 'value',
+    earningsMomentum: 'earningsMomentum'
+  };
   const icByFactor = { ...out };
   for (const [factor, key] of Object.entries(factorKeys)) {
     const scores = withReturns.map((r) => r[key] ?? 0);
@@ -129,8 +139,10 @@ function stackPanelsCrossSectionalZ(panels) {
   return rows;
 }
 
-function solveLinear5(A, b) {
-  const n = 5;
+/** Gauss–Jordan elimination; A is n×n, b length n. Returns solution or null if singular. */
+function solveLinearSystem(A, b) {
+  const n = A.length;
+  if (!n || b.length !== n) return null;
   const M = A.map((row, i) => [...row, b[i]]);
   for (let col = 0; col < n; col++) {
     let piv = col;
@@ -155,7 +167,8 @@ function solveLinear5(A, b) {
  */
 export function ridgeFactorWeightsFromPanels(panels, lambda = 1.0) {
   const stacked = stackPanelsCrossSectionalZ(panels);
-  const p = 5;
+  const keys = ADAPTIVE_FACTOR_NAMES;
+  const p = keys.length;
   if (stacked.length < p + 3) return null;
   const n = stacked.length;
   const ym = stacked.reduce((s, r) => s + r.y, 0) / n;
@@ -170,17 +183,17 @@ export function ridgeFactorWeightsFromPanels(panels, lambda = 1.0) {
     }
   }
   for (let a = 0; a < p; a++) G[a][a] += lambda;
-  const beta = solveLinear5(G, bvec);
+  const beta = solveLinearSystem(G, bvec);
   if (!beta) return null;
-  const keys = ADAPTIVE_FACTOR_NAMES;
-  let s = 0;
   const raw = {};
+  let s = 0;
+  for (const k of keys) raw[k] = 0;
   for (let j = 0; j < p; j++) {
     raw[keys[j]] = Math.exp(Math.max(-3, Math.min(3, beta[j] * 0.35)));
     s += raw[keys[j]];
   }
   const w = {};
-  for (const k of keys) w[k] = raw[k] / s;
+  for (const k of keys) w[k] = s > 0 ? raw[k] / s : 1 / p;
   return w;
 }
 
@@ -206,6 +219,7 @@ export function rebuildRollingStateFromRebalanceHistory(history, priceHistory, g
       valuation: r.valuation ?? 0,
       momentum: r.momentum ?? 0,
       value: r.value ?? 0,
+      earningsMomentum: r.earningsMomentum ?? 0,
       y: r.realized
     }));
     st.pushPeriod(icByFactor, panelRows);
@@ -352,7 +366,7 @@ export function applyRegimeWithIcClamp(weights, spyAbove200, meanIcByFactor) {
   const mult = regimePillarMultipliers(spyAbove200);
   const out = { ...weights };
   for (const f of ADAPTIVE_FACTOR_NAMES) {
-    let m = mult[f];
+    let m = mult[f] ?? 1;
     const mic = meanIcByFactor?.[f] ?? 0;
     if (mic < 0 && m > 1) m = 1;
     out[f] *= m;
@@ -454,6 +468,7 @@ export function composeAdaptiveWeightsForRebalance(params) {
       valuation: r.valuation ?? 0,
       momentum: r.momentum ?? 0,
       value: r.value ?? 0,
+      earningsMomentum: r.earningsMomentum ?? 0,
       y: r.realized
     }));
     rollingState.pushPeriod(icByFactor, panelRows);

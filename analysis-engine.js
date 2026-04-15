@@ -145,7 +145,7 @@ const PEER_MAP = {
 
   // Software
   "CRM": ["NOW", "WDAY", "HUBS", "VEEV", "ZS", "DDOG"],
-  "ADBE": ["CRM", "INTU", "ANSS", "CDNS", "SNPS"],
+  "ADBE": ["CRM", "INTU", "PANW", "CDNS", "SNPS"],
   "NOW": ["CRM", "WDAY", "DDOG", "ZS", "NET", "TEAM"],
 
   // Industrials
@@ -2465,8 +2465,22 @@ function spyAbove200dma(benchmarkSeries, asOfDate) {
 /** Pillar multipliers for SPY above vs below 200-DMA (used with IC-aware fusion in adaptiveWeights.js). */
 function regimePillarMultipliers(spyAbove200) {
   return spyAbove200
-    ? { fundamental: 0.92, dcf: 0.92, valuation: 1.06, momentum: 1.12, value: 1.04 }
-    : { fundamental: 1.10, dcf: 1.06, valuation: 0.96, momentum: 0.88, value: 0.94 };
+    ? {
+        fundamental: 0.92,
+        dcf: 0.92,
+        valuation: 1.06,
+        momentum: 1.12,
+        value: 1.04,
+        earningsMomentum: 1.0
+      }
+    : {
+        fundamental: 1.1,
+        dcf: 1.06,
+        valuation: 0.96,
+        momentum: 0.88,
+        value: 0.94,
+        earningsMomentum: 1.0
+      };
 }
 
 /**
@@ -2479,7 +2493,8 @@ function regimeAdjustedCompositeWeights(baseWeights, spyAbove200) {
     dcf: safeNum(baseWeights?.dcf, 0.10),
     valuation: safeNum(baseWeights?.valuation, 0.15),
     momentum: safeNum(baseWeights?.momentum, 0.25),
-    value: safeNum(baseWeights?.value, 0.15)
+    value: safeNum(baseWeights?.value, 0.15),
+    earningsMomentum: safeNum(baseWeights?.earningsMomentum, 0)
   };
   const mult = regimePillarMultipliers(spyAbove200);
   const out = {
@@ -2487,15 +2502,18 @@ function regimeAdjustedCompositeWeights(baseWeights, spyAbove200) {
     dcf: w.dcf * mult.dcf,
     valuation: w.valuation * mult.valuation,
     momentum: w.momentum * mult.momentum,
-    value: w.value * mult.value
+    value: w.value * mult.value,
+    earningsMomentum: w.earningsMomentum * (mult.earningsMomentum ?? 1)
   };
-  const sum = out.fundamental + out.dcf + out.valuation + out.momentum + out.value;
+  const sum =
+    out.fundamental + out.dcf + out.valuation + out.momentum + out.value + out.earningsMomentum;
   if (sum > 0) {
     out.fundamental /= sum;
     out.dcf /= sum;
     out.valuation /= sum;
     out.momentum /= sum;
     out.value /= sum;
+    out.earningsMomentum /= sum;
   }
   return out;
 }
