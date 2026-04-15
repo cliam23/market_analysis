@@ -94,7 +94,7 @@ function testActionRoundtrip() {
       dec.exposureIdx * ACTION_SPACE.positionCount.n * ACTION_SPACE.sizingMethod.n +
       dec.posCountIdx * ACTION_SPACE.sizingMethod.n +
       dec.sizingIdx;
-    const enc = encodeAction(dec.exposureIdx, dec.posCountIdx, dec.sizingIdx);
+    const enc = encodeAction(dec.exposureIdx, dec.posCountIdx, dec.sizingIdx, dec.waitIdx ?? 0);
     if (re !== idx || enc !== idx) failures.push(idx);
     if (failures.length > 10) break;
   }

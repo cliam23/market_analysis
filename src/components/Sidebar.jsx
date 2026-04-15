@@ -3,6 +3,7 @@ import {
   LineChart,
   Bot,
   Wallet,
+  FlaskConical,
   Settings,
   LayoutDashboard
 } from "lucide-react";
@@ -30,6 +31,7 @@ const NAV = [
   { id: "search", label: "Search", Icon: Search },
   { id: "backtest", label: "Backtest", Icon: LineChart },
   { id: "papertrade", label: "Trading", Icon: Wallet },
+  { id: "alphalab", label: "Alpha Lab", Icon: FlaskConical },
   { id: "options", label: "Options", Icon: OptionsNavIcon },
   { id: "rl", label: "RL Agent", Icon: Bot }
 ];
