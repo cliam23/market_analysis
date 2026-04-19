@@ -1,49 +1,9 @@
 import { useState, useMemo, useCallback } from "react";
-import { InfoTip } from "./shared.jsx";
+import { InfoTip, Box, SH } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
+import { fmtBillions } from "../lib/formatters.js";
 
 import { MONO } from "../lib/theme.js";
-
-function Box({ border, children, style: sx = {} }) {
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.02)",
-      border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
-      borderRadius: 10,
-      padding: 16,
-      marginBottom: 12,
-      ...sx
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function SH({ color, children, compact }) {
-  return (
-    <div style={{
-      fontSize: 11,
-      fontWeight: 700,
-      letterSpacing: 2,
-      color,
-      marginBottom: compact ? 0 : 8,
-      lineHeight: compact ? 1.2 : undefined,
-      textTransform: "uppercase",
-      fontFamily: MONO
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function fmtBillions(val) {
-  if (!val) return "$0";
-  const absVal = Math.abs(val);
-  if (absVal >= 1e12) return `$${(val / 1e12).toFixed(2)}T`;
-  if (absVal >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
-  if (absVal >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
-  return `$${val.toFixed(0)}`;
-}
 
 function fmtPct(val) {
   if (val === null || val === undefined) return "0%";

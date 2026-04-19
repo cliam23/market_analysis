@@ -1,49 +1,11 @@
 import { useState, useEffect, useRef } from "react";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
-import { InfoTip, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
+import { InfoTip, Box, SH, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
+import { fmtBillions } from "../lib/formatters.js";
 
 import { MONO } from "../lib/theme.js";
-
-function Box({ border, children, style: sx = {} }) {
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.02)",
-      border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
-      borderRadius: 10,
-      padding: 16,
-      marginBottom: 12,
-      ...sx
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function SH({ color, children }) {
-  return (
-    <div style={{
-      fontSize: 11,
-      fontWeight: 700,
-      letterSpacing: 2,
-      color,
-      marginBottom: 8,
-      textTransform: "uppercase",
-      fontFamily: MONO
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function fmtBillions(val) {
-  if (!val) return "$0";
-  const absVal = Math.abs(val);
-  if (absVal >= 1e12) return `$${(val / 1e12).toFixed(2)}T`;
-  if (absVal >= 1e9) return `$${(val / 1e9).toFixed(1)}B`;
-  if (absVal >= 1e6) return `$${(val / 1e6).toFixed(1)}M`;
-  return `$${val.toFixed(0)}`;
-}
+import { apiFetch } from "../lib/api.js";
 
 function ScoreRing({ score }) {
   if (score === null || score === undefined) {
@@ -295,7 +257,7 @@ export default function CompsTab({ ticker }) {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/comps/${ticker}`, { signal: ac.signal })
+    apiFetch(`/api/comps/${ticker}`, { signal: ac.signal })
       .then((r) => r.json())
       .then((d) => {
         if (reqIdRef.current !== id) return;

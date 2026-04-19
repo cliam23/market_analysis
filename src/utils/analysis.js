@@ -4,6 +4,12 @@ export function safeNum(val, def = 0) {
   return isNaN(n) ? def : n;
 }
 
+function calcWacc(beta) {
+  if (beta < 0.8) return 8;
+  if (beta > 1.3) return 11;
+  return 9.5;
+}
+
 export function calcBuffettScore(data) {
   const scores = {};
   const criteria = {};
@@ -54,10 +60,7 @@ export function calcBuffettScore(data) {
     ? (forwardEPS + trailingEPS) / 2 
     : (forwardEPS > 0 ? forwardEPS : (trailingEPS > 0 ? trailingEPS : price * 0.08));
   
-  let wacc = 9.5;
-  if (beta < 0.8) wacc = 8;
-  else if (beta > 1.3) wacc = 11;
-  
+  const wacc = calcWacc(beta);
   const multiplier = Math.min(1 / (wacc / 100), 15);
   const netCashPerShare = sharesOutstanding > 0 ? (totalCash - totalDebt) / sharesOutstanding : 0;
   const intrinsicValue = normalizedEPS * multiplier + netCashPerShare;
@@ -181,10 +184,7 @@ export function calcROIC(data) {
   const roic = investedCapital > 0 ? (operatingIncome / investedCapital) * 100 : 
                (netIncome > 0 && totalAssets > 0 ? (netIncome / totalAssets) * 100 : 0);
   
-  let wacc = 9.5;
-  if (beta < 0.8) wacc = 8;
-  else if (beta > 1.2) wacc = 11;
-  
+  const wacc = calcWacc(beta);
   const spread = roic - wacc;
   
   const nopatMargin = totalRevenue > 0 ? (operatingIncome / totalRevenue) * 100 : 
@@ -354,10 +354,7 @@ export function calcIntrinsicValue(data, wacc, mosValue) {
   const totalRevenue = safeNum(data.totalRevenue);
   const netIncome = safeNum(data.netIncome);
   
-  let waccRate = wacc || 9.5;
-  if (beta < 0.8) waccRate = 8;
-  else if (beta > 1.3) waccRate = 11;
-  
+  const waccRate = wacc || calcWacc(beta);
   const eps = forwardEPS > 0 ? forwardEPS : (trailingEPS > 0 ? trailingEPS : 0);
   
   const epvMultiplier = Math.min(1 / (waccRate / 100), 15);

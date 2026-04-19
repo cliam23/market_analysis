@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from "react";
+import { apiFetch } from "./lib/api.js";
 import SearchView from "./components/SearchView.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
 import RLTab from "./components/RLTab.jsx";
@@ -41,7 +42,7 @@ export default function App() {
 
   const checkBackend = async () => {
     try {
-      const res = await fetch("/api/health", { method: "GET" });
+      const res = await apiFetch("/api/health", { method: "GET" });
       setBackendConnected(res.ok);
     } catch {
       setBackendConnected(false);
@@ -87,7 +88,6 @@ export default function App() {
               Backend not connected — start with <strong>npm run dev:all</strong>
             </div>
           )}
-
           <div style={{ display: tab === "search" ? "block" : "none" }}>
             <div style={{ display: selectedTicker ? "none" : "block" }}>
               <SearchView onSelectTicker={handleSelectTicker} />
@@ -99,9 +99,7 @@ export default function App() {
             )}
           </div>
 
-          <div style={{ display: tab === "backtest" ? "block" : "none" }}>
-            <BacktestTab />
-          </div>
+          {tab === "backtest" && <BacktestTab />}
 
           <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
             <PaperTradeTab visible={tab === "papertrade"} />
@@ -115,13 +113,9 @@ export default function App() {
             <OptionsTab visible={tab === "options"} />
           </div>
 
-          <div style={{ display: tab === "rl" ? "block" : "none" }}>
-            <RLTab />
-          </div>
+          {tab === "rl" && <RLTab />}
 
-          <div style={{ display: tab === "about" ? "block" : "none" }}>
-            <AboutTab />
-          </div>
+          {tab === "about" && <AboutTab />}
 
           <div className="ma-footer">
             <p>Educational tool · Not financial advice · Verify independently</p>

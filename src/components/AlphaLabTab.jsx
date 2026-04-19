@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlaskConical } from "lucide-react";
 import { MONO, SANS, TEXT, GREEN_LIGHT, RED_LIGHT, AMBER, AMBER_LIGHT, BORDER_LIGHT } from "../lib/theme.js";
+import { apiFetch } from "../lib/api.js";
+import { fmtMoney as _fmtMoney, fmtPctSigned } from "../lib/formatters.js";
 import weightSweepCached from "../assets/weight-sweep-result.json";
 import AlphaLabEquityCurves from "./AlphaLabEquityCurves.jsx";
 
@@ -36,17 +38,8 @@ const WEIGHT_COLORS = {
   valuation: "#9ca3af"
 };
 
-function fmtUsd(n) {
-  if (n == null || Number.isNaN(Number(n))) return "—";
-  return Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
-}
-
-function fmtPct2(n) {
-  if (n == null || Number.isNaN(Number(n))) return "—";
-  const x = Number(n);
-  const sign = x > 0 ? "+" : "";
-  return `${sign}${x.toFixed(2)}%`;
-}
+const fmtUsd = (n) => _fmtMoney(n, 2);
+const fmtPct2 = fmtPctSigned;
 
 function fmtNum2(n) {
   if (n == null || Number.isNaN(Number(n))) return "—";
@@ -171,11 +164,61 @@ export default function AlphaLabTab({ visible }) {
   const [weightSweepErr, setWeightSweepErr] = useState(null);
   const sweepTimerRef = useRef(null);
 
+  const [fcData, setFcData] = useState(null);
+  const [fcLoading, setFcLoading] = useState(false);
+  const [fcErr, setFcErr] = useState(null);
+  const [fwRec, setFwRec] = useState(null);
+  const [fwLoading, setFwLoading] = useState(false);
+
+  const loadForwardConfidence = useCallback(async () => {
+    setFcLoading(true);
+    setFcErr(null);
+    try {
+      const w = paperPf?.portfolio?.config?.weights || DEFAULT_V2_WEIGHTS;
+      const res = await apiFetch("/api/diagnostics/forward-confidence", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ universeId, period, weights: w })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setFcData(data);
+    } catch (e) {
+      setFcErr(e.message);
+      setFcData(null);
+    } finally {
+      setFcLoading(false);
+    }
+  }, [universeId, period, paperPf]);
+
+  const loadForwardWeightRec = useCallback(async () => {
+    setFwLoading(true);
+    try {
+      const res = await apiFetch("/api/diagnostics/forward-weight-recommendation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ universeId, period })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setFwRec(data);
+    } catch {
+      setFwRec(null);
+    } finally {
+      setFwLoading(false);
+    }
+  }, [universeId, period]);
+
+  useEffect(() => {
+    if (!visible) return;
+    loadForwardConfidence();
+  }, [visible, loadForwardConfidence]);
+
   const loadUniverseCompare = useCallback(async () => {
     setUcLoading(true);
     setUcErr(null);
     try {
-      const res = await fetch("/api/diagnostics/universe-compare");
+      const res = await apiFetch("/api/diagnostics/universe-compare");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setUcData(data);
@@ -192,7 +235,7 @@ export default function AlphaLabTab({ visible }) {
     setFacErr(null);
     try {
       const q = new URLSearchParams({ period, subperiods: "true" });
-      const res = await fetch(`/api/diagnostics/factors/${encodeURIComponent(universeId)}?${q}`);
+      const res = await apiFetch(`/api/diagnostics/factors/${encodeURIComponent(universeId)}?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setFacData(data);
@@ -215,7 +258,7 @@ export default function AlphaLabTab({ visible }) {
         strategy: "full_composite",
         rebalanceFreq: "bimonthly"
       });
-      const [sRes, cRes] = await Promise.all([fetch("/api/rl/status"), fetch(`/api/rl/compare?${params}`)]);
+      const [sRes, cRes] = await Promise.all([apiFetch("/api/rl/status"), apiFetch(`/api/rl/compare?${params}`)]);
       const sData = await sRes.json();
       const cData = await cRes.json();
       if (!sRes.ok) throw new Error(sData.error || "RL status failed");
@@ -236,7 +279,7 @@ export default function AlphaLabTab({ visible }) {
     setHedgeErr(null);
     try {
       const q = new URLSearchParams({ universeId, period });
-      const res = await fetch(`/api/diagnostics/hedge-impact?${q}`);
+      const res = await apiFetch(`/api/diagnostics/hedge-impact?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setHedgeData(data);
@@ -252,7 +295,7 @@ export default function AlphaLabTab({ visible }) {
     setPaperLoading(true);
     setPaperErr(null);
     try {
-      const res = await fetch("/api/paper-trade/portfolio");
+      const res = await apiFetch("/api/paper-trade/portfolio");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Portfolio failed");
       setPaperPf(data);
@@ -336,7 +379,7 @@ export default function AlphaLabTab({ visible }) {
     if (sweepTimerRef.current) clearInterval(sweepTimerRef.current);
     sweepTimerRef.current = setInterval(() => setWeightSweepElapsed((t) => t + 1), 1000);
     try {
-      const res = await fetch("/api/diagnostics/weight-sweep", {
+      const res = await apiFetch("/api/diagnostics/weight-sweep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -438,6 +481,104 @@ export default function AlphaLabTab({ visible }) {
       <AlphaLabEquityCurves visible={visible} universeId={universeId} period={period} />
 
       {controls}
+
+      <CardShell
+        title="Forward confidence analysis"
+        subtitle="POST /api/diagnostics/forward-confidence · optional forward-weight recommendation (slow)"
+        actions={
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="ma-alphalab-btn" onClick={loadForwardConfidence} disabled={fcLoading}>
+              {fcLoading ? "…" : "Refresh"}
+            </button>
+            <button type="button" className="ma-alphalab-btn" onClick={loadForwardWeightRec} disabled={fwLoading}>
+              {fwLoading ? "Running…" : "Forward weight rec"}
+            </button>
+          </div>
+        }
+      >
+        {fcLoading && !fcData ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <SkeletonBlock h={36} />
+            <SkeletonBlock h={60} />
+          </div>
+        ) : null}
+        {fcErr ? (
+          <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
+            {fcErr}
+          </div>
+        ) : null}
+        {fcData?.scores && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="ma-mono" style={{ fontSize: 12, lineHeight: 1.6 }}>
+              <strong style={{ color: "#fff" }}>Forward confidence</strong>{" "}
+              <span style={{ color: GREEN_LIGHT }}>{((fcData.scores?.forwardConfidence ?? 0) * 100).toFixed(0)}%</span>
+              {" · "}
+              <span style={{ color: "var(--color-text-muted)" }}>
+                Est. annual alpha ~{fcData.forwardEstimate?.estimatedAnnualAlpha}% (illustrative)
+              </span>
+            </div>
+            <WeightStackBar weights={fcData.weights} label="Weights (paper defaults if no portfolio)" />
+            {fcData.regimeSplit && (
+              <div>
+                <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
+                  Regime alpha (sampled days, %)
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {["strong_bull", "normal", "pullback", "caution", "bear"].map((k) => {
+                    const r = fcData.regimeSplit[k];
+                    if (!r || r.daysInRegime < 5) return null;
+                    return (
+                      <div
+                        key={k}
+                        className="ma-mono"
+                        style={{
+                          fontSize: 10,
+                          padding: "6px 8px",
+                          borderRadius: 6,
+                          border: `1px solid ${CARD_BORDER}`,
+                          background: "rgba(255,255,255,0.02)"
+                        }}
+                      >
+                        {k}:{" "}
+                        <span style={{ color: r.alpha >= 0 ? GREEN_LIGHT : RED_LIGHT }}>{fmtPct2(r.alpha)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {fcData.subperiodAnalysis && Object.keys(fcData.subperiodAnalysis).length > 0 && (
+              <div>
+                <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
+                  Sub-period alpha (rules backtest)
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {Object.entries(fcData.subperiodAnalysis).map(([k, v]) => (
+                    <div key={k} className="ma-mono" style={{ fontSize: 10, opacity: 0.9 }}>
+                      {k}: {fmtPct2(v.alpha)} α
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {fcData.interpretation ? (
+              <p style={{ margin: 0, fontSize: 12, lineHeight: 1.65, opacity: 0.85 }}>{fcData.interpretation}</p>
+            ) : null}
+          </div>
+        )}
+        {fwRec?.recommendation?.weights && (
+          <div className="ma-mono" style={{ marginTop: 12, fontSize: 11, lineHeight: 1.6 }}>
+            <strong>Recommendation</strong> ({fwRec.recommendation.reason}):{" "}
+            <WeightStackBar weights={fwRec.recommendation.weights} label="Recommended weights" />
+          </div>
+        )}
+        {fwRec?.previousRecommendation && (
+          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.75 }}>
+            Legacy OOS-Sharpe pick: OOS Sharpe {fwRec.previousRecommendation.oosSharpe?.toFixed?.(2) ?? fwRec.previousRecommendation.oosSharpe} · forward{" "}
+            {((fwRec.previousRecommendation.forwardConfidence ?? 0) * 100).toFixed(0)}%
+          </div>
+        )}
+      </CardShell>
 
       <div className="ma-alphalab-grid">
         {/* Card 1 */}

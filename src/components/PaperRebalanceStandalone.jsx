@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { MONO, SANS } from "../lib/theme.js";
+import { apiFetch } from "../lib/api.js";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
 
 /**
@@ -21,7 +22,7 @@ export default function PaperRebalanceStandalone({ date, occurrence }) {
         q.set("occurrence", String(occurrence));
       }
       try {
-        const res = await fetch(`/api/paper-trade/rebalance-entry?${q}`);
+        const res = await apiFetch(`/api/paper-trade/rebalance-entry?${q}`);
         const data = await res.json().catch(() => ({}));
         if (aborted) return;
         if (!res.ok || !data.success) {

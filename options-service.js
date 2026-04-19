@@ -3,12 +3,15 @@
  * Toggle live vs mock by setting the env var (no code changes).
  */
 
-const TRADIER_SANDBOX_TOKEN = process.env.TRADIER_SANDBOX_TOKEN ?? null;
+const _t = process.env.TRADIER_SANDBOX_TOKEN;
+const TRADIER_SANDBOX_TOKEN = _t != null && String(_t).trim() !== '' ? String(_t).trim() : null;
 const TRADIER_BASE = 'https://sandbox.tradier.com/v1';
 export const USE_MOCK = TRADIER_SANDBOX_TOKEN == null;
 
 if (USE_MOCK) {
   console.log('[Options] No TRADIER_SANDBOX_TOKEN — running in mock mode');
+} else {
+  console.log('[Options] Tradier sandbox API enabled (chains/expirations use live sandbox)');
 }
 
 function addDays(date, days) {

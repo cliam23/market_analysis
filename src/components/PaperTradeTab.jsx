@@ -12,7 +12,10 @@ import {
   ComposedChart
 } from "recharts";
 
-import { Box, Pill, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
+import { Box, Pill, Select, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
+import { apiFetch, safeJson } from "../lib/api.js";
+import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS } from "../lib/constants.js";
+import { fmtDate, fmtWeightPct, weightToPct } from "../lib/formatters.js";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
 
 const PAPER_TRADE_SESSION_KEY = "ma-paper-trade-session-v1";
@@ -58,12 +61,6 @@ const PILLAR_BAR_COLORS = {
   momentum: "var(--color-teal)",
   value: "var(--color-amber)"
 };
-
-function weightToPctNumber(raw) {
-  if (raw == null || Number.isNaN(raw)) return 0;
-  const n = Number(raw);
-  return n <= 1 && n >= 0 ? n * 100 : n;
-}
 
 function StatStripCell({ label, value, subLabel, subValue, valueTone = "neutral" }) {
   const valueColor =
@@ -129,71 +126,11 @@ function ChartTooltip({ active, payload, label }) {
   );
 }
 
-function Select({ value, onChange, options, label, style }) {
-  return (
-    <div style={{ minWidth: 0, width: "100%", ...style }}>
-      {label && <div className="ma-field-label">{label}</div>}
-      <select className="ma-select" value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o.id} value={o.id}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-const UNIVERSE_OPTIONS = [
+/** Paper trade dual portfolios (server: paper-portfolio-top50.json / paper-portfolio-top150.json). */
+const PAPER_DUAL_UNIVERSES = [
   { id: "sp500_top50", label: "S&P 500 Top 50" },
-  { id: "vgt", label: "VGT" },
-  { id: "mag7", label: "Mag 7" },
-  { id: "russell_growth", label: "Russell Growth" },
-  { id: "dividend_aristocrats", label: "Dividend Aristocrats" }
+  { id: "sp500_top150", label: "S&P 500 Top 150" }
 ];
-
-const STRATEGY_OPTIONS = [
-  { id: "full_composite", label: "Full Composite" },
-  { id: "full_composite_aggressive", label: "Composite Aggressive" },
-  { id: "full_composite_turbo", label: "Composite Turbo" },
-  { id: "quality_momentum", label: "Quality + Momentum" },
-  { id: "momentum_value", label: "Momentum + Value" },
-  { id: "momentum", label: "Momentum Only" }
-];
-
-const TOP_N_OPTIONS = [
-  { id: "5", label: "5" },
-  { id: "10", label: "10" },
-  { id: "15", label: "15" },
-  { id: "20", label: "20" }
-];
-
-/** Pillar keys for composite adaptive weights (same order as backtest / server FACTOR_NAMES). */
-const PILLAR_ORDER = ["fundamental", "dcf", "valuation", "momentum", "value"];
-const PILLAR_LABELS = {
-  fundamental: "Quality",
-  dcf: "DCF",
-  valuation: "Valuation",
-  momentum: "Momentum",
-  value: "Value"
-};
-
-function isCompositeStrategy(strategy) {
-  return strategy === "full_composite" || strategy === "full_composite_aggressive" || strategy === "full_composite_turbo";
-}
-
-function formatWeightPct(raw) {
-  if (raw == null || Number.isNaN(raw)) return "—";
-  const n = Number(raw);
-  const pct = n <= 1 && n >= 0 ? n * 100 : n;
-  return `${pct.toFixed(1)}%`;
-}
-
-function fmtDate(dateStr) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 
 function regimePillVariant(reg) {
   const r = (reg || "").toLowerCase();
@@ -245,6 +182,10 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
 
 export default function PaperTradeTab({ visible = false }) {
   const sessionSnapshot = useMemo(() => readPaperTradeSessionCache(), []);
+  const [paperUniverseView, setPaperUniverseView] = useState(() => {
+    const u = sessionSnapshot?.portfolio?.config?.universeId ?? sessionSnapshot?.portfolio?.config?.universe;
+    return u === "sp500_top50" || u === "sp500_top150" ? u : "sp500_top150";
+  });
   const [portfolio, setPortfolio] = useState(() => sessionSnapshot?.portfolio ?? null);
   const [history, setHistory] = useState(() => sessionSnapshot?.history ?? null);
   const [loading, setLoading] = useState(() => !(sessionSnapshot?.portfolio));
@@ -256,9 +197,9 @@ export default function PaperTradeTab({ visible = false }) {
   const [initForm, setInitForm] = useState({
     initialCapital: "100000",
     strategy: "full_composite",
-    universe: "sp500_top50",
+    universe: "sp500_top150",
     topN: "15",
-    rlAgent: true,
+    rlAgent: false,
     rlOnlineLearning: false
   });
   const [paperConfigSaving, setPaperConfigSaving] = useState(false);
@@ -266,6 +207,7 @@ export default function PaperTradeTab({ visible = false }) {
   const [autoRebalanced, setAutoRebalanced] = useState(false);
   const [loadBtnHover, setLoadBtnHover] = useState(false);
   const [rebalBtnHover, setRebalBtnHover] = useState(false);
+  const [forwardInfo, setForwardInfo] = useState(null);
   const paperApi = useAbortableApi();
   /** Skip one "tab became visible" refresh when Trading is the initial tab (bootstrap already loads). */
   const skipVisibleRefreshOnce = useRef(visible);
@@ -288,6 +230,35 @@ export default function PaperTradeTab({ visible = false }) {
   }, [visible]);
 
   useEffect(() => {
+    const cfg = portfolio?.config;
+    if (!cfg?.universe || !cfg?.weights || !isCompositeStrategy(cfg.strategy)) {
+      setForwardInfo(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/api/diagnostics/forward-confidence", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            universeId: cfg.universe,
+            period: "3y",
+            weights: cfg.weights
+          })
+        });
+        const data = await res.json();
+        if (!cancelled && res.ok && data.success) setForwardInfo(data);
+      } catch {
+        if (!cancelled) setForwardInfo(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [portfolio?.config?.universe, portfolio?.config?.weights, portfolio?.config?.strategy]);
+
+  useEffect(() => {
     if (!portfolio || autoRebalanced || rebalancing) return;
     const { lastRebalance, holdings, nextRebalance } = portfolio;
     if (holdings.length === 0 && portfolio.rebalanceCount === 0) return;
@@ -299,41 +270,25 @@ export default function PaperTradeTab({ visible = false }) {
     }
   }, [portfolio]);
 
-  const safeJson = async (res) => {
-    const text = await res.text();
-    if (!res.ok) {
-      let serverMsg = null;
-      try {
-        const j = JSON.parse(text);
-        if (j && typeof j.error === "string" && j.error.trim()) serverMsg = j.error.trim();
-      } catch {
-        /* ignore */
-      }
-      if (serverMsg) throw new Error(serverMsg);
-      const downHint =
-        res.status === 0 || res.status >= 500 ? " — is the backend running?" : "";
-      throw new Error(`Request failed (${res.status})${downHint}`);
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error("Server returned non-JSON — backend may be down");
-    }
-  };
+  const paperUniverseQs = `?universe=${encodeURIComponent(paperUniverseView)}`;
 
-  const fetchPortfolio = async (showLoader = true) => {
+  const fetchPortfolio = async (showLoader = true, universeOverride = null) => {
     const ac = paperApi.beginRequest();
+    const uid = universeOverride ?? paperUniverseView;
+    const qs = `?universe=${encodeURIComponent(uid)}`;
     if (showLoader) setLoading(true);
     setError(null);
     try {
       const [pRes, hRes] = await Promise.all([
-        fetch("/api/paper-trade/portfolio", { signal: ac.signal }),
-        fetch("/api/paper-trade/history", { signal: ac.signal })
+        apiFetch(`/api/paper-trade/portfolio${qs}`, { signal: ac.signal }),
+        apiFetch(`/api/paper-trade/history${qs}`, { signal: ac.signal })
       ]);
       const pData = await safeJson(pRes);
       const hData = await safeJson(hRes);
       setPortfolio(pData.portfolio);
       setHistory(hData.history);
+      const cfgU = pData.portfolio?.config?.universeId ?? pData.portfolio?.config?.universe;
+      if (cfgU === "sp500_top50" || cfgU === "sp500_top150") setPaperUniverseView(cfgU);
       if (pData.portfolio) writePaperTradeSessionCache(pData.portfolio, hData.history);
       else clearPaperTradeSessionCache();
     } catch (e) {
@@ -349,7 +304,7 @@ export default function PaperTradeTab({ visible = false }) {
     setError(null);
     const ac = paperApi.beginRequest();
     try {
-      const res = await fetch("/api/paper-trade/init", {
+      const res = await apiFetch("/api/paper-trade/init", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: ac.signal,
@@ -357,6 +312,7 @@ export default function PaperTradeTab({ visible = false }) {
           initialCapital: parseFloat(initForm.initialCapital),
           strategy: initForm.strategy,
           universe: initForm.universe,
+          universeId: initForm.universe,
           topN: parseInt(initForm.topN, 10),
           adaptiveMode: "fixed",
           positionSizing: "invVol",
@@ -373,7 +329,10 @@ export default function PaperTradeTab({ visible = false }) {
         return;
       }
       paperApi.clearIfCurrent(ac);
-      await fetchPortfolio(true);
+      setPaperUniverseView(
+        initForm.universe === "sp500_top50" || initForm.universe === "sp500_top150" ? initForm.universe : "sp500_top150"
+      );
+      await fetchPortfolio(true, initForm.universe);
     } catch (e) {
       if (isAbortError(e)) {
         setLoading(false);
@@ -391,7 +350,7 @@ export default function PaperTradeTab({ visible = false }) {
     setRebalancing(true);
     setError(null);
     try {
-      const res = await fetch("/api/paper-trade/rebalance", { method: "POST", signal: ac.signal });
+      const res = await apiFetch(`/api/paper-trade/rebalance${paperUniverseQs}`, { method: "POST", signal: ac.signal });
       const data = await safeJson(res);
       if (!data.success) {
         setError(data.error);
@@ -420,7 +379,7 @@ export default function PaperTradeTab({ visible = false }) {
   const resetPortfolio = async () => {
     setShowResetConfirm(false);
     try {
-      await fetch("/api/paper-trade/reset", { method: "DELETE" });
+      await apiFetch(`/api/paper-trade/reset${paperUniverseQs}`, { method: "DELETE" });
       setPortfolio(null);
       setHistory(null);
       clearPaperTradeSessionCache();
@@ -431,7 +390,7 @@ export default function PaperTradeTab({ visible = false }) {
     setPaperConfigSaving(true);
     setError(null);
     try {
-      const res = await fetch("/api/paper-trade/config", {
+      const res = await apiFetch(`/api/paper-trade/config${paperUniverseQs}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates)
@@ -445,6 +404,46 @@ export default function PaperTradeTab({ visible = false }) {
       setPaperConfigSaving(false);
     }
   };
+
+  const paperUniverseSlotBar = (
+    <div
+      style={{
+        display: "flex",
+        gap: 8,
+        marginBottom: 16,
+        flexWrap: "wrap",
+        alignItems: "center"
+      }}
+    >
+      <span
+        className="ma-mono"
+        style={{
+          fontSize: 10,
+          color: "var(--color-text-muted)",
+          textTransform: "uppercase",
+          letterSpacing: 1
+        }}
+      >
+        Portfolio slot
+      </span>
+      {PAPER_DUAL_UNIVERSES.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          className={paperUniverseView === t.id ? "ma-btn-secondary" : "ma-btn-ghost"}
+          style={{ fontSize: 12 }}
+          onClick={() => {
+            if (t.id === paperUniverseView) return;
+            setPaperUniverseView(t.id);
+            setInitForm((f) => ({ ...f, universe: t.id }));
+            fetchPortfolio(true, t.id);
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
 
   if (loading) {
     return (
@@ -485,6 +484,7 @@ export default function PaperTradeTab({ visible = false }) {
   if (!portfolio) {
     return (
       <div>
+        {paperUniverseSlotBar}
         {showResetConfirm && (
           <ConfirmModal
             message="Are you sure? You will lose the results of the current paper trade."
@@ -647,7 +647,7 @@ export default function PaperTradeTab({ visible = false }) {
     isCompositeStrategy(config.strategy) && activeWeights
       ? PILLAR_ORDER.map((key) => ({
           key,
-          pct: weightToPctNumber(activeWeights[key]),
+          pct: weightToPct(activeWeights[key]),
           color: PILLAR_BAR_COLORS[key]
         }))
       : [];
@@ -662,6 +662,7 @@ export default function PaperTradeTab({ visible = false }) {
 
   return (
     <div>
+      {paperUniverseSlotBar}
       {showResetConfirm && (
         <ConfirmModal
           message="Are you sure? You will lose the results of the current paper trade."
@@ -683,6 +684,26 @@ export default function PaperTradeTab({ visible = false }) {
           <div className="ma-mono" style={{ color: "var(--color-negative)", fontSize: 12 }}>
             {error}
           </div>
+        </Box>
+      )}
+
+      {forwardInfo?.forwardEstimate && summary && (
+        <Box
+          style={{
+            marginBottom: 12,
+            borderColor: "rgba(251, 191, 36, 0.35)",
+            background: "rgba(251, 191, 36, 0.06)"
+          }}
+        >
+          <div className="ma-mono" style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, color: "#fcd34d", marginBottom: 8 }}>
+            FORWARD EXPECTATION (NOT HISTORICAL RETURN)
+          </div>
+          <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.6, color: "var(--color-text-primary)" }}>
+            Historical alpha is <strong>{summary.alpha >= 0 ? "+" : ""}{summary.alpha.toFixed(1)}%</strong> over the live window; illustrative forward annual alpha is closer to{" "}
+            <strong>+{forwardInfo.forwardEstimate.estimatedAnnualAlpha}%</strong> (range {forwardInfo.forwardEstimate.confidenceBand?.low ?? "—"}%–
+            {forwardInfo.forwardEstimate.confidenceBand?.high ?? "—"}%) with {(forwardInfo.scores?.forwardConfidence * 100).toFixed(0)}% forward confidence.
+            Recent outperformance can reflect factor tailwinds — plan on the forward band, not the peak backtest.
+          </p>
         </Box>
       )}
 
@@ -839,7 +860,7 @@ export default function PaperTradeTab({ visible = false }) {
               <span key={key} className="ma-weight-chip">
                 <span className="ma-weight-chip__swatch" style={{ background: PILLAR_BAR_COLORS[key] }} />
                 {PILLAR_LABELS[key]}{" "}
-                <span style={{ color: "var(--color-text-primary)" }}>{formatWeightPct(activeWeights[key])}</span>
+                <span style={{ color: "var(--color-text-primary)" }}>{fmtWeightPct(activeWeights[key])}</span>
               </span>
             ))}
           </div>

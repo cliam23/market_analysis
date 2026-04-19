@@ -6,17 +6,22 @@ export default defineConfig(({ mode }) => {
 
   const apiTarget = env.VITE_API_TARGET || process.env.VITE_API_TARGET || 'http://localhost:3001'
 
+  const apiProxy = {
+    '/api': {
+      target: apiTarget,
+      changeOrigin: true
+    }
+  }
+
   return {
     plugins: [react()],
     server: {
       port: 5173,
       strictPort: false,
-      proxy: {
-        '/api': {
-          target: apiTarget,
-          changeOrigin: true
-        }
-      }
+      proxy: apiProxy
+    },
+    preview: {
+      proxy: apiProxy
     }
   }
 })

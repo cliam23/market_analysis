@@ -7,12 +7,14 @@
     "dev": "vite",
     "server": "node server.js",
     "server:free": "node scripts/free-api-port.mjs",
-    "dev:all": "npm run server:free && concurrently \"npm run dev\" \"npm run server\"",
+    "dev:all": "concurrently \"npm run dev\" \"node scripts/free-api-port.mjs && node server.js\"",
+    "dev-all": "npm run dev:all",
     "build": "vite build",
     "preview": "vite preview",
     "analyze": "node analyze.js",
     "pull": "node pull-data.js",
-    "oos-adaptive": "node scripts/oos_adaptive_replay.mjs"
+    "oos-adaptive": "node scripts/oos_adaptive_replay.mjs",
+    "train-qlearn-both": "node scripts/train-qlearning-both.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
@@ -29,5 +31,8 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^6.0.5"
+  },
+  "optionalDependencies": {
+    "@tensorflow/tfjs-node": "4.22.0"
   }
 }

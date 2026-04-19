@@ -1,10 +1,5 @@
 import { MONO } from "../lib/theme.js";
-
-function fmtDate(dateStr) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+import { fmtDate } from "../lib/formatters.js";
 
 /**
  * Full detail for one paper-trade rebalance log entry (buys/sells, rankings, optional composite report).

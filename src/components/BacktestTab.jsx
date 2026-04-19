@@ -2,69 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ComposedChart, Bar } from "recharts";
 
 import { MONO, SANS } from "../lib/theme.js";
+import { apiFetch } from "../lib/api.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
-
-function Box({ border, children, style: sx = {} }) {
-  return (
-    <div style={{
-      background: "rgba(255,255,255,0.02)",
-      border: "1px solid " + (border || "rgba(255,255,255,0.06)"),
-      borderRadius: 10,
-      padding: 16,
-      marginBottom: 12,
-      ...sx
-    }}>
-      {children}
-    </div>
-  );
-}
-
-function Select({ value, onChange, options, label, style, compact }) {
-  const labelSize = compact ? 9 : 10;
-  const labelMb = compact ? 2 : 4;
-  const pad = compact ? "5px 8px" : "8px 10px";
-  const fontSize = compact ? 11 : 12;
-  return (
-    <div style={{ minWidth: 0, width: "100%", ...style }}>
-      {label && (
-        <div
-          style={{
-            fontSize: labelSize,
-            color: "#f0f0f0",
-            fontWeight: 700,
-            letterSpacing: compact ? 0.6 : 1,
-            marginBottom: labelMb,
-            fontFamily: MONO
-          }}
-        >
-          {label}
-        </div>
-      )}
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: compact ? 5 : 6,
-          padding: pad,
-          color: "#f0f0f0",
-          fontSize,
-          fontFamily: MONO,
-          cursor: "pointer",
-          width: "100%",
-          minWidth: 0,
-          maxWidth: "100%",
-          boxSizing: "border-box"
-        }}
-      >
-        {options.map(o => (
-          <option key={o.id} value={o.id}>{o.label}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
+import { Box, Select } from "./shared.jsx";
+import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS, PERIOD_OPTIONS } from "../lib/constants.js";
+import { fmtWeightPct } from "../lib/formatters.js";
 
 function MetricCard({ label, value, subValue, color, compareColor }) {
   const isPositive = parseFloat(value) >= 0;
@@ -153,26 +95,7 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-const COMPOSITE_FAMILY = ["full_composite", "full_composite_aggressive", "full_composite_turbo"];
-function isCompositeFamily(s) {
-  return COMPOSITE_FAMILY.includes(s);
-}
-
-const BT_PILLAR_ORDER = ["fundamental", "dcf", "valuation", "momentum", "value"];
-const BT_PILLAR_LABELS = {
-  fundamental: "Quality",
-  dcf: "DCF",
-  valuation: "Valuation",
-  momentum: "Momentum",
-  value: "Value"
-};
-
-function formatBtWeightPct(raw) {
-  if (raw == null || Number.isNaN(raw)) return "—";
-  const n = Number(raw);
-  const pct = n <= 1 && n >= 0 ? n * 100 : n;
-  return `${pct.toFixed(1)}%`;
-}
+const isCompositeFamily = isCompositeStrategy;
 
 /** Green = beating benchmark, red = trailing benchmark (for headline metrics). */
 const C_VS_SPY_WIN = "#22c55e";
@@ -314,13 +237,13 @@ export default function BacktestTab() {
   const [compareSnaps, setCompareSnaps] = useState({ full_composite: null, full_composite_aggressive: null });
   
   const [settings, setSettings] = useState({
-    universe: "sp500_top50",
+    universe: "sp500_top150",
     period: "3y",
     rebalanceFreq: "bimonthly",
     topN: "15",
     strategy: "full_composite",
     initialCapital: "10000",
-    adaptiveMode: "fixed",
+    adaptiveMode: "adaptive",
     positionSizing: "invVol"
   });
   /** Composite-only: server defaults to RL when trained agent exists; UI sends explicit true/false. */
@@ -352,21 +275,6 @@ export default function BacktestTab() {
     setError(null);
   };
   
-  const universeOptions = [
-    { id: "sp500_top50", label: "S&P 500 Top 50" },
-    { id: "vgt", label: "VGT" },
-    { id: "mag7", label: "Mag 7" },
-    { id: "russell_growth", label: "Russell Growth" },
-    { id: "dividend_aristocrats", label: "Dividend Aristocrats" }
-  ];
-  
-  const periodOptions = [
-    { id: "1y", label: "1 Year" },
-    { id: "2y", label: "2 Years" },
-    { id: "3y", label: "3 Years" },
-    { id: "5y", label: "5 Years" }
-  ];
-  
   const freqOptions = [
     { id: "monthly", label: "Monthly" },
     { id: "bimonthly", label: "Bimonthly" },
@@ -386,22 +294,6 @@ export default function BacktestTab() {
     { id: "invVolBlend", label: "Inv vol + 40% equal" },
     { id: "equal", label: "Equal" },
     { id: "score", label: "Score-weighted" }
-  ];
-  
-  const topNOptions = [
-    { id: "5", label: "5" },
-    { id: "10", label: "10" },
-    { id: "15", label: "15" },
-    { id: "20", label: "20" }
-  ];
-  
-  const strategyOptions = [
-    { id: "full_composite", label: "Full Composite" },
-    { id: "full_composite_aggressive", label: "Composite Aggressive" },
-    { id: "full_composite_turbo", label: "Composite Turbo" },
-    { id: "momentum", label: "Momentum Only" },
-    { id: "momentum_value", label: "Momentum + Value" },
-    { id: "quality_momentum", label: "Quality + Momentum" }
   ];
   
   const { abortInFlight: abortInFlightBacktest, beginRequest, clearIfCurrent } = useAbortableApi();
@@ -456,7 +348,7 @@ export default function BacktestTab() {
         params.set("rlAgent", rlAgentOn ? "true" : "false");
       }
 
-      const response = await fetch(`/api/backtest/${settings.universe}?${params}`, { signal });
+      const response = await apiFetch(`/api/backtest/${settings.universe}?${params}`, { signal });
       const rawText = await response.text();
       let data;
       try {
@@ -522,6 +414,7 @@ export default function BacktestTab() {
   /** Aligns with server UNIVERSE_BENCHMARK_LABELS + Backtest universe dropdown ids. */
   const UNIVERSE_BENCH_DISPLAY = {
     sp500_top50: { short: "S&P Top 50", line: "Equal-weight S&P Top 50", tag: "S&P" },
+    sp500_top150: { short: "S&P Top 150", line: "Equal-weight S&P Top 150", tag: "S&P" },
     vgt: { short: "VGT", line: "VGT universe (equal-weight)", tag: "VGT" },
     mag7: { short: "Mag 7", line: "Mag 7 (equal-weight)", tag: "M7" },
     russell_growth: { short: "Russell growth", line: "Russell growth (equal-weight)", tag: "RusG" },
@@ -585,21 +478,21 @@ export default function BacktestTab() {
               label="UNIVERSE"
               value={settings.universe}
               onChange={(v) => updateSetting('universe', v)}
-              options={universeOptions}
+              options={UNIVERSE_OPTIONS}
             />
             <Select
               compact
               label="PERIOD"
               value={settings.period}
               onChange={(v) => updateSetting('period', v)}
-              options={periodOptions}
+              options={PERIOD_OPTIONS}
             />
             <Select
               compact
               label="STRATEGY"
               value={settings.strategy}
               onChange={(v) => updateSetting('strategy', v)}
-              options={strategyOptions}
+              options={STRATEGY_OPTIONS}
             />
           </div>
           <div
@@ -670,7 +563,7 @@ export default function BacktestTab() {
                       label="HOLD TOP"
                       value={settings.topN}
                       onChange={(v) => updateSetting('topN', v)}
-                      options={topNOptions}
+                      options={TOP_N_OPTIONS}
                     />
                     <Select
                       compact
@@ -697,7 +590,7 @@ export default function BacktestTab() {
                           setError(null);
                         }}
                         options={[
-                          { id: "on", label: "On (Q-learning)" },
+                          { id: "on", label: "On (RL policy)" },
                           { id: "off", label: "Off (rules only)" }
                         ]}
                       />
@@ -766,7 +659,7 @@ export default function BacktestTab() {
         <>
           {/* Performance Summary */}
           <Box>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 12, fontFamily: MONO, letterSpacing: 1 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#f0f0f0", marginBottom: 6, fontFamily: MONO, letterSpacing: 1 }}>
               PERFORMANCE SUMMARY — {results.period} ({results.performance.years} years)
             </div>
             {benchDescription ? (
@@ -775,24 +668,55 @@ export default function BacktestTab() {
               </div>
             ) : null}
 
-            {results.rlEnabled && (
-              <div
-                style={{
-                  marginBottom: 12,
-                  padding: "8px 12px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(167,243,208,0.25)",
-                  background: "rgba(34,197,94,0.06)",
-                  fontFamily: MONO,
-                  fontSize: 11,
-                  color: "#a7f3d0",
-                  letterSpacing: 0.5
-                }}
-              >
-                Q-learning active — {results.rlAgentStats?.statesVisited ?? results.rlStatesVisited ?? 0} states ·{" "}
-                {(Number(results.rlAgentStats?.totalUpdates ?? results.rlTotalUpdates) || 0).toLocaleString()} updates
-              </div>
-            )}
+            <div
+              style={{
+                marginBottom: 12,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border:
+                  results.rlEvalGloballyEnabled === true && results.rlEnabled
+                    ? "1px solid rgba(167,243,208,0.25)"
+                    : "1px solid rgba(148,163,184,0.25)",
+                background:
+                  results.rlEvalGloballyEnabled === true && results.rlEnabled
+                    ? "rgba(34,197,94,0.06)"
+                    : "rgba(148,163,184,0.06)",
+                fontFamily: MONO,
+                fontSize: 11,
+                color:
+                  results.rlEvalGloballyEnabled === true && results.rlEnabled ? "#a7f3d0" : "#94a3b8",
+                letterSpacing: 0.5
+              }}
+            >
+              {results.rlEvalGloballyEnabled === true && results.rlEnabled && results.rlAgentKind === "dqn" ? (
+                <>
+                  DQN active — 96 actions ·{" "}
+                  {(Number(results.rlAgentStats?.totalUpdates ?? results.rlTotalUpdates) || 0).toLocaleString()} updates
+                </>
+              ) : results.rlEvalGloballyEnabled === true && results.rlEnabled && results.rlAgentKind !== "dqn" ? (
+                <>
+                  Q-learning active (
+                  {results.rlUniverse === "sp500_top50"
+                    ? "top50"
+                    : results.rlUniverse === "sp500_top150"
+                      ? "top150"
+                      : results.rlUniverse || "—"}
+                  ) — {results.rlAgentStats?.statesVisited ?? results.rlStatesVisited ?? 0} states ·{" "}
+                  {(Number(results.rlAgentStats?.totalUpdates ?? results.rlTotalUpdates) || 0).toLocaleString()} updates
+                </>
+              ) : results.rlEvalGloballyEnabled === true &&
+                rlAgentOn &&
+                isCompositeFamily(settings.strategy) &&
+                results.rlEnabled === false &&
+                results.rlAgentLoaded === false &&
+                (settings.universe === "sp500_top50" || settings.universe === "sp500_top150") ? (
+                <>No agent trained for this universe</>
+              ) : (
+                <>
+                  Rules-based ({results.adaptiveMode === "adaptive" ? "adaptive weights" : "fixed weights"})
+                </>
+              )}
+            </div>
 
             <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
               <MetricCard 
@@ -1020,11 +944,11 @@ export default function BacktestTab() {
                 <div style={{ flex: "1 1 240px" }}>
                   <div style={{ fontSize: 10, color: "#a8a8a8", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>BASELINE (START)</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
-                    {BT_PILLAR_ORDER.map((key) => (
+                    {PILLAR_ORDER.map((key) => (
                       <div key={key} style={{ minWidth: 88 }}>
-                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{BT_PILLAR_LABELS[key]}</div>
+                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{PILLAR_LABELS[key]}</div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>
-                          {formatBtWeightPct((results.initialPillarWeights || results.activeWeights)?.[key])}
+                          {fmtWeightPct((results.initialPillarWeights || results.activeWeights)?.[key])}
                         </div>
                       </div>
                     ))}
@@ -1033,11 +957,11 @@ export default function BacktestTab() {
                 <div style={{ flex: "1 1 240px" }}>
                   <div style={{ fontSize: 10, color: "#a8a8a8", fontWeight: 700, letterSpacing: 1, marginBottom: 8, fontFamily: MONO }}>EFFECTIVE (LAST REBALANCE)</div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
-                    {BT_PILLAR_ORDER.map((key) => (
+                    {PILLAR_ORDER.map((key) => (
                       <div key={key} style={{ minWidth: 88 }}>
-                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{BT_PILLAR_LABELS[key]}</div>
+                        <div style={{ fontSize: 9, color: "#888", fontFamily: MONO }}>{PILLAR_LABELS[key]}</div>
                         <div style={{ fontSize: 14, fontWeight: 700, color: "#60a5fa", fontFamily: MONO }}>
-                          {formatBtWeightPct((results.finalPillarWeights || results.activeWeights)?.[key])}
+                          {fmtWeightPct((results.finalPillarWeights || results.activeWeights)?.[key])}
                         </div>
                       </div>
                     ))}

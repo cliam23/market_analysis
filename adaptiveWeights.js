@@ -11,13 +11,14 @@ import {
 
 export const ADAPTIVE_FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value', 'earningsMomentum'];
 
+/** Aligned with server DEFAULT_COMPOSITE_WEIGHTS (normalized to sum 1; DCF/valuation off). */
 export const ADAPTIVE_DEFAULT_WEIGHTS = {
-  fundamental: 0.35,
-  dcf: 0.10,
-  valuation: 0.15,
-  momentum: 0.25,
-  value: 0.15,
-  earningsMomentum: 0
+  momentum: 0.30 / 0.85,
+  value: 0.30 / 0.85,
+  fundamental: 0.10 / 0.85,
+  earningsMomentum: 0.15 / 0.85,
+  dcf: 0,
+  valuation: 0
 };
 
 /** Minimum pillar weight after floors / renorm (adaptive compose). */
@@ -30,6 +31,8 @@ export const ADAPTIVE_SHORT_HISTORY_PERIODS = 8;
 export const ADAPTIVE_MEAN_REVERSION_RATE = 0.3;
 /** Max absolute deviation of any pillar from anchor after all steps (fraction, e.g. 0.15 = 15pp). */
 export const ADAPTIVE_MAX_CUMULATIVE_DRIFT = 0.15;
+/** Hard cap on any single pillar weight after composition (fraction). */
+export const ADAPTIVE_MAX_SINGLE_PILLAR = 0.5;
 
 /** Match server.js normalizePrevRankedForAdaptive */
 export function normalizePrevRankedForAdaptive(row) {
@@ -318,6 +321,37 @@ function normalizePillarWeights(w) {
   return o;
 }
 
+/** DCF pillar is off in this product; redistribute its mass to other pillars. */
+export function zeroDcfAndRenorm(w) {
+  const o = { ...w };
+  const freed = o.dcf ?? 0;
+  o.dcf = 0;
+  const others = ADAPTIVE_FACTOR_NAMES.filter((k) => k !== 'dcf');
+  const sumOthers = others.reduce((a, k) => a + (o[k] ?? 0), 0);
+  if (freed > 0 && sumOthers > 1e-12) {
+    for (const k of others) o[k] = (o[k] ?? 0) + freed * ((o[k] ?? 0) / sumOthers);
+  }
+  return normalizePillarWeights(o);
+}
+
+function applySinglePillarCap(w, cap = ADAPTIVE_MAX_SINGLE_PILLAR) {
+  const o = { ...w };
+  let excess = 0;
+  for (const f of ADAPTIVE_FACTOR_NAMES) {
+    const x = o[f] ?? 0;
+    if (x > cap) {
+      excess += x - cap;
+      o[f] = cap;
+    }
+  }
+  if (excess <= 1e-14) return normalizePillarWeights(o);
+  const flexible = ADAPTIVE_FACTOR_NAMES.filter((f) => (o[f] ?? 0) < cap - 1e-12);
+  const pool = flexible.reduce((a, f) => a + (o[f] ?? 0), 0);
+  if (pool <= 1e-12) return normalizePillarWeights(o);
+  for (const f of flexible) o[f] = (o[f] ?? 0) + excess * ((o[f] ?? 0) / pool);
+  return normalizePillarWeights(o);
+}
+
 /** Per-step ±maxDelta vs prior rebalance only (no floor — caller applies floor after cumulative cap). */
 function clampDeltaVsPrevious(out, previousStepWeights, maxDelta) {
   if (!previousStepWeights || maxDelta <= 0 || !Number.isFinite(maxDelta)) return { ...out };
@@ -539,13 +573,16 @@ export function composeAdaptiveWeightsForRebalance(params) {
     w = applyCumulativeAnchorClamp(w, anchorWeights, ADAPTIVE_MAX_CUMULATIVE_DRIFT);
     const preFloor1 = { ...w };
     w = applyMinFloorRenorm(w, ADAPTIVE_MIN_PILLAR_FLOOR);
+    w = zeroDcfAndRenorm(w);
     warnLargeFloorRenorm(preFloor1, w, 'after-first-floor');
     w = applyRegimeWithIcClamp(w, spyUp, meanIc);
     w = applyMomentumEscapeValve(w, momRegime, 0.1);
     w = applyCumulativeAnchorClamp(w, anchorWeights, ADAPTIVE_MAX_CUMULATIVE_DRIFT);
     const preFloor2 = { ...w };
     w = applyMinFloorRenorm(w, ADAPTIVE_MIN_PILLAR_FLOOR);
+    w = zeroDcfAndRenorm(w);
     warnLargeFloorRenorm(preFloor2, w, 'after-final-floor');
+    w = applySinglePillarCap(w, ADAPTIVE_MAX_SINGLE_PILLAR);
     return w;
   };
 

@@ -1,19 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { decodeState, TOTAL_ACTIONS, TOTAL_STATES } from "../../q-learning-agent.js";
+import { apiFetch } from "../lib/api.js";
 import { MONO, SANS, TEXT, GREEN, GREEN_LIGHT, RED, RED_LIGHT, AMBER, AMBER_LIGHT, BG, BORDER, BORDER_LIGHT } from "../lib/theme.js";
+import { fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters.js";
 
 const REGIME_LABELS = ["strong_bull", "normal", "pullback", "caution", "bear"];
-
-function fmtMoney(n) {
-  if (n == null || Number.isNaN(n)) return "—";
-  return `$${Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
-}
-
-function fmtPct(n, digits = 2) {
-  if (n == null || Number.isNaN(n)) return "—";
-  const x = Number(n);
-  return `${x >= 0 ? "+" : ""}${x.toFixed(digits)}%`;
-}
 
 function formatAgentMtime(iso) {
   if (!iso) return "—";
@@ -149,7 +140,7 @@ export default function RLTab() {
   const [statusErr, setStatusErr] = useState(null);
 
   const [trainBody, setTrainBody] = useState({
-    universeId: "sp500_top50",
+    universeId: "sp500_top150",
     period: "5y",
     episodes: 50000,
     topN: 15,
@@ -176,7 +167,7 @@ export default function RLTab() {
   const [previewModal, setPreviewModal] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  const [compareUniverse, setCompareUniverse] = useState("sp500_top50");
+  const [compareUniverse, setCompareUniverse] = useState("sp500_top150");
   const [comparePeriod, setComparePeriod] = useState("3y");
   const [compareTopN, setCompareTopN] = useState(15);
   const [compareFreq, setCompareFreq] = useState("bimonthly");
@@ -196,7 +187,7 @@ export default function RLTab() {
 
   const loadStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/rl/status");
+      const res = await apiFetch("/api/rl/status");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setRlStatus(data);
@@ -212,8 +203,8 @@ export default function RLTab() {
     setPreviewErr(null);
     try {
       const [pRes, sRes] = await Promise.all([
-        fetch("/api/paper-trade/portfolio"),
-        fetch("/api/paper-trade/schedule")
+        apiFetch("/api/paper-trade/portfolio"),
+        apiFetch("/api/paper-trade/schedule")
       ]);
       const pData = await pRes.json().catch(() => ({}));
       const sData = await sRes.json().catch(() => ({}));
@@ -224,7 +215,7 @@ export default function RLTab() {
 
       if (pData.portfolio) {
         try {
-          const pr = await fetch("/api/paper-trade/preview");
+          const pr = await apiFetch("/api/paper-trade/preview");
           const prev = await pr.json();
           if (pr.ok && prev.health) setPreviewHealth(prev.health);
           else setPreviewHealth(null);
@@ -275,7 +266,7 @@ export default function RLTab() {
     trainTimerRef.current = setInterval(() => setTrainElapsedSec((s) => s + 1), 1000);
     const clientStart = typeof performance !== "undefined" ? performance.now() : Date.now();
     try {
-      const res = await fetch("/api/rl/train", {
+      const res = await apiFetch("/api/rl/train", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -310,7 +301,7 @@ export default function RLTab() {
     setPolicyLoading(true);
     setPolicyErr(null);
     try {
-      const res = await fetch("/api/rl/policy");
+      const res = await apiFetch("/api/rl/policy");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setPolicyJson(data);
@@ -334,7 +325,7 @@ export default function RLTab() {
         strategy: "full_composite",
         rebalanceFreq: compareFreq
       });
-      const res = await fetch(`/api/rl/compare?${params}`);
+      const res = await apiFetch(`/api/rl/compare?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setCompareResult(data);
@@ -349,7 +340,7 @@ export default function RLTab() {
     setPreviewLoading(true);
     setPreviewErr(null);
     try {
-      const res = await fetch("/api/paper-trade/preview");
+      const res = await apiFetch("/api/paper-trade/preview");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setPreviewModal(data);
@@ -460,6 +451,12 @@ export default function RLTab() {
           </span>
           {statusErr && <span style={{ color: RED_LIGHT }}>Status: {statusErr}</span>}
         </div>
+        {rlStatus?.loaded && rlStatus?.rlEvalGloballyEnabled === false && (
+          <p style={{ margin: "12px 0 0", fontSize: 12, color: AMBER_LIGHT, lineHeight: 1.55, maxWidth: 720 }}>
+            Rules-based active · DQN parked (no consistent lift vs rules on recent eval). Export <span style={{ fontFamily: MONO }}>RL_ENABLED=true</span> to evaluate
+            the policy. In training runs the agent often failed to beat rules out-of-sample; re-enable when state features or the algorithm change.
+          </p>
+        )}
       </header>
 
       {/* Train */}
@@ -480,6 +477,7 @@ export default function RLTab() {
               onChange={(e) => setTrainBody((b) => ({ ...b, universeId: e.target.value }))}
             >
               <option value="sp500_top50">sp500_top50</option>
+              <option value="sp500_top150">sp500_top150</option>
             </select>
           </div>
           <div>
