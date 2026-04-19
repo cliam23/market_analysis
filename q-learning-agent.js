@@ -16,8 +16,8 @@ export const REGIME_BUCKET_MAP = {
 export const ALPHA_BINS = [-Infinity, -0.05, -0.02, 0, 0.02, 0.05, Infinity];
 export const BREADTH_BINS = [-Infinity, 0.3, 0.5, 0.7, Infinity];
 export const VOL_BINS = [-Infinity, 0.1, 0.15, 0.25, Infinity];
-/** Top-15 avg composite score on 0–100 scale (edges ≈ p25/p50/p75 from 5y bimonthly full_composite backtest sample, Apr 2026). */
-export const SIGNAL_BINS = [-Infinity, 84, 89, 91, Infinity];
+/** Top-15 avg composite score on 0–100 scale (edges ≈ p25/p50/p75 combined top50+top150 3y sample; recalibrated Apr 2026). */
+export const SIGNAL_BINS = [-Infinity, 84, 85.5, 88, Infinity];
 
 export const N_REGIME = 5;
 export const N_ALPHA = 6;
@@ -132,6 +132,12 @@ export class QLearningTradingAgent {
     this.rho = config.rho ?? 0.9;
     this.nStates = config.nStates ?? TOTAL_STATES;
     this.nActions = config.nActions ?? TOTAL_ACTIONS;
+    /** Set by server during `/api/rl/train` episodes; drives linear ε below. Cleared after training. */
+    this.currentTrainingEpisode = 0;
+    /** Linear ε schedule (training only): episode 1 → epsilonStart, episode epsilonDecayEpisodes → epsilonEnd, then epsilonEnd. */
+    this.epsilonStart = config.epsilonStart ?? 1;
+    this.epsilonEnd = config.epsilonEnd ?? 0.05;
+    this.epsilonDecayEpisodes = config.epsilonDecayEpisodes ?? 25000;
     this.Q = new Float64Array(this.nStates * this.nActions);
     this.visitCounts = new Uint32Array(this.nStates);
     this.totalUpdates = 0;
@@ -173,6 +179,18 @@ export class QLearningTradingAgent {
     this.Q[stateIdx * this.nActions + actionIdx] = Math.max(-Q_VALUE_CLIP, Math.min(Q_VALUE_CLIP, value));
   }
 
+  /** Linear decay from epsilonStart to epsilonEnd over episodes 1..epsilonDecayEpisodes (inclusive). */
+  getEpsilonForTrainingEpisode(episode) {
+    const start = this.epsilonStart ?? 1;
+    const end = this.epsilonEnd ?? 0.05;
+    const span = Math.max(1, this.epsilonDecayEpisodes | 0);
+    const ep = Math.max(1, episode | 0);
+    if (span <= 1) return end;
+    if (ep >= span) return end;
+    const t = (ep - 1) / (span - 1);
+    return start + t * (end - start);
+  }
+
   selectAction(stateIdx, forceExploit = false, options = {}) {
     const { randomAction = false, minVisitsFallback = MIN_VISITS_FOR_EXPLOIT } = options;
     const visits = this.visitCounts[stateIdx] | 0;
@@ -184,6 +202,29 @@ export class QLearningTradingAgent {
         epsilon: 1,
         fallback: false
       };
+    }
+
+    const trainEp = this.currentTrainingEpisode | 0;
+    if (!forceExploit && trainEp > 0) {
+      const epsilon = this.getEpsilonForTrainingEpisode(trainEp);
+      if (Math.random() < epsilon) {
+        return {
+          actionIdx: Math.floor(Math.random() * this.nActions),
+          explored: true,
+          epsilon,
+          fallback: false
+        };
+      }
+      let bestAction = 0;
+      let bestQ = this.getQ(stateIdx, 0);
+      for (let a = 1; a < this.nActions; a++) {
+        const q = this.getQ(stateIdx, a);
+        if (q > bestQ) {
+          bestQ = q;
+          bestAction = a;
+        }
+      }
+      return { actionIdx: bestAction, explored: false, epsilon, fallback: false };
     }
 
     if (!forceExploit && visits < minVisitsFallback) {
@@ -279,7 +320,11 @@ export class QLearningTradingAgent {
   coupledChooseAction(subperiod, stateIdx, episode) {
     if (!this.coupledMode) throw new Error('coupledChooseAction called on reactive agent');
 
-    const epsilon = Math.max(0.01, Math.exp(-this.beta * episode));
+    const epUse = this.currentTrainingEpisode > 0 ? this.currentTrainingEpisode : episode;
+    const epsilon =
+      epUse > 0
+        ? this.getEpsilonForTrainingEpisode(epUse)
+        : Math.max(0.01, Math.exp(-this.beta * episode));
     if (Math.random() < epsilon) {
       return Math.floor(Math.random() * this.nActions); // explore
     }
@@ -331,6 +376,9 @@ export class QLearningTradingAgent {
       alpha: this.alpha,
       beta: this.beta,
       rho: this.rho,
+      epsilonStart: this.epsilonStart,
+      epsilonEnd: this.epsilonEnd,
+      epsilonDecayEpisodes: this.epsilonDecayEpisodes,
       nStates: this.nStates,
       nActions: this.nActions,
       Q: Array.from(this.Q),
@@ -350,7 +398,10 @@ export class QLearningTradingAgent {
       beta: data.beta,
       rho: data.rho,
       nStates: data.nStates,
-      nActions: data.nActions
+      nActions: data.nActions,
+      epsilonStart: data.epsilonStart,
+      epsilonEnd: data.epsilonEnd,
+      epsilonDecayEpisodes: data.epsilonDecayEpisodes
     });
     if (Array.isArray(data.visitCounts) && data.visitCounts.length === agent.visitCounts.length) {
       agent.visitCounts = new Uint32Array(data.visitCounts);

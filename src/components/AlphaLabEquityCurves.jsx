@@ -10,6 +10,7 @@ import {
   YAxis
 } from "recharts";
 import { MONO } from "../lib/theme.js";
+import { apiFetch } from "../lib/api.js";
 
 const COLORS = {
   benchmark: "#6b7280",
@@ -78,7 +79,7 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
     setErr(null);
     try {
       const q = new URLSearchParams({ period });
-      const res = await fetch(`/api/diagnostics/equity-curves/${encodeURIComponent(universeId)}?${q}`);
+      const res = await apiFetch(`/api/diagnostics/equity-curves/${encodeURIComponent(universeId)}?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setRaw(data);

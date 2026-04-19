@@ -56,11 +56,22 @@ function saveOptionsPortfolio(portfolio) {
   writeFileSync(OPTIONS_PORTFOLIO_PATH, JSON.stringify(portfolio, null, 2), 'utf8');
 }
 const RL_AGENT_JSON_PATH = path.join(__dirname, 'rl-agent.json');
+const RL_AGENT_TOP50_PATH = path.join(__dirname, 'rl-agent-top50.json');
+const RL_AGENT_TOP150_PATH = path.join(__dirname, 'rl-agent-top150.json');
 const DQN_AGENT_JSON_PATH = path.join(__dirname, 'dqn-agent.json');
 const DQN_AGENT_BEST_JSON_PATH = path.join(__dirname, 'dqn-agent-best.json');
 
-/** Which RL agent to load for eval/paper/backtest: `dqn` | `qlearning` (env `RL_AGENT_TYPE`, default `dqn`). */
-const RL_AGENT_TYPE = process.env.RL_AGENT_TYPE || 'dqn';
+/** Which RL agent to load for eval/paper/backtest: `dqn` | `qlearning` (env `RL_AGENT_TYPE`, default `qlearning`). */
+const RL_AGENT_TYPE = process.env.RL_AGENT_TYPE || 'qlearning';
+
+/**
+ * When unset/false, GET /api/backtest default and paper trade skip trained policy (rules-only).
+ * Explicit `rlAgent=true` on backtest still uses the agent. Training endpoints ignore this.
+ * Set `RL_ENABLED=true` to opt back in without code changes.
+ */
+function rlEvalEnvEnabled() {
+  return process.env.RL_ENABLED === 'true' || process.env.RL_ENABLED === '1';
+}
 
 function normalizeRlAgentType(t) {
   const s = String(t ?? '').toLowerCase().trim();
@@ -76,6 +87,27 @@ function isDqnAgentInstance(agent) {
   return agent instanceof DQNAgent;
 }
 
+/** True when a loaded agent can produce RL decisions (96-action DQN / Q-table). */
+function trainedRlAgentReadyForInference(agent = TRAINED_RL_AGENT) {
+  if (!agent) return false;
+  try {
+    const na = agent.nActions;
+    if (na !== TOTAL_ACTIONS) {
+      console.warn(`[RL] Agent action space mismatch: nActions=${na}, expected ${TOTAL_ACTIONS}`);
+      return false;
+    }
+    const q0 = agent.getQ(0, 0);
+    if (!Number.isFinite(q0)) return false;
+    const sel = agent.selectAction(0, true, { randomAction: false });
+    if (sel == null || typeof sel.actionIdx !== 'number') return false;
+    if (sel.actionIdx < 0 || sel.actionIdx >= TOTAL_ACTIONS) return false;
+    return true;
+  } catch (e) {
+    console.warn('[RL] Agent inference check failed:', e.message);
+    return false;
+  }
+}
+
 /** Policy size for cache / stats: flat Q length or DQN state×action product. */
 function rlAgentPolicyParamSize(agent) {
   if (!agent) return 0;
@@ -83,7 +115,7 @@ function rlAgentPolicyParamSize(agent) {
   return TOTAL_STATES * TOTAL_ACTIONS;
 }
 
-function loadRlAgentFromDisk(agentTypeOverride) {
+function loadRlAgentFromDisk(agentTypeOverride, universeId = null) {
   const kind = normalizeRlAgentType(agentTypeOverride ?? RL_AGENT_TYPE);
   if (kind === 'dqn') {
     try {
@@ -95,9 +127,10 @@ function loadRlAgentFromDisk(agentTypeOverride) {
       return new DQNAgent();
     }
   }
+  const fp = universeId ? getRlAgentPathForUniverse(universeId) : RL_AGENT_JSON_PATH;
   try {
-    if (!existsSync(RL_AGENT_JSON_PATH)) return new QLearningTradingAgent();
-    const raw = JSON.parse(readFileSync(RL_AGENT_JSON_PATH, 'utf8'));
+    if (!existsSync(fp)) return new QLearningTradingAgent();
+    const raw = JSON.parse(readFileSync(fp, 'utf8'));
     if (!raw || raw.version == null || !Array.isArray(raw.Q)) return new QLearningTradingAgent();
     return QLearningTradingAgent.deserialize(raw);
   } catch {
@@ -107,6 +140,41 @@ function loadRlAgentFromDisk(agentTypeOverride) {
 
 /** In-memory agent for eval / paper (null if no valid `rl-agent.json`). Refreshed on save and server start. */
 let TRAINED_RL_AGENT = null;
+
+/** Tabular Q-learning agents for sp500_top50 / sp500_top150 (dual files). */
+const RL_AGENTS_BY_UNIVERSE = Object.create(null);
+
+function getRlAgentPathForUniverse(universeId) {
+  const u = String(universeId || '').trim();
+  if (u === 'sp500_top150') return RL_AGENT_TOP150_PATH;
+  if (u === 'sp500_top50') return RL_AGENT_TOP50_PATH;
+  return RL_AGENT_JSON_PATH;
+}
+
+function loadQlAgentFromFileAbs(fp) {
+  if (!existsSync(fp)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(fp, 'utf8'));
+    if (!raw || raw.version == null || !Array.isArray(raw.Q)) return null;
+    const agent = QLearningTradingAgent.deserialize(raw);
+    return trainedRlAgentReadyForInference(agent) ? agent : null;
+  } catch {
+    return null;
+  }
+}
+
+function refreshQlAgentsFromDisk() {
+  RL_AGENTS_BY_UNIVERSE['sp500_top50'] = loadQlAgentFromFileAbs(RL_AGENT_TOP50_PATH);
+  RL_AGENTS_BY_UNIVERSE['sp500_top150'] = loadQlAgentFromFileAbs(RL_AGENT_TOP150_PATH);
+}
+
+/** Q-learning: per-universe agent for top50/top150; legacy rl-agent.json for other universes. DQN: global TRAINED_RL_AGENT. */
+function getQlAgentForUniverse(universeId) {
+  if (rlAgentTypeEffective() === 'dqn') return TRAINED_RL_AGENT;
+  const u = String(universeId || '').trim();
+  if (u === 'sp500_top50' || u === 'sp500_top150') return RL_AGENTS_BY_UNIVERSE[u] ?? null;
+  return TRAINED_RL_AGENT;
+}
 
 function countRlStatesVisited(agent) {
   if (!agent) return 0;
@@ -134,46 +202,87 @@ function refreshTrainedRlAgentFromDisk(options = {}) {
         return;
       }
       TRAINED_RL_AGENT = DQNAgent.deserialize(raw);
+      if (!trainedRlAgentReadyForInference(TRAINED_RL_AGENT)) {
+        console.warn('[RL] DQN deserialized but failed validation — treating as no agent (rules-based fallback).');
+        TRAINED_RL_AGENT = null;
+        return;
+      }
       if (logLoad) {
         console.log(
-          `[RL] Loaded DQN: ${TRAINED_RL_AGENT.totalUpdates} updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited (replay trainSteps=${TRAINED_RL_AGENT.trainSteps ?? 0})`,
+          `[RL] Loaded DQN: h=${TRAINED_RL_AGENT.hiddenSize}, ${TRAINED_RL_AGENT.totalUpdates} updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited (replay trainSteps=${TRAINED_RL_AGENT.trainSteps ?? 0})`,
         );
       }
       return;
     }
     if (!existsSync(RL_AGENT_JSON_PATH)) {
       TRAINED_RL_AGENT = null;
-      return;
+    } else {
+      const raw = JSON.parse(readFileSync(RL_AGENT_JSON_PATH, 'utf8'));
+      if (!raw || raw.version == null || !Array.isArray(raw.Q)) {
+        TRAINED_RL_AGENT = null;
+      } else {
+        TRAINED_RL_AGENT = QLearningTradingAgent.deserialize(raw);
+        if (!trainedRlAgentReadyForInference(TRAINED_RL_AGENT)) {
+          console.warn('[RL] Q-learning agent failed validation — treating as no agent.');
+          TRAINED_RL_AGENT = null;
+        } else if (logLoad) {
+          console.log(
+            `[RL] Loaded legacy Q-learning agent (rl-agent.json): ${TRAINED_RL_AGENT.totalUpdates} Q-updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited`,
+          );
+        }
+      }
     }
-    const raw = JSON.parse(readFileSync(RL_AGENT_JSON_PATH, 'utf8'));
-    if (!raw || raw.version == null || !Array.isArray(raw.Q)) {
-      TRAINED_RL_AGENT = null;
-      return;
-    }
-    TRAINED_RL_AGENT = QLearningTradingAgent.deserialize(raw);
+    refreshQlAgentsFromDisk();
     if (logLoad) {
-      console.log(
-        `[RL] Loaded Q-learning agent: ${TRAINED_RL_AGENT.totalUpdates} Q-updates, ${countRlStatesVisited(TRAINED_RL_AGENT)} states visited`,
-      );
+      for (const uid of ['sp500_top50', 'sp500_top150']) {
+        const a = RL_AGENTS_BY_UNIVERSE[uid];
+        if (a) {
+          console.log(
+            `[RL] Loaded Q-learning agent for ${uid}: ${a.totalUpdates} Q-updates, ${countRlStatesVisited(a)} states visited`,
+          );
+        }
+      }
     }
+    return;
   } catch (e) {
     console.warn('[RL] Failed to load trained agent:', e.message);
     TRAINED_RL_AGENT = null;
   }
 }
 
-function writeRlAgentFileOnly(agent) {
-  const fp = isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH;
+function writeRlAgentFileOnly(agent, universeId = null) {
+  if (isDqnAgentInstance(agent)) {
+    writeFileSync(DQN_AGENT_JSON_PATH, JSON.stringify(agent.serialize(), null, 2), 'utf8');
+    return;
+  }
+  const fp = universeId ? getRlAgentPathForUniverse(universeId) : RL_AGENT_JSON_PATH;
   writeFileSync(fp, JSON.stringify(agent.serialize(), null, 2), 'utf8');
 }
 
-/** Persist agent and set global `TRAINED_RL_AGENT` (same in-memory instance). */
-function saveRlAgentToDisk(agent) {
-  writeRlAgentFileOnly(agent);
-  TRAINED_RL_AGENT = agent;
+/** Persist agent; updates TRAINED_RL_AGENT and/or RL_AGENTS_BY_UNIVERSE. Pass universeId for dual Q-learning files. */
+function saveRlAgentToDisk(agent, universeId = null) {
+  writeRlAgentFileOnly(agent, universeId);
+  if (isDqnAgentInstance(agent)) {
+    TRAINED_RL_AGENT = agent;
+    return;
+  }
+  const uid = String(universeId || '').trim();
+  if (uid === 'sp500_top50' || uid === 'sp500_top150') {
+    RL_AGENTS_BY_UNIVERSE[uid] = agent;
+  } else {
+    TRAINED_RL_AGENT = agent;
+  }
 }
 
 refreshTrainedRlAgentFromDisk({ logLoad: true });
+if (
+  (TRAINED_RL_AGENT != null || RL_AGENTS_BY_UNIVERSE['sp500_top50'] || RL_AGENTS_BY_UNIVERSE['sp500_top150']) &&
+  !rlEvalEnvEnabled()
+) {
+  console.log(
+    '[RL] Trained agent on disk, but RL_ENABLED is not true — backtest default and paper trade use rules-only. Export RL_ENABLED=true to evaluate the policy.',
+  );
+}
 const ML_PREDICT_SCRIPT = path.join(__dirname, 'ml', 'predict.py');
 const ML_WORKER_SCRIPT = path.join(__dirname, 'ml', 'predict_worker.py');
 
@@ -266,7 +375,7 @@ const COMPS_CACHE_TTL = 30 * 60 * 1000;
 const QUOTE_CACHE_TTL = 4 * 60 * 60 * 1000;
 const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 /** Bump when backtest sim inputs/outputs change (cache invalidation). */
-const BACKTEST_CACHE_VERSION = 'v53';
+const BACKTEST_CACHE_VERSION = 'v57';
 
 /** Short-lived cache for GET /api/diagnostics/equity-curves (heavy 3–4 sequential sims). */
 const EQUITY_CURVES_DIAG_CACHE = new Map();
@@ -393,7 +502,8 @@ function backtestSimConfigCacheTag(extra = {}) {
       : 'd60';
   const hd =
     extra.hedging === true || extra.hedging === 'true' || extra.hedging === 1 ? '1' : '0';
-  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}-cf${cf}-mxc${mxc}-clb${clb}-hd${hd}`;
+  const rlev = rlEvalEnvEnabled() ? '1' : '0';
+  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}-cf${cf}-mxc${mxc}-clb${clb}-hd${hd}-rlev${rlev}`;
 }
 
 /**
@@ -437,8 +547,19 @@ function hedgePremiumForPeriod(activeHedge, toDateStr, notional) {
 
 const YAHOO_DISK_CACHE_DIR = path.join(__dirname, '.cache', 'yahoo');
 const QUOTE_BATCH_CHUNK = 50;
-const YAHOO_CHART_CONCURRENCY = 10;
-const FUNDAMENTALS_FETCH_CONCURRENCY = 8;
+
+/** Mitigate Yahoo 429s: lower parallel chart/fundamentals fetches (env overrides). */
+function parseYahooEnvInt(name, def, min, max) {
+  const raw = process.env[name];
+  if (raw == null || String(raw).trim() === '') return def;
+  const n = parseInt(String(raw), 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.max(min, Math.min(max, n));
+}
+const YAHOO_CHART_CONCURRENCY = parseYahooEnvInt('YAHOO_CHART_CONCURRENCY', 4, 1, 32);
+const FUNDAMENTALS_FETCH_CONCURRENCY = parseYahooEnvInt('YAHOO_FUNDAMENTALS_CONCURRENCY', 4, 1, 32);
+/** After each chart HTTP attempt path (success or fallback), pause to throttle bursts (0 = off). */
+const YAHOO_CHART_DELAY_MS = parseYahooEnvInt('YAHOO_CHART_DELAY_MS', 80, 0, 5000);
 
 function readQuoteDiskCache(ticker) {
   const upper = String(ticker).toUpperCase();
@@ -465,6 +586,40 @@ function writeQuoteDiskCache(ticker, data) {
   } catch (e) {
     console.warn('Yahoo disk cache write failed:', e.message);
   }
+}
+
+/** Persist successful Yahoo chart series (OHLC daily rows) for stale fallback. */
+function writeChartDiskCache(ticker, chartRows) {
+  try {
+    if (!chartRows?.length) return;
+    mkdirSync(YAHOO_DISK_CACHE_DIR, { recursive: true });
+    const upper = String(ticker).toUpperCase();
+    writeFileSync(
+      path.join(YAHOO_DISK_CACHE_DIR, `${upper}-chart.json`),
+      JSON.stringify({ fetchedAt: Date.now(), data: chartRows })
+    );
+  } catch (e) {
+    console.warn('[Yahoo] chart disk cache write failed:', e.message);
+  }
+}
+
+/** Read last successful chart series even if TTL expired (used when live fetch fails). */
+function readChartDiskCacheStale(ticker) {
+  const upper = String(ticker).toUpperCase();
+  const fp = path.join(YAHOO_DISK_CACHE_DIR, `${upper}-chart.json`);
+  if (!existsSync(fp)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(fp, 'utf-8'));
+    if (!raw || !Array.isArray(raw.data) || raw.data.length === 0) return null;
+    return raw.data;
+  } catch {
+    return null;
+  }
+}
+
+function filterChartRowsToRange(rows, startDate, endDate) {
+  if (!rows?.length) return [];
+  return rows.filter((r) => r.date && r.date >= startDate && r.date <= endDate);
 }
 
 const EARNINGS_DISK_CACHE_DIR = path.join(__dirname, '.cache', 'earnings');
@@ -705,6 +860,48 @@ function rawRevenueAcceleration(earningsData) {
   return g01 - g12;
 }
 
+/** True when Yahoo earnings payload has at least one usable raw signal for momentum pillar. */
+function hasUsableEarningsRaw(earningsData) {
+  if (!earningsData || typeof earningsData !== 'object') return false;
+  const s = rawAvgEarningsSurpriseRatio(earningsData);
+  const r = rawEpsRevisionDelta(earningsData);
+  const v = rawRevenueAcceleration(earningsData);
+  return (
+    (s != null && Number.isFinite(s)) ||
+    (r != null && Number.isFinite(r)) ||
+    (v != null && Number.isFinite(v))
+  );
+}
+
+/**
+ * Composite pillar blend: redistributes weight from pillars with unavailable scores (null / non-finite)
+ * onto remaining pillars proportionally. Skips config weights that are 0.
+ */
+function compositeWeightedWithRedistribution(weights, pillarScores) {
+  const keys = ['fundamental', 'dcf', 'valuation', 'momentum', 'value', 'earningsMomentum'];
+  let redistribute = 0;
+  const parts = [];
+  for (const k of keys) {
+    const wt = Number(weights[k]) || 0;
+    if (wt <= 1e-12) continue;
+    const s = pillarScores[k];
+    if (s == null || !Number.isFinite(s)) {
+      redistribute += wt;
+    } else {
+      parts.push({ w: wt, s });
+    }
+  }
+  if (parts.length === 0) return NaN;
+  const sumW = parts.reduce((acc, p) => acc + p.w, 0);
+  if (sumW <= 1e-12) return NaN;
+  let total = 0;
+  for (const p of parts) {
+    const adjW = p.w + redistribute * (p.w / sumW);
+    total += adjW * p.s;
+  }
+  return total;
+}
+
 /** Cross-sectional percentile → 0–100; missing raw values → 50. */
 function percentileScoresFromRaw(tickerOrder, rawByTicker) {
   const scores = new Map();
@@ -751,15 +948,27 @@ function buildEarningsMomentumScoreByTicker(tickers, earningsMap) {
   for (const t of tickers) {
     const U = String(t).toUpperCase();
     const ed = em.get(U) ?? em.get(t) ?? null;
-    surpriseRaw.set(t, rawAvgEarningsSurpriseRatio(ed));
-    revisionRaw.set(t, rawEpsRevisionDelta(ed));
-    revenueRaw.set(t, rawRevenueAcceleration(ed));
+    if (!hasUsableEarningsRaw(ed)) {
+      surpriseRaw.set(t, null);
+      revisionRaw.set(t, null);
+      revenueRaw.set(t, null);
+    } else {
+      surpriseRaw.set(t, rawAvgEarningsSurpriseRatio(ed));
+      revisionRaw.set(t, rawEpsRevisionDelta(ed));
+      revenueRaw.set(t, rawRevenueAcceleration(ed));
+    }
   }
   const sP = percentileScoresFromRaw(tickers, surpriseRaw);
   const rP = percentileScoresFromRaw(tickers, revisionRaw);
   const vP = percentileScoresFromRaw(tickers, revenueRaw);
   const out = new Map();
   for (const t of tickers) {
+    const U = String(t).toUpperCase();
+    const ed = em.get(U) ?? em.get(t) ?? null;
+    if (!hasUsableEarningsRaw(ed)) {
+      out.set(t, null);
+      continue;
+    }
     const a = sP.get(t) ?? 50;
     const b = rP.get(t) ?? 50;
     const c = vP.get(t) ?? 50;
@@ -774,12 +983,13 @@ function buildEarningsMomentumScoreByTicker(tickers, earningsMap) {
  * @param {Map<string, object|null>} allEarningsData — ticker → earnings for the ranking universe
  */
 function computeEarningsMomentumScore(earningsData, allEarningsData) {
-  if (!(allEarningsData instanceof Map) || allEarningsData.size === 0) return 50;
-  const tickers = [...allEarningsData.keys()].map((k) => String(k).toUpperCase());
+  if (!(allEarningsData instanceof Map) || allEarningsData.size === 0) return null;
   const t0 = String(earningsData?.ticker || '').toUpperCase();
-  if (!t0) return 50;
+  if (!t0) return null;
+  if (!hasUsableEarningsRaw(earningsData)) return null;
+  const tickers = [...allEarningsData.keys()].map((k) => String(k).toUpperCase());
   const m = buildEarningsMomentumScoreByTicker(tickers, allEarningsData);
-  return m.get(t0) ?? 50;
+  return m.get(t0) ?? m.get(earningsData?.ticker) ?? null;
 }
 
 /** Batch Yahoo quote — one round-trip per chunk. */
@@ -3975,12 +4185,15 @@ function pearsonCorrelation(xs, ys) {
   return num / Math.sqrt(dx * dy);
 }
 
-/** Default full_composite pillar mix (M40/V35/Q0/E25); DCF/valuation off. */
+/**
+ * Default full_composite anchor (M/V/Q/E with room for adaptive IC shifts); DCF/valuation off.
+ * Raw intent: 30/30/10/15% on M/V/Q/E → normalized to sum 1.
+ */
 const DEFAULT_COMPOSITE_WEIGHTS = {
-  momentum: 0.4,
-  value: 0.35,
-  fundamental: 0,
-  earningsMomentum: 0.25,
+  momentum: 0.3 / 0.85,
+  value: 0.3 / 0.85,
+  fundamental: 0.1 / 0.85,
+  earningsMomentum: 0.15 / 0.85,
   dcf: 0.0,
   valuation: 0.0
 };
@@ -4289,7 +4502,22 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     simOptions.adaptiveMode != null && simOptions.adaptiveMode !== ''
       ? String(simOptions.adaptiveMode).toLowerCase().trim()
       : '';
-  const adaptiveMode = amOpt === 'adaptive' || amOpt === 'conservative' ? amOpt : 'fixed';
+  const compositeFamBt =
+    strategyClean === 'full_composite' ||
+    strategyClean === 'full_composite_aggressive' ||
+    strategyClean === 'full_composite_turbo';
+  const rlModeRaw = simOptions.rlMode != null ? String(simOptions.rlMode).toLowerCase().trim() : 'off';
+  const rlMode = rlModeRaw === 'train' || rlModeRaw === 'eval' ? rlModeRaw : 'off';
+  /** Q-learning train episodes need a stable composite score distribution; eval/backtest keep requested adaptive mode. */
+  const adaptiveMode =
+    rlMode === 'train'
+      ? 'fixed'
+      : amOpt === 'adaptive' || amOpt === 'conservative'
+        ? amOpt
+        : 'fixed';
+  if (rlMode === 'train' && simOptions && typeof simOptions === 'object') {
+    simOptions.adaptiveMode = 'fixed';
+  }
   const psRaw = simOptions.positionSizing || (strategyClean === 'full_composite' ? 'invVol' : 'equal');
   const positionSizing = ['equal', 'invVol', 'score', 'invVolBlend'].includes(psRaw) ? psRaw : 'invVol';
   const regimeEnabled = simOptions.regimeEnabled !== false;
@@ -4319,13 +4547,6 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     simOptions.rlTrainSkipEarningsFetch === 'true' ||
     simOptions.rlTrainSkipEarningsFetch === 1 ||
     String(simOptions.rlTrainSkipEarningsFetch || '').toLowerCase() === 'true';
-
-  const compositeFamBt =
-    strategyClean === 'full_composite' ||
-    strategyClean === 'full_composite_aggressive' ||
-    strategyClean === 'full_composite_turbo';
-  const rlModeRaw = simOptions.rlMode != null ? String(simOptions.rlMode).toLowerCase().trim() : 'off';
-  const rlMode = rlModeRaw === 'train' || rlModeRaw === 'eval' ? rlModeRaw : 'off';
   const rlRandomAgent = simOptions.rlRandomAgent === true;
   const rlAgentQuery =
     simOptions.rlAgent === true || simOptions.rlAgent === 'true' || simOptions.rlAgent === 1 || rlRandomAgent;
@@ -4334,7 +4555,9 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
   if (rlCompositeActive && !rlAgentInstance) {
     rlAgentInstance =
       rlMode === 'eval'
-        ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk()
+        ? rlAgentTypeEffective() === 'dqn'
+          ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk('dqn')
+          : getQlAgentForUniverse(universeId) ?? loadRlAgentFromDisk(undefined, universeId)
         : rlAgentTypeEffective() === 'dqn'
           ? new DQNAgent()
           : new QLearningTradingAgent();
@@ -4489,7 +4712,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     // --- Stop-loss: daily for full_composite / quality_momentum; every 3d aggressive/turbo; else 5d ---
     let snapshotNeeded = false;
     if (dayIdx % stopCheckInterval === 0 && Object.keys(holdings).length > 0) {
-      const stopExits = checkStopLosses(holdings, priceHistory, date, fundamentalsLive, strategyClean);
+      const stopExits = checkStopLosses(holdings, priceHistory, date, fundamentalsLive, strategyClean, universeId);
       for (const exit of stopExits) {
         const holding = holdings[exit.ticker];
         if (!holding) continue;
@@ -4634,7 +4857,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
             weightsRankBt = { ...weights };
             rebalanceAdaptiveMeta = { icRollingStep: false, note: 'adaptiveMode_fixed_static_weights' };
           }
-        } else if (rebalanceLog.length >= 6) {
+        } else if (rebalanceLog.length >= 3) {
           const prevSnap = factorSnapshots.length > 0 ? factorSnapshots[factorSnapshots.length - 1] : null;
           const icN = prevSnap?.allRanked?.length ?? 0;
           if (prevSnap && prevSnap.allRanked && prevSnap.allRanked.length >= 6) {
@@ -4931,7 +5154,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           allRanked: rankings.map(r => ({
             ticker: r.ticker, fundamental: r.fundamentalScore, dcf: r.dcfScore,
             valuation: r.valuationScore, momentum: r.momentumScore, value: r.valueScore,
-            earningsMomentum: r.earningsMomentumScore ?? 50,
+            earningsMomentum: r.earningsMomentumScore != null && Number.isFinite(r.earningsMomentumScore) ? r.earningsMomentumScore : null,
             composite: r.compositeScore, price: r.price
           }))
         });
@@ -5488,6 +5711,288 @@ function calculateBacktestMetrics(dailyValues, tradeLog, capital) {
   return {
     totalReturn, annualizedReturn, benchReturn, benchAnnualized,
     alpha: annualizedReturn - benchAnnualized, sharpe, annualizedVol, years
+  };
+}
+
+const REGIME_SPLIT_KEYS = ['strong_bull', 'normal', 'pullback', 'caution', 'bear'];
+
+function normalizeRegimeForSplit(reg) {
+  const r = String(reg || 'normal').toLowerCase();
+  if (r === 'correction') return 'pullback';
+  if (!REGIME_SPLIT_KEYS.includes(r)) return 'normal';
+  return r;
+}
+
+function medianArr(arr) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function stdArr(arr) {
+  if (arr.length < 2) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  return Math.sqrt(arr.reduce((s, x) => s + (x - mean) ** 2, 0) / (arr.length - 1));
+}
+
+/** Per-regime metrics from daily equity; regime at end of each day labels the daily return. */
+function computeRegimeSplitPerformance(dailyValues, spyPrices, universe, priceHistory) {
+  const empty = () => ({
+    daysInRegime: 0,
+    return: 0,
+    alpha: 0,
+    sharpe: 0,
+    maxDD: 0,
+    benchmarkReturn: 0,
+    numPeriods: 0
+  });
+  const buckets = Object.fromEntries(REGIME_SPLIT_KEYS.map((k) => [k, { pRets: [], bRets: [] }]));
+  const segments = Object.fromEntries(REGIME_SPLIT_KEYS.map((k) => [k, 0]));
+  let prevReg = null;
+  for (let i = 1; i < dailyValues.length; i++) {
+    const meta = calculateMarketRegime(spyPrices, dailyValues[i].date, universe, priceHistory);
+    const reg = normalizeRegimeForSplit(meta.regime);
+    const pRet = dailyValues[i].portfolio / dailyValues[i - 1].portfolio - 1;
+    const bRet =
+      dailyValues[i - 1].benchmark > 0 && dailyValues[i].benchmark > 0
+        ? dailyValues[i].benchmark / dailyValues[i - 1].benchmark - 1
+        : 0;
+    if (buckets[reg]) {
+      buckets[reg].pRets.push(pRet);
+      buckets[reg].bRets.push(bRet);
+      if (prevReg !== reg) segments[reg]++;
+    }
+    prevReg = reg;
+  }
+
+  const out = {};
+  for (const k of REGIME_SPLIT_KEYS) {
+    const { pRets, bRets } = buckets[k];
+    const n = pRets.length;
+    if (n < 5) {
+      out[k] = { ...empty(), daysInRegime: n, numPeriods: segments[k] };
+      continue;
+    }
+    let eq = 1;
+    let beq = 1;
+    let peak = 1;
+    let maxDD = 0;
+    for (let j = 0; j < n; j++) {
+      eq *= 1 + pRets[j];
+      beq *= 1 + bRets[j];
+      if (eq > peak) peak = eq;
+      const dd = peak > 0 ? (eq - peak) / peak : 0;
+      if (dd < maxDD) maxDD = dd;
+    }
+    const totalRet = eq - 1;
+    const benchRet = beq - 1;
+    const rawAlpha = totalRet - benchRet;
+    let sharpe = null;
+    if (n >= 60) {
+      const excess = pRets.map((pr, j) => pr - bRets[j]);
+      const stdEx = standardDeviation(excess);
+      const meanEx = excess.reduce((a, b) => a + b, 0) / excess.length;
+      sharpe = stdEx > 0 ? parseFloat(((meanEx / stdEx) * Math.sqrt(252)).toFixed(2)) : 0;
+    }
+    out[k] = {
+      daysInRegime: n,
+      return: parseFloat((totalRet * 100).toFixed(2)),
+      alpha: parseFloat((rawAlpha * 100).toFixed(2)),
+      sharpe,
+      maxDD: parseFloat((maxDD * 100).toFixed(2)),
+      benchmarkReturn: parseFloat((benchRet * 100).toFixed(2)),
+      numPeriods: segments[k]
+    };
+  }
+  return out;
+}
+
+function buildRegimeDiversification(regimeSplit) {
+  const alphas = [];
+  let observed = 0;
+  let positive = 0;
+  for (const k of REGIME_SPLIT_KEYS) {
+    const row = regimeSplit[k];
+    if (!row || row.daysInRegime < 5) continue;
+    observed++;
+    const a = row.alpha;
+    alphas.push(a);
+    if (a > 0) positive++;
+  }
+  if (observed === 0) {
+    return {
+      positiveAlphaRegimes: 0,
+      totalRegimesObserved: 0,
+      worstRegimeAlpha: null,
+      bestRegimeAlpha: null,
+      alphaRange: null,
+      robustnessScore: 0
+    };
+  }
+  const worstRegimeAlpha = Math.min(...alphas);
+  const bestRegimeAlpha = Math.max(...alphas);
+  const alphaRange = bestRegimeAlpha - worstRegimeAlpha;
+  const robustnessScore = Math.max(0, Math.min(1, positive / observed));
+  return {
+    positiveAlphaRegimes: positive,
+    totalRegimesObserved: observed,
+    worstRegimeAlpha: parseFloat(worstRegimeAlpha.toFixed(2)),
+    bestRegimeAlpha: parseFloat(bestRegimeAlpha.toFixed(2)),
+    alphaRange: parseFloat(alphaRange.toFixed(2)),
+    robustnessScore: parseFloat(robustnessScore.toFixed(4))
+  };
+}
+
+function buildMonthlyAlphaSeries(monthlyWithReturns) {
+  if (!monthlyWithReturns?.length) {
+    return { monthlyAlphas: [], stabilityScore: 0.5, recencyDiscountScore: 0.5, medianMonthlyAlpha: 0 };
+  }
+  const monthlyAlphas = monthlyWithReturns.map((m) => Number(m.portfolio) - Number(m.benchmark));
+  const pos = monthlyAlphas.filter((x) => x > 0).length;
+  const frac = monthlyAlphas.length ? pos / monthlyAlphas.length : 0;
+  const sd = stdArr(monthlyAlphas);
+  const stabilityScore = Math.max(0, Math.min(1, frac * (1 - Math.min(1, sd / 10))));
+  const recent = monthlyAlphas.slice(-12);
+  const longAvg = monthlyAlphas.reduce((a, b) => a + b, 0) / monthlyAlphas.length;
+  const recentAvg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : longAvg;
+  const recencyDiscountScore = 1 / (1 + Math.max(0, recentAvg - longAvg) / 15);
+  return { monthlyAlphas, stabilityScore, recencyDiscountScore, medianMonthlyAlpha: medianArr(monthlyAlphas) };
+}
+
+function simplicityScoreFromWeights(weights) {
+  if (!weights || typeof weights !== 'object') return 0.5;
+  let nz = 0;
+  for (const f of FACTOR_NAMES) {
+    if (Math.abs(Number(weights[f]) || 0) > 1e-6) nz++;
+  }
+  return Math.max(0, Math.min(1, 1 - nz / 6));
+}
+
+/** Conservative haircut on forward alpha estimate (not applied to confidence score itself). */
+const FORWARD_ALPHA_DAMPING = 0.7;
+
+function buildForwardScoresAndEstimate({
+  monthlyWithReturns,
+  regimeDiversification,
+  weights,
+  historicalAnnualAlphaPct
+}) {
+  const { stabilityScore, recencyDiscountScore, medianMonthlyAlpha } = buildMonthlyAlphaSeries(monthlyWithReturns);
+  const robustness = regimeDiversification?.robustnessScore ?? 0;
+  const simplicity = simplicityScoreFromWeights(weights);
+  const forwardConfidence = Math.max(
+    0,
+    Math.min(
+      1,
+      0.35 * stabilityScore + 0.3 * robustness + 0.2 * simplicity + 0.15 * recencyDiscountScore
+    )
+  );
+  const histAlpha = Number(historicalAnnualAlphaPct);
+  const medianAnnualizedExcess = medianMonthlyAlpha * 12;
+  const rawEst = Math.min(
+    Number.isFinite(histAlpha) ? histAlpha : 0,
+    Number.isFinite(medianAnnualizedExcess) ? medianAnnualizedExcess : histAlpha
+  );
+  const estimatedAnnualAlpha = parseFloat((rawEst * FORWARD_ALPHA_DAMPING).toFixed(2));
+  const low = parseFloat((estimatedAnnualAlpha * 0.5).toFixed(2));
+  const high = parseFloat((estimatedAnnualAlpha * 1.5).toFixed(2));
+  return {
+    scores: {
+      stability: parseFloat(stabilityScore.toFixed(4)),
+      robustness: parseFloat(robustness.toFixed(4)),
+      simplicity: parseFloat(simplicity.toFixed(4)),
+      recencyDiscount: parseFloat(recencyDiscountScore.toFixed(4)),
+      forwardConfidence: parseFloat(forwardConfidence.toFixed(4))
+    },
+    forwardEstimate: {
+      estimatedAnnualAlpha,
+      confidenceBand: { low, high },
+      basis:
+        'Conservative blend: min(long-run annualized alpha, monthly-median annualized excess) with a damping factor; confidence score is separate from this estimate.'
+    },
+    badges: {
+      stableSignal: stabilityScore >= 0.55,
+      regimeRobust: (regimeDiversification?.positiveAlphaRegimes ?? 0) >= Math.max(1, (regimeDiversification?.totalRegimesObserved ?? 1) * 0.5),
+      recencyWarning: recencyDiscountScore < 0.45
+    }
+  };
+}
+
+function buildForwardInterpretationLine(scores, regimeDiversification, badges) {
+  const parts = [];
+  parts.push(
+    `Forward confidence ${(scores.forwardConfidence * 100).toFixed(0)}% blends sub-period stability (${(scores.stability * 100).toFixed(0)}%), regime robustness (${(scores.robustness * 100).toFixed(0)}%), weight simplicity (${(scores.simplicity * 100).toFixed(0)}%), and recency discount (${(scores.recencyDiscount * 100).toFixed(0)}%).`
+  );
+  if (regimeDiversification?.totalRegimesObserved) {
+    parts.push(
+      `Positive alpha in ${regimeDiversification.positiveAlphaRegimes}/${regimeDiversification.totalRegimesObserved} sampled regimes (worst regime alpha ${regimeDiversification.worstRegimeAlpha}%).`
+    );
+  }
+  if (badges.recencyWarning) parts.push('Recent performance looks elevated vs long-run average — forward estimate is conservative.');
+  return parts.join(' ');
+}
+
+function buildMonthlyReturnsFromDailyValues(dailyValues) {
+  if (!dailyValues?.length) return [];
+  const monthlyReturns = [];
+  let currentMonthData = null;
+  for (const d of dailyValues) {
+    const month = d.date.substring(0, 7);
+    if (!currentMonthData || currentMonthData.month !== month) {
+      if (currentMonthData) monthlyReturns.push(currentMonthData);
+      currentMonthData = { month, portfolioStart: d.portfolio, portfolioEnd: d.portfolio, benchStart: d.benchmark, benchEnd: d.benchmark };
+    } else {
+      currentMonthData.portfolioEnd = d.portfolio;
+      currentMonthData.benchEnd = d.benchmark;
+    }
+  }
+  if (currentMonthData) monthlyReturns.push(currentMonthData);
+  return monthlyReturns
+    .map((m) => ({
+      month: m.month,
+      portfolio: ((m.portfolioEnd - m.portfolioStart) / m.portfolioStart) * 100,
+      benchmark: ((m.benchEnd - m.benchStart) / m.benchStart) * 100
+    }))
+    .filter((m) => !isNaN(m.portfolio) && isFinite(m.portfolio));
+}
+
+/** Deep forward confidence: sub-period backtests + regime split on primary `period` sim. */
+function mergeDeepForwardScores(subperiodAlphas, regimeDiversification, weights, primaryAlphaPct) {
+  const vals = subperiodAlphas.filter((x) => x != null && Number.isFinite(x));
+  const pos = vals.filter((a) => a > 0).length;
+  const stability_score = vals.length ? pos / vals.length : 0;
+  const robustness = regimeDiversification?.robustnessScore ?? 0;
+  const simplicity = simplicityScoreFromWeights(weights);
+  const a1 = subperiodAlphas[0];
+  const a3 = subperiodAlphas.length > 2 ? subperiodAlphas[2] : subperiodAlphas[subperiodAlphas.length - 1];
+  const recent = a1 != null && Number.isFinite(a1) ? a1 : primaryAlphaPct;
+  const long = a3 != null && Number.isFinite(a3) ? a3 : primaryAlphaPct;
+  const recency_discount_score = 1 / (1 + Math.max(0, recent - long) / 15);
+  const forwardConfidence = Math.max(
+    0,
+    Math.min(1, 0.35 * stability_score + 0.3 * robustness + 0.2 * simplicity + 0.15 * recency_discount_score)
+  );
+  const med = medianArr(vals);
+  const rawEst = Math.min(primaryAlphaPct, med);
+  const estimatedAnnualAlpha = parseFloat((rawEst * FORWARD_ALPHA_DAMPING).toFixed(2));
+  return {
+    scores: {
+      stability: parseFloat(stability_score.toFixed(4)),
+      robustness: parseFloat(Number(robustness).toFixed(4)),
+      simplicity: parseFloat(simplicity.toFixed(4)),
+      recencyDiscount: parseFloat(recency_discount_score.toFixed(4)),
+      forwardConfidence: parseFloat(forwardConfidence.toFixed(4))
+    },
+    forwardEstimate: {
+      estimatedAnnualAlpha,
+      confidenceBand: {
+        low: parseFloat((estimatedAnnualAlpha * 0.5).toFixed(2)),
+        high: parseFloat((estimatedAnnualAlpha * 1.5).toFixed(2))
+      },
+      basis:
+        'Conservative blend: min(primary-window annualized alpha, median sub-period alpha) with damping; confidence score is separate from this estimate.'
+    }
   };
 }
 
@@ -6417,10 +6922,10 @@ function calculateMomentumQuality(priceData, asOfDate) {
   return { score: Math.max(0, Math.min(100, score)), acceleration, volTrend, mom1m, mom3m, mom6m };
 }
 
-function checkStopLosses(holdings, priceHistory, currentDate, fundamentals, strategyClean = 'full_composite') {
+function checkStopLosses(holdings, priceHistory, currentDate, fundamentals, strategyClean = 'full_composite', universeId = null) {
   const exits = [];
   const isAggressive = strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo';
-  const maxStop = isAggressive ? 0.35 : 0.20;
+  const maxStop = isAggressive ? 0.35 : (universeId === 'sp500_top50' ? 0.28 : 0.20);
   const hardCircuit = -maxStop;
   const target = typeof currentDate === 'string' ? currentDate : currentDate.toISOString().split('T')[0];
 
@@ -7028,17 +7533,21 @@ function bt_rankFullCompositeV2(universe, priceHistory, fundamentals, asOfDate, 
 
     const w = dynWeights || DEFAULT_COMPOSITE_WEIGHTS;
     const dcf = c.fund.dcfScore || 50;
-    const emScore = earningsScoreByTicker != null ? (earningsScoreByTicker.get(c.ticker) ?? 50) : 50;
+    let emScore = null;
+    if (wEm > 1e-9) {
+      emScore = earningsScoreByTicker != null ? earningsScoreByTicker.get(c.ticker) ?? null : null;
+    }
 
     const momQBonus = blendMQ ? 0 : (c.momQ ? (c.momQ.score - 50) * 0.1 : 0);
-    const fullScore = (
-      c.fund.fundamentalComposite * w.fundamental +
-      dcf * w.dcf +
-      dynVal.score * w.valuation +
-      momentumTerm * w.momentum +
-      c.val.valueScore * w.value +
-      emScore * (w.earningsMomentum ?? 0)
-    ) + momQBonus;
+    const pillarScores = {
+      fundamental: c.fund.fundamentalComposite,
+      dcf,
+      valuation: dynVal.score,
+      momentum: momentumTerm,
+      value: c.val.valueScore,
+      earningsMomentum: emScore
+    };
+    const fullScore = compositeWeightedWithRedistribution(w, pillarScores) + momQBonus;
 
     results.push({
       ticker: c.ticker,
@@ -7185,24 +7694,19 @@ function bt_rankStocks(universe, priceHistory, asOfDate, strategy = 'momentum_va
 }
 
 async function bt_fetchPriceHistory(ticker, startDate, endDate) {
+  const out = await bt_fetchPriceHistoryCore(ticker, startDate, endDate);
+  if (YAHOO_CHART_DELAY_MS > 0) await sleep(YAHOO_CHART_DELAY_MS);
+  return out;
+}
+
+async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
+  bt_fetchPriceHistory.lastStaleWarning = null;
   const upper = String(ticker).toUpperCase();
-  try {
-    const result = await fetchWithTimeout(
-      () =>
-        yahooFinance.chart(yahooApiSymbol(ticker), {
-          period1: startDate,
-          period2: endDate,
-          interval: '1d'
-        }),
-      8000
-    );
-    
-    if (!result || !result.quotes || result.quotes.length === 0) {
-      return null;
-    }
-    
+
+  const mapQuotes = (result) => {
+    if (!result || !result.quotes || result.quotes.length === 0) return null;
     return result.quotes
-      .filter(q => q.date && q.close)
+      .filter((q) => q.date && q.close)
       .map((q) => {
         const c = q.close;
         const hi = q.high != null && Number.isFinite(q.high) ? q.high : c;
@@ -7217,11 +7721,65 @@ async function bt_fetchPriceHistory(ticker, startDate, endDate) {
         };
       })
       .sort((a, b) => a.date.localeCompare(b.date));
-  } catch (err) {
-    console.warn(`[Yahoo] chart failed ${upper}:`, err.message);
+  };
+
+  const fetchOnce = async () => {
+    const result = await fetchWithTimeout(
+      () =>
+        yahooFinance.chart(yahooApiSymbol(ticker), {
+          period1: startDate,
+          period2: endDate,
+          interval: '1d'
+        }),
+      12000
+    );
+    return mapQuotes(result);
+  };
+
+  const tryAttempt = async (label) => {
+    try {
+      const rows = await fetchOnce();
+      if (rows?.length) return rows;
+      console.warn(`[Yahoo] chart empty ${upper} (${label})`);
+    } catch (err) {
+      console.warn(`[Yahoo] chart failed ${upper} (${label}):`, err.message);
+    }
     return null;
+  };
+
+  let got = await tryAttempt('attempt 1');
+  if (got?.length) {
+    writeChartDiskCache(upper, got);
+    return got;
   }
+
+  await new Promise((r) => setTimeout(r, 3000));
+  got = await tryAttempt('attempt 2');
+  if (got?.length) {
+    writeChartDiskCache(upper, got);
+    return got;
+  }
+
+  await new Promise((r) => setTimeout(r, 5000));
+  got = await tryAttempt('attempt 3');
+  if (got?.length) {
+    writeChartDiskCache(upper, got);
+    return got;
+  }
+
+  const stale = readChartDiskCacheStale(ticker);
+  if (stale?.length) {
+    const clipped = filterChartRowsToRange(stale, startDate, endDate);
+    if (clipped.length >= 5) {
+      bt_fetchPriceHistory.lastStaleWarning = 'Using cached chart data (may be stale).';
+      console.warn(`[Yahoo] ${upper}: using stale disk chart cache (${clipped.length} rows in range)`);
+      return clipped;
+    }
+  }
+
+  return null;
 }
+bt_fetchPriceHistory.lastStaleWarning = null;
 
 /** Compact performance row for /api/backtest/diagnostic (same math as full backtest response). */
 function extractDiagnosticPerformance(sim, capital) {
@@ -8201,7 +8759,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     strategy = 'momentum_value',
     initialCapital = 10000,
     optimize = 'false',
-    adaptiveMode: adaptiveModeRaw = 'fixed',
+    adaptiveMode: adaptiveModeRaw = 'adaptive',
     positionSizing: positionSizingRaw,
     pillarOverride: pillarOverrideQuery,
     regimeEnabled: regimeEnabledQuery,
@@ -8249,13 +8807,18 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     mlRankingQuery === 'true' || mlRankingQuery === true || mlRankingQuery === '1';
   const skipMlRankingAdjustmentsForBacktest = !enableMlOnBacktest;
 
-  const trainedRlAvailable = TRAINED_RL_AGENT != null;
+  const trainedRlAvailable =
+    rlAgentTypeEffective() === 'dqn' ? TRAINED_RL_AGENT != null : getQlAgentForUniverse(universeId) != null;
   const rlExplicitOff =
     rlAgentQueryRaw === 'false' || rlAgentQueryRaw === '0' || rlAgentQueryRaw === false;
   const rlExplicitOn =
     rlAgentQueryRaw === 'true' || rlAgentQueryRaw === true || rlAgentQueryRaw === '1';
-  /** Default: RL eval on when a trained agent exists; explicit false disables; explicit true only if agent file loaded. */
-  const rlAgentBacktest = rlExplicitOff ? false : rlExplicitOn ? trainedRlAvailable : trainedRlAvailable;
+  /** Default: rules-only unless RL_ENABLED=true; explicit rlAgent=true still uses agent if loaded. */
+  const rlAgentBacktest = rlExplicitOff
+    ? false
+    : rlExplicitOn
+      ? trainedRlAvailable
+      : trainedRlAvailable && rlEvalEnvEnabled();
   const rlRandomAgentBacktest =
     rlRandomQueryRaw === 'true' || rlRandomQueryRaw === true || rlRandomQueryRaw === '1';
   const rlModeBacktestRaw =
@@ -8283,14 +8846,14 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   let tradingWeights = null;
   if (strategyClean === 'full_composite') {
     if (usePaperWeights) {
-      const portfolio = loadPortfolio();
+      const portfolio = loadPaperPortfolioForUniverse(universeId);
       if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite' && portfolio.config.weights) {
         tradingWeights = portfolio.config.weights;
       }
     }
   } else if (strategyClean === 'full_composite_aggressive') {
     if (usePaperWeights) {
-      const portfolio = loadPortfolio();
+      const portfolio = loadPaperPortfolioForUniverse(universeId);
       if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_aggressive' && portfolio.config.weights) {
         tradingWeights = portfolio.config.weights;
       }
@@ -8298,7 +8861,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     if (!tradingWeights) tradingWeights = { ...AGGRESSIVE_COMPOSITE_WEIGHTS };
   } else if (strategyClean === 'full_composite_turbo') {
     if (usePaperWeights) {
-      const portfolio = loadPortfolio();
+      const portfolio = loadPaperPortfolioForUniverse(universeId);
       if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_turbo' && portfolio.config.weights) {
         tradingWeights = portfolio.config.weights;
       }
@@ -8353,23 +8916,26 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     hedging: hedgingBacktest
   });
 
+  const rlAgentForResponse = rlAgentTypeEffective() === 'dqn' ? TRAINED_RL_AGENT : getQlAgentForUniverse(universeId);
+
   const rlCacheTag = rlAgentBacktest
-    ? `rl1-${rlAgentTypeEffective()}-${rlModeBacktest}-${rlRandomAgentBacktest ? 'rnd1' : 'rnd0'}-u${TRAINED_RL_AGENT?.totalUpdates ?? 0}`
+    ? `rl1-${rlAgentTypeEffective()}-${rlModeBacktest}-${rlRandomAgentBacktest ? 'rnd1' : 'rnd0'}-u${(rlAgentTypeEffective() === 'dqn' ? TRAINED_RL_AGENT : getQlAgentForUniverse(universeId))?.totalUpdates ?? 0}`
     : 'rl0';
-  const cacheKey = `${BACKTEST_CACHE_VERSION}-${universeId}-${period}-${rebalanceFreq}-${topN}-${strategyClean}-${capital}-${weightsKey}-${cpiCacheTag}-${simCfgTag}-${adaptiveMode}-${positionSizing}-${pillarOverrideKey}-${regimeEnabled ? 're1' : 're0'}-${usePaperWeights ? 'pw1' : 'pw0'}-${rlCacheTag}`;
+  const rlEvalTag = rlEvalEnvEnabled() ? 'RLe1' : 'RLe0';
+  const cacheKey = `${BACKTEST_CACHE_VERSION}-${universeId}-${period}-${rebalanceFreq}-${topN}-${strategyClean}-${capital}-${weightsKey}-${cpiCacheTag}-${simCfgTag}-${adaptiveMode}-${positionSizing}-${pillarOverrideKey}-${regimeEnabled ? 're1' : 're0'}-${usePaperWeights ? 'pw1' : 'pw0'}-${rlEvalTag}-${rlCacheTag}`;
   const cached = BACKTEST_CACHE.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < BACKTEST_CACHE_TTL) {
     const rlOverlay =
-      rlAgentBacktest && TRAINED_RL_AGENT
+      rlAgentBacktest && rlAgentForResponse
         ? {
             rlAgentStats: {
-              statesVisited: TRAINED_RL_AGENT.statesVisited,
-              totalUpdates: TRAINED_RL_AGENT.totalUpdates,
-              qTableSize: rlAgentPolicyParamSize(TRAINED_RL_AGENT),
+              statesVisited: rlAgentForResponse.statesVisited,
+              totalUpdates: rlAgentForResponse.totalUpdates,
+              qTableSize: rlAgentPolicyParamSize(rlAgentForResponse),
               isLoaded: true
             },
-            rlStatesVisited: TRAINED_RL_AGENT.statesVisited,
-            rlTotalUpdates: TRAINED_RL_AGENT.totalUpdates
+            rlStatesVisited: rlAgentForResponse.statesVisited,
+            rlTotalUpdates: rlAgentForResponse.totalUpdates
           }
         : {};
     return res.json({
@@ -8399,9 +8965,13 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     clearBacktestRuntimeCaches();
     const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(t => t && t.trim() !== '');
     const priceHistory = {};
-    
+    let benchmarkDataWarning = null;
+
     const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
       const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      if (String(ticker).toUpperCase() === 'SPY' && bt_fetchPriceHistory.lastStaleWarning) {
+        benchmarkDataWarning = bt_fetchPriceHistory.lastStaleWarning;
+      }
       return { ticker, data };
     });
     for (const row of priceRows) {
@@ -8482,7 +9052,9 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         rlRandomAgent: rlRandomAgentBacktest,
         rlQLearningAgent:
           rlAgentBacktest && rlModeBacktest === 'eval'
-            ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk()
+            ? rlAgentTypeEffective() === 'dqn'
+              ? TRAINED_RL_AGENT ?? loadRlAgentFromDisk('dqn')
+              : getQlAgentForUniverse(universeId) ?? loadRlAgentFromDisk(undefined, universeId)
             : undefined,
         correlationFilter: correlationFilterBacktest,
         maxCorrelated: maxCorrelatedBacktest,
@@ -8630,7 +9202,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
 
     let optimization = null;
     if (optimize === 'true' && (strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo')) {
-      const portfolio = loadPortfolio();
+      const portfolio = loadPaperPortfolioForUniverse(universeId);
       if (portfolio && portfolio.config && portfolio.config.strategy === strategyClean) {
         const defaultW = strategyClean === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
           : strategyClean === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS
@@ -8645,7 +9217,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       ? computeStrategyRiskMetrics(dailyValues, tradeLog, rebalanceDates, parseInt(topN))
       : null;
 
-    const portfolioForStatus = loadPortfolio();
+    const portfolioForStatus = loadPaperPortfolioForUniverse(universeId);
     const optimizationStatus = {
       round: portfolioForStatus?.optimizationRound || 0,
       maxRounds: MAX_OPTIMIZATION_ROUNDS,
@@ -8661,6 +9233,9 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       avgExposure: parseFloat((regimeLog.reduce((s, r) => s + r.exposure, 0) / regimeLog.length).toFixed(2)),
       exposureMap: getRegimeExposureMap(strategyClean)
     } : null;
+
+    const regimeSplit = computeRegimeSplitPerformance(dailyValues, spyPrices, universe, priceHistory);
+    const regimeDiversification = buildRegimeDiversification(regimeSplit);
 
     const responseData = {
       strategy,
@@ -8678,17 +9253,21 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       usePaperWeights,
       mlRankingEnabled: enableMlOnBacktest,
       hedging: hedgingBacktest,
+      benchmarkDataWarning: benchmarkDataWarning || undefined,
+      rlEvalGloballyEnabled: rlEvalEnvEnabled(),
       rlAgent: rlAgentBacktest,
       rlEnabled: rlAgentBacktest,
       rlAgentLoaded: trainedRlAvailable,
-      rlTotalUpdates: TRAINED_RL_AGENT?.totalUpdates ?? 0,
-      rlStatesVisited: TRAINED_RL_AGENT ? countRlStatesVisited(TRAINED_RL_AGENT) : 0,
+      rlUniverse: universeId,
+      rlAgentKind: rlAgentForResponse ? rlAgentTypeEffective() : null,
+      rlTotalUpdates: rlAgentForResponse?.totalUpdates ?? 0,
+      rlStatesVisited: rlAgentForResponse ? countRlStatesVisited(rlAgentForResponse) : 0,
       rlAgentStats:
-        rlAgentBacktest && TRAINED_RL_AGENT
+        rlAgentBacktest && rlAgentForResponse
           ? {
-              statesVisited: TRAINED_RL_AGENT.statesVisited,
-              totalUpdates: TRAINED_RL_AGENT.totalUpdates,
-              qTableSize: rlAgentPolicyParamSize(TRAINED_RL_AGENT),
+              statesVisited: rlAgentForResponse.statesVisited,
+              totalUpdates: rlAgentForResponse.totalUpdates,
+              qTableSize: rlAgentPolicyParamSize(rlAgentForResponse),
               isLoaded: true
             }
           : undefined,
@@ -8708,6 +9287,9 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         totalStopsTriggered,
         stopsDetail: stops.length > 0 ? stops.slice(0, 20).map(s => ({ date: s.date, ticker: s.ticker, return: ((s.holdingReturn || 0) * 100).toFixed(1) + '%' })) : []
       },
+
+      regimeSplit,
+      regimeDiversification,
 
       inflationSource: inflationBaselineMeta.source,
       inflationSeriesId: inflationBaselineMeta.seriesId,
@@ -8862,9 +9444,7 @@ async function rlRunTrainEpisodesCore({
         break;
       }
 
-      if (isDqnAgentInstance(agent)) {
-        agent.currentTrainingEpisode = epCount + 1;
-      }
+      agent.currentTrainingEpisode = epCount + 1;
 
       const maxLen = trainRebalancePool.length;
       const len = minWindow + Math.floor(Math.random() * (maxLen - minWindow + 1));
@@ -8951,7 +9531,7 @@ async function rlRunTrainEpisodesCore({
         writeRlAgentFileOnly(agent);
         console.log(`${tag} DQN checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
       } else if (epCount > 0 && ck > 0 && epCount % ck === 0 && !isDqnAgentInstance(agent)) {
-        writeRlAgentFileOnly(agent);
+        writeRlAgentFileOnly(agent, universeId);
         console.log(`${tag} checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
       }
 
@@ -8966,6 +9546,7 @@ async function rlRunTrainEpisodesCore({
     }
   } finally {
     if (savedBeta != null) agent.beta = savedBeta;
+    agent.currentTrainingEpisode = 0;
   }
 
   if (isDqnAgentInstance(agent)) {
@@ -8990,9 +9571,9 @@ app.get('/api/rl/test', async (req, res) => {
 
 app.get('/api/rl/status', (req, res) => {
   try {
+    const agentType = rlAgentTypeEffective();
     const agent = TRAINED_RL_AGENT;
     const loaded = agent != null;
-    const agentType = rlAgentTypeEffective();
     const statusPath = agentType === 'dqn' ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH;
     let agentFileMtime = null;
     try {
@@ -9009,12 +9590,32 @@ app.get('/api/rl/status', (req, res) => {
     const qTableSize = loaded ? rlAgentPolicyParamSize(agent) : 0;
     const coveragePct =
       totalStates > 0 ? parseFloat(((statesVisited / totalStates) * 100).toFixed(1)) : 0;
-    const pf = loadPortfolio();
+    const hiddenSize = loaded && isDqnAgentInstance(agent) ? agent.hiddenSize ?? null : null;
+    const agentInferenceOk = loaded ? trainedRlAgentReadyForInference(agent) : false;
+
+    const agents = {};
+    for (const uid of ['sp500_top50', 'sp500_top150']) {
+      const a = RL_AGENTS_BY_UNIVERSE[uid];
+      const ok = a != null && trainedRlAgentReadyForInference(a);
+      agents[uid] = {
+        loaded: ok,
+        statesVisited: ok ? a.statesVisited : 0,
+        totalUpdates: ok ? a.totalUpdates : 0,
+        agentFile: path.basename(getRlAgentPathForUniverse(uid))
+      };
+    }
+
+    const pf = loadPaperPortfolioForUniverse(resolvePaperUniverseFromRequest(req));
     let paperTrade = null;
     if (pf) {
       const sched = buildPaperTradeScheduleResponse(pf);
+      const pAgent = getRlAgentForPaperPortfolio(pf);
       paperTrade = {
+        universeId: paperTradingUniverseId(pf),
         rlEnabled: paperPortfolioRlEnabled(pf),
+        rlAgentActive:
+          paperPortfolioRlEnabled(pf) && trainedRlAgentReadyForInference(pAgent) && rlEvalEnvEnabled(),
+        rlEvalGloballyEnabled: rlEvalEnvEnabled(),
         onlineLearning: pf.config?.rlOnlineLearning === true,
         weights: pf.config?.weights ?? null,
         lastRebalance: pf.lastRebalance ?? null,
@@ -9025,7 +9626,13 @@ app.get('/api/rl/status', (req, res) => {
     }
     res.json({
       loaded,
+      agentLoaded: agentInferenceOk,
       agentType,
+      defaultAgentType: agentType,
+      agents,
+      hiddenSize,
+      actionSpaceSize: TOTAL_ACTIONS,
+      rlEvalGloballyEnabled: rlEvalEnvEnabled(),
       statesVisited,
       totalUpdates,
       qTableSize,
@@ -9130,14 +9737,14 @@ app.get('/api/rl/compare', async (req, res) => {
     let tradingWeights = null;
     if (strategyClean === 'full_composite') {
       if (usePaperWeights) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeIdResolved);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite' && portfolio.config.weights) {
           tradingWeights = portfolio.config.weights;
         }
       }
     } else if (strategyClean === 'full_composite_aggressive') {
       if (usePaperWeights) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeIdResolved);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_aggressive' && portfolio.config.weights) {
           tradingWeights = portfolio.config.weights;
         }
@@ -9145,7 +9752,7 @@ app.get('/api/rl/compare', async (req, res) => {
       if (!tradingWeights) tradingWeights = { ...AGGRESSIVE_COMPOSITE_WEIGHTS };
     } else if (strategyClean === 'full_composite_turbo') {
       if (usePaperWeights) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeIdResolved);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_turbo' && portfolio.config.weights) {
           tradingWeights = portfolio.config.weights;
         }
@@ -9317,10 +9924,19 @@ app.post('/api/rl/train', async (req, res) => {
       body.skipPostTrainEval === true ||
       body.skipPostTrainEval === 'true' ||
       body.skipPostTrainEval === '1';
-    const rlTrainSkipEarningsFetch =
-      body.rlTrainSkipEarningsFetch === true ||
-      body.rlTrainSkipEarningsFetch === 'true' ||
-      body.rlTrainSkipEarningsFetch === '1';
+    /** Default false — training should match eval scoring (earnings pillar). Set body.rlTrainSkipEarningsFetch true only to skip fetches and reduce Yahoo load. */
+    const explicitSkip =
+      body.rlTrainSkipEarningsFetch === false ||
+      body.rlTrainSkipEarningsFetch === 'false' ||
+      body.rlTrainSkipEarningsFetch === '0'
+        ? false
+        : body.rlTrainSkipEarningsFetch === true ||
+            body.rlTrainSkipEarningsFetch === 'true' ||
+            body.rlTrainSkipEarningsFetch === '1'
+          ? true
+          : null;
+    /** Only skip when the client explicitly requests it — training defaults to full scoring (ignore env). */
+    const rlTrainSkipEarningsFetch = explicitSkip === true;
     const rlSmokeTrain = skipPostTrainEval && userEpisodes <= 50;
     const strategyClean = String(body.strategy || 'full_composite').toLowerCase().trim();
     if (
@@ -9333,21 +9949,20 @@ app.post('/api/rl/train', async (req, res) => {
 
     const trainAgentTypeRaw = body.agentType != null ? String(body.agentType).toLowerCase().trim() : '';
     const trainAgentType =
-      trainAgentTypeRaw === '' || trainAgentTypeRaw === 'dqn'
+      trainAgentTypeRaw === 'dqn'
         ? 'dqn'
-        : trainAgentTypeRaw === 'qlearning' || trainAgentTypeRaw === 'q-learning' || trainAgentTypeRaw === 'q'
+        : trainAgentTypeRaw === '' ||
+            trainAgentTypeRaw === 'qlearning' ||
+            trainAgentTypeRaw === 'q-learning' ||
+            trainAgentTypeRaw === 'q'
           ? 'qlearning'
           : null;
     if (trainAgentType == null) {
       return res.status(400).json({ success: false, error: 'agentType must be dqn or qlearning' });
     }
 
-    const adaptiveRawTrain =
-      body.adaptiveMode != null && String(body.adaptiveMode).trim() !== ''
-        ? String(body.adaptiveMode).toLowerCase().trim()
-        : 'fixed';
-    const adaptiveModeTrain =
-      adaptiveRawTrain === 'adaptive' || adaptiveRawTrain === 'conservative' ? adaptiveRawTrain : 'fixed';
+    /** Training always uses fixed pillar weights (stable score landscape); body adaptiveMode is ignored. */
+    const adaptiveModeTrain = 'fixed';
     const psTrain =
       body.positionSizing != null && String(body.positionSizing).trim() !== ''
         ? String(body.positionSizing).toLowerCase().trim()
@@ -9437,14 +10052,14 @@ app.post('/api/rl/train', async (req, res) => {
     let tradingWeightsTrain = null;
     if (strategyClean === 'full_composite') {
       if (usePaperWeightsTrain) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeId);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite' && portfolio.config.weights) {
           tradingWeightsTrain = portfolio.config.weights;
         }
       }
     } else if (strategyClean === 'full_composite_aggressive') {
       if (usePaperWeightsTrain) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeId);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_aggressive' && portfolio.config.weights) {
           tradingWeightsTrain = portfolio.config.weights;
         }
@@ -9452,7 +10067,7 @@ app.post('/api/rl/train', async (req, res) => {
       if (!tradingWeightsTrain) tradingWeightsTrain = { ...AGGRESSIVE_COMPOSITE_WEIGHTS };
     } else if (strategyClean === 'full_composite_turbo') {
       if (usePaperWeightsTrain) {
-        const portfolio = loadPortfolio();
+        const portfolio = loadPaperPortfolioForUniverse(universeId);
         if (portfolio && portfolio.config && portfolio.config.strategy === 'full_composite_turbo' && portfolio.config.weights) {
           tradingWeightsTrain = portfolio.config.weights;
         }
@@ -9498,11 +10113,11 @@ app.post('/api/rl/train', async (req, res) => {
         `[RL/train] Long job: ${userEpisodes} episodes (${universeId}, ${period}) — ` +
           'the HTTP body is sent only after all episodes plus 3 full eval backtests. ' +
           'Use a much larger curl -m (e.g. 14400), fewer episodes, or skipPostTrainEval:true for smoke tests. ' +
-          'If Yahoo returns 429 on earnings, set rlTrainSkipEarningsFetch:true (faster; no per-rebalance earnings map).'
+          'Earnings are fetched by default during training; set rlTrainSkipEarningsFetch:true in the JSON body to reduce Yahoo calls.'
       );
     }
 
-    const agent = loadRlAgentFromDisk(trainAgentType);
+    const agent = loadRlAgentFromDisk(trainAgentType, universeId);
     const savedBeta = typeof agent.beta === 'number' ? agent.beta : null;
 
     const dqnBatchSize = Math.min(256, Math.max(8, parseInt(String(body.batchSize ?? '32'), 10) || 32));
@@ -9514,6 +10129,10 @@ app.post('/api/rl/train', async (req, res) => {
     const dqnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '1')) || 1));
     const dqnEpsEnd = Math.min(dqnEpsStart, Math.max(0.01, parseFloat(String(body.epsilonEnd ?? '0.05')) || 0.05));
     const dqnEpsDecayEp = Math.max(100, parseInt(String(body.epsilonDecayEpisodes ?? '10000'), 10) || 10000);
+    /** Tabular Q-learning: linear ε decay vs episode (used when currentTrainingEpisode > 0). Defaults: 1.0 → 0.05 over 25k episodes. */
+    const qLearnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '1')) || 1));
+    const qLearnEpsEnd = Math.min(qLearnEpsStart, Math.max(0.01, parseFloat(String(body.epsilonEnd ?? '0.05')) || 0.05));
+    const qLearnEpsDecayEp = Math.max(1, parseInt(String(body.epsilonDecayEpisodes ?? '25000'), 10) || 25000);
 
     if (isDqnAgentInstance(agent)) {
       agent.batchSize = dqnBatchSize;
@@ -9527,6 +10146,10 @@ app.post('/api/rl/train', async (req, res) => {
       agent.epsilonStart = dqnEpsStart;
       agent.epsilonEnd = dqnEpsEnd;
       agent.epsilonDecayEpisodes = dqnEpsDecayEp;
+    } else {
+      agent.epsilonStart = qLearnEpsStart;
+      agent.epsilonEnd = qLearnEpsEnd;
+      agent.epsilonDecayEpisodes = qLearnEpsDecayEp;
     }
 
     const {
@@ -9562,12 +10185,12 @@ app.post('/api/rl/train', async (req, res) => {
     const trainingDurationSec = parseFloat((trainingDurationMs / 1000).toFixed(2));
     const avgEpisodeMs = episodesRun > 0 ? trainingDurationMs / episodesRun : null;
 
-    saveRlAgentToDisk(agent);
+    saveRlAgentToDisk(agent, isDqnAgentInstance(agent) ? null : universeId);
     console.log(
       `[RL/train] ✓ COMPLETE — episodes=${episodesRun}, statesVisited=${agent.statesVisited}, totalUpdates=${agent.totalUpdates}, duration=${((Date.now() - startTime) / 1000).toFixed(1)}s`
     );
     console.log(
-      `[RL/train] Agent saved (${trainAgentType}) to ${isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : RL_AGENT_JSON_PATH}`,
+      `[RL/train] Agent saved (${trainAgentType}) to ${isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : getRlAgentPathForUniverse(universeId)}`,
     );
 
     const conv = computeConvergenceMetrics(agent);
@@ -9584,7 +10207,11 @@ app.post('/api/rl/train', async (req, res) => {
 
     const lastK = episodeRlRewards.slice(-1000);
     const avgRewardLast1000 = lastK.length ? lastK.reduce((a, b) => a + b, 0) / lastK.length : null;
-    const finalEpsilon = isDqnAgentInstance(agent) ? agent.getEpsilonForEpisode(episodesRun) : null;
+    const finalEpsilon = isDqnAgentInstance(agent)
+      ? agent.getEpsilonForEpisode(episodesRun)
+      : typeof agent.getEpsilonForTrainingEpisode === 'function'
+        ? agent.getEpsilonForTrainingEpisode(episodesRun)
+        : null;
 
     const evalSimBase = {
       ...sharedTrainSimOptions,
@@ -9728,7 +10355,11 @@ app.post('/api/rl/train', async (req, res) => {
             epsilonEnd: dqnEpsEnd,
             epsilonDecayEpisodes: dqnEpsDecayEp
           }
-        : {})
+        : {
+            epsilonStart: qLearnEpsStart,
+            epsilonEnd: qLearnEpsEnd,
+            epsilonDecayEpisodes: qLearnEpsDecayEp
+          })
     };
 
     res.json({
@@ -10512,20 +11143,105 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
 // PAPER TRADE — Persistence
 // =====================================================================
 
-const PAPER_PORTFOLIO_PATH = './paper-portfolio.json';
+const PAPER_PORTFOLIO_PATH = path.join(__dirname, 'paper-portfolio.json');
+const PAPER_PORTFOLIO_TOP50_PATH = path.join(__dirname, 'paper-portfolio-top50.json');
+const PAPER_PORTFOLIO_TOP150_PATH = path.join(__dirname, 'paper-portfolio-top150.json');
 
-function loadPortfolio() {
-  if (!existsSync(PAPER_PORTFOLIO_PATH)) return null;
-  try {
-    return JSON.parse(readFileSync(PAPER_PORTFOLIO_PATH, 'utf-8'));
-  } catch { return null; }
+function getPortfolioPathForUniverse(universeId) {
+  const u = String(universeId || '').trim();
+  if (u === 'sp500_top150') return PAPER_PORTFOLIO_TOP150_PATH;
+  if (u === 'sp500_top50') return PAPER_PORTFOLIO_TOP50_PATH;
+  return PAPER_PORTFOLIO_PATH;
 }
 
-function savePortfolio(portfolio) {
+/** Primary dual slot when no legacy file (default top 150). */
+function resolvePaperUniverseFromRequest(req) {
+  const q = req.query?.universe ?? req.query?.universeId;
+  const b = req.body?.universeId ?? req.body?.universe;
+  const raw = q != null && String(q).trim() !== '' ? q : b != null && String(b).trim() !== '' ? b : null;
+  if (raw == null) return 'sp500_top150';
+  const u = String(raw).trim();
+  return UNIVERSE_TICKERS[u] ? u : 'sp500_top150';
+}
+
+function loadPortfolio(portfolioPath = PAPER_PORTFOLIO_PATH) {
+  if (!existsSync(portfolioPath)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(portfolioPath, 'utf-8'));
+    if (raw === null) return null;
+    const p = normalizePaperPortfolio(raw);
+    if (p) {
+      p.__diskPath = portfolioPath;
+      if (p.config && p.config.universeId == null && p.config.universe) {
+        p.config.universeId = p.config.universe;
+      }
+    }
+    return p;
+  } catch {
+    return null;
+  }
+}
+
+function savePortfolio(portfolio, portfolioPath = null) {
+  const fp = portfolioPath ?? portfolio?.__diskPath ?? PAPER_PORTFOLIO_PATH;
   if (portfolio === null) {
-    writeFileSync(PAPER_PORTFOLIO_PATH, 'null');
+    writeFileSync(fp, 'null');
   } else {
-    writeFileSync(PAPER_PORTFOLIO_PATH, JSON.stringify(portfolio, null, 2));
+    const out = { ...portfolio };
+    delete out.__diskPath;
+    writeFileSync(fp, JSON.stringify(out, null, 2));
+  }
+}
+
+function loadPrimaryPaperPortfolioForBacktest() {
+  return loadPortfolio(getPortfolioPathForUniverse('sp500_top150')) ?? loadPortfolio(PAPER_PORTFOLIO_PATH);
+}
+
+/** Load paper JSON for a universe; top150 also falls back to legacy `paper-portfolio.json` if the dual file is absent. */
+function loadPaperPortfolioForUniverse(universeId) {
+  const uid = String(universeId || '').trim() || 'sp500_top150';
+  const fp = getPortfolioPathForUniverse(uid);
+  let p = loadPortfolio(fp);
+  if (!p && uid === 'sp500_top150') {
+    p = loadPortfolio(PAPER_PORTFOLIO_PATH);
+  }
+  return p;
+}
+
+function paperTradingUniverseId(portfolio) {
+  const c = portfolio?.config || {};
+  return String(c.universeId ?? c.universe ?? 'sp500_top150').trim();
+}
+
+function getRlAgentForPaperPortfolio(portfolio) {
+  if (rlAgentTypeEffective() === 'dqn') return TRAINED_RL_AGENT;
+  return getQlAgentForUniverse(paperTradingUniverseId(portfolio));
+}
+
+function ensureDualPaperPortfoliosInitialized() {
+  const DEFAULT_W = { momentum: 0.3, value: 0.3, fundamental: 0.1, earningsMomentum: 0.15, dcf: 0, valuation: 0 };
+  const wSum = FACTOR_NAMES.reduce((a, f) => a + Math.max(0, Number(DEFAULT_W[f]) || 0), 0);
+  const wNorm = {};
+  for (const f of FACTOR_NAMES) wNorm[f] = wSum > 0 ? parseFloat(((Number(DEFAULT_W[f]) || 0) / wSum).toFixed(6)) : 0;
+  for (const uid of ['sp500_top50', 'sp500_top150']) {
+    const pp = getPortfolioPathForUniverse(uid);
+    if (existsSync(pp)) continue;
+    const portfolio = createEmptyPortfolio({
+      initialCapital: 100000,
+      strategy: 'full_composite',
+      universe: uid,
+      topN: 15,
+      weights: { ...wNorm },
+      adaptiveMode: 'adaptive',
+      rebalanceFreq: 'monthly',
+      rlAgent: true,
+      rlOnlineLearning: true,
+      positionSizing: 'invVol',
+      regimeEnabled: true
+    });
+    portfolio.config.universeId = uid;
+    savePortfolio(portfolio, pp);
+    console.log('[PAPER] Initialized', path.basename(pp), 'for', uid);
   }
 }
 
@@ -10542,6 +11258,48 @@ function createEmptyPortfolio(config) {
     lastRebalance: null,
     lastNavUpdate: null
   };
+}
+
+/**
+ * On-disk edits often use `positions` or leave `cash` null — align with createEmptyPortfolio shape.
+ */
+function normalizePaperPortfolio(p) {
+  if (!p || typeof p !== 'object') return null;
+  const out = { ...p };
+  if (Array.isArray(out.positions) && !Array.isArray(out.holdings)) {
+    console.warn('[paper-trade] Migrating legacy "positions" → "holdings" in paper-portfolio.json');
+    out.holdings = out.positions;
+    delete out.positions;
+  }
+  if (!Array.isArray(out.holdings)) out.holdings = [];
+  const ic = Number.isFinite(Number(out.initialCapital)) ? Number(out.initialCapital) : 100000;
+  out.initialCapital = ic;
+  if (out.config && typeof out.config === 'object') {
+    if (out.config.initialCapital == null || !Number.isFinite(Number(out.config.initialCapital))) {
+      out.config.initialCapital = ic;
+    }
+  }
+  let c = Number(out.cash);
+  if (!Number.isFinite(c)) c = ic;
+  out.cash = c;
+  if (!Array.isArray(out.navHistory)) out.navHistory = [];
+  if (!Array.isArray(out.rebalanceHistory)) out.rebalanceHistory = [];
+  if (out.recentSells == null || typeof out.recentSells !== 'object' || Array.isArray(out.recentSells)) {
+    out.recentSells = {};
+  }
+  if (out.createdAt == null || out.createdAt === '') {
+    out.createdAt = new Date().toISOString().split('T')[0];
+  }
+  return out;
+}
+
+function resolvePaperAsOfDate(body) {
+  const serverToday = new Date().toISOString().split('T')[0];
+  const raw = body?.date ?? body?.asOfDate;
+  if (raw == null || typeof raw !== 'string') return serverToday;
+  const d = raw.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return serverToday;
+  return d > serverToday ? serverToday : d;
 }
 
 const PAPER_SCHEDULE_FREQ_ALLOWED = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
@@ -10585,7 +11343,8 @@ function buildPaperTradeScheduleResponse(portfolio) {
 // =====================================================================
 
 app.post('/api/optimization/reset', (req, res) => {
-  const portfolio = loadPortfolio();
+  const universeId = resolvePaperUniverseFromRequest(req);
+  const portfolio = loadPaperPortfolioForUniverse(universeId);
   if (!portfolio) return res.status(404).json({ success: false, error: 'No portfolio found' });
 
   const defaultW = portfolio.config?.strategy === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
@@ -10608,7 +11367,8 @@ app.post('/api/optimization/reset', (req, res) => {
 });
 
 app.post('/api/optimization/freeze', (req, res) => {
-  const portfolio = loadPortfolio();
+  const universeId = resolvePaperUniverseFromRequest(req);
+  const portfolio = loadPaperPortfolioForUniverse(universeId);
   if (!portfolio) return res.status(404).json({ success: false, error: 'No portfolio found' });
 
   portfolio.optimizationRound = MAX_OPTIMIZATION_ROUNDS;
@@ -10623,7 +11383,8 @@ app.post('/api/optimization/freeze', (req, res) => {
 });
 
 app.get('/api/optimization/status', (req, res) => {
-  const portfolio = loadPortfolio();
+  const universeId = resolvePaperUniverseFromRequest(req);
+  const portfolio = loadPaperPortfolioForUniverse(universeId);
   const round = portfolio?.optimizationRound || 0;
   const frozen = round >= MAX_OPTIMIZATION_ROUNDS;
   const defaultW = portfolio?.config?.strategy === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS
@@ -10649,14 +11410,10 @@ app.get('/api/optimization/status', (req, res) => {
 // =====================================================================
 
 app.post('/api/paper-trade/init', (req, res) => {
-  const existing = loadPortfolio();
-  if (existing) {
-    return res.status(409).json({ success: false, error: 'Portfolio already exists. DELETE /api/paper-trade/reset first.' });
-  }
   const {
     initialCapital = 100000,
     strategy = 'full_composite',
-    universe = 'sp500_top50',
+    universe = 'sp500_top150',
     topN = 15,
     mlRankWeight: mlBody,
     adaptiveMode: initAdaptive,
@@ -10666,6 +11423,14 @@ app.post('/api/paper-trade/init', (req, res) => {
     maxCorrelated: initMaxCorrelated,
     correlationLookbackDays: initCorrelationLookback
   } = req.body || {};
+  const targetUniverse = String(req.body?.universeId ?? universe ?? 'sp500_top150').trim();
+  const pp = getPortfolioPathForUniverse(targetUniverse);
+  if (loadPaperPortfolioForUniverse(targetUniverse)) {
+    return res.status(409).json({
+      success: false,
+      error: 'Portfolio already exists for this universe. DELETE /api/paper-trade/reset?universe=' + encodeURIComponent(targetUniverse) + ' first.'
+    });
+  }
   let mlRankWeight = parseFloat(process.env.ML_RANK_WEIGHT || '0');
   if (!Number.isFinite(mlRankWeight)) mlRankWeight = 0;
   mlRankWeight = Math.max(0, Math.min(1, mlRankWeight));
@@ -10674,7 +11439,7 @@ app.post('/api/paper-trade/init', (req, res) => {
     if (Number.isFinite(v)) mlRankWeight = Math.max(0, Math.min(1, v));
   }
   const amInitRaw = initAdaptive != null && initAdaptive !== '' ? String(initAdaptive).toLowerCase().trim() : '';
-  const amInit = amInitRaw === 'adaptive' || amInitRaw === 'conservative' ? amInitRaw : 'fixed';
+  const amInit = amInitRaw === 'fixed' ? 'fixed' : amInitRaw === 'conservative' ? 'conservative' : 'adaptive';
   const psInitRaw = initPosSize != null && String(initPosSize).trim() !== '' ? String(initPosSize).toLowerCase().trim() : null;
   const psInit =
     psInitRaw && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psInitRaw)
@@ -10699,7 +11464,7 @@ app.post('/api/paper-trade/init', (req, res) => {
       ? false
       : bodyRl === true || bodyRl === 'true' || bodyRl === '1'
         ? true
-        : TRAINED_RL_AGENT != null;
+        : TRAINED_RL_AGENT != null && rlEvalEnvEnabled();
   const rlOnlineInit =
     req.body?.rlOnlineLearning === true ||
     req.body?.rlOnlineLearning === 'true' ||
@@ -10712,7 +11477,8 @@ app.post('/api/paper-trade/init', (req, res) => {
   const config = {
     initialCapital: parseFloat(initialCapital),
     strategy,
-    universe,
+    universe: targetUniverse,
+    universeId: targetUniverse,
     topN: parseInt(topN),
     weights:
       strategy === 'full_composite'
@@ -10755,24 +11521,33 @@ app.post('/api/paper-trade/init', (req, res) => {
       const n = typeof v === 'number' ? v : parseFloat(String(v));
       if (Number.isFinite(n)) config.weights[f] = n;
     }
+    const wSum = FACTOR_NAMES.reduce((a, f) => a + Math.max(0, Number(config.weights[f]) || 0), 0);
+    if (wSum > 1e-9) {
+      for (const f of FACTOR_NAMES) {
+        config.weights[f] = parseFloat(((Number(config.weights[f]) || 0) / wSum).toFixed(6));
+      }
+    }
   }
   if (!UNIVERSE_TICKERS[config.universe]) {
     return res.status(400).json({ success: false, error: `Unknown universe: ${config.universe}` });
   }
   const portfolio = createEmptyPortfolio(config);
-  savePortfolio(portfolio);
+  savePortfolio(portfolio, pp);
   res.json({ success: true, portfolio });
 });
 
 app.delete('/api/paper-trade/reset', (req, res) => {
-  savePortfolio(null);
-  res.json({ success: true, message: 'Portfolio reset.' });
+  const universeId = resolvePaperUniverseFromRequest(req);
+  const fp = getPortfolioPathForUniverse(universeId);
+  savePortfolio(null, fp);
+  res.json({ success: true, message: 'Portfolio reset.', universeId });
 });
 
 /** Toggle RL / online learning without resetting the portfolio (composite strategies only). */
 app.patch('/api/paper-trade/config', (req, res) => {
   try {
-    const portfolio = loadPortfolio();
+    const universeId = resolvePaperUniverseFromRequest(req);
+    const portfolio = loadPaperPortfolioForUniverse(universeId);
     if (!portfolio) {
       return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
     }
@@ -10780,8 +11555,16 @@ app.patch('/api/paper-trade/config', (req, res) => {
     const strat = portfolio.config?.strategy || '';
     const composite =
       strat === 'full_composite' || strat === 'full_composite_aggressive' || strat === 'full_composite_turbo';
-    if (!composite) {
-      return res.status(400).json({ success: false, error: 'RL settings apply only to full composite strategies.' });
+    if (
+      !composite &&
+      (body.rlAgent !== undefined ||
+        body.rlOnlineLearning !== undefined ||
+        (body.weights != null && typeof body.weights === 'object'))
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'RL and weight patches apply only to full composite strategies.',
+      });
     }
     if (body.rlAgent !== undefined) {
       portfolio.config.rlAgent = body.rlAgent === true || body.rlAgent === 'true' || body.rlAgent === '1' || body.rlAgent === 1;
@@ -10798,11 +11581,43 @@ app.patch('/api/paper-trade/config', (req, res) => {
         const n = typeof v === 'number' ? v : parseFloat(String(v));
         if (Number.isFinite(n)) base[k] = n;
       }
+      const wSum = FACTOR_NAMES.reduce((a, f) => a + Math.max(0, Number(base[f]) || 0), 0);
+      if (wSum > 1e-9) {
+        for (const f of FACTOR_NAMES) {
+          base[f] = parseFloat(((Number(base[f]) || 0) / wSum).toFixed(6));
+        }
+      }
       portfolio.config.weights = base;
+    }
+    if (body.adaptiveMode != null && body.adaptiveMode !== '') {
+      const am = String(body.adaptiveMode).toLowerCase().trim();
+      portfolio.config.adaptiveMode =
+        am === 'adaptive' || am === 'conservative' ? am : 'fixed';
     }
     if (body.rebalanceFreq != null && body.rebalanceFreq !== '') {
       const fr = String(body.rebalanceFreq).toLowerCase().trim();
       if (PAPER_SCHEDULE_FREQ_ALLOWED.includes(fr)) portfolio.config.rebalanceFreq = fr;
+    }
+    const uniPatch = body.universeId ?? body.universe;
+    if (uniPatch != null && uniPatch !== '') {
+      const u = String(uniPatch).trim();
+      if (!UNIVERSE_TICKERS[u]) {
+        return res.status(400).json({ success: false, error: `Unknown universe: ${u}` });
+      }
+      const slotUid = paperTradingUniverseId(portfolio);
+      if (u !== slotUid) {
+        return res.status(400).json({
+          success: false,
+          error:
+            'Changing the paper universe slot requires DELETE /api/paper-trade/reset for the current slot, then POST /api/paper-trade/init for the target universe.'
+        });
+      }
+      portfolio.config.universe = u;
+      portfolio.config.universeId = u;
+    }
+    if (body.topN != null && body.topN !== '') {
+      const tn = parseInt(String(body.topN), 10);
+      if (Number.isFinite(tn)) portfolio.config.topN = Math.max(1, Math.min(50, tn));
     }
     if (body.correlationFilter !== undefined) {
       portfolio.config.correlationFilter =
@@ -10827,6 +11642,9 @@ app.patch('/api/paper-trade/config', (req, res) => {
     res.json({
       success: true,
       config: {
+        universe: portfolio.config.universe ?? null,
+        topN: portfolio.config.topN ?? null,
+        adaptiveMode: portfolio.config.adaptiveMode ?? 'adaptive',
         rlAgent: portfolio.config.rlAgent === true,
         rlOnlineLearning: portfolio.config.rlOnlineLearning === true,
         weights: portfolio.config.weights || null,
@@ -10853,8 +11671,11 @@ app.patch('/api/paper-trade/config', (req, res) => {
 // =====================================================================
 
 async function takeNavSnapshot(portfolio, opts = {}) {
-  const { skipSave = false } = opts;
-  const today = new Date().toISOString().split('T')[0];
+  const { skipSave = false, snapshotDate = null } = opts;
+  const today =
+    snapshotDate && typeof snapshotDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(snapshotDate.trim())
+      ? snapshotDate.trim()
+      : new Date().toISOString().split('T')[0];
 
   const tickers = [...new Set([
     ...portfolio.holdings.map(h => h.ticker),
@@ -10916,7 +11737,8 @@ async function takeNavSnapshot(portfolio, opts = {}) {
 
 app.post('/api/paper-trade/snapshot', async (req, res) => {
   try {
-    let portfolio = loadPortfolio();
+    const paperUid = resolvePaperUniverseFromRequest(req);
+    let portfolio = loadPaperPortfolioForUniverse(paperUid);
     if (!portfolio) return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
     portfolio = await takeNavSnapshot(portfolio);
     res.json({ success: true, latestNav: portfolio.navHistory[portfolio.navHistory.length - 1] });
@@ -10973,7 +11795,8 @@ function computePaperCaptureRatios(navHistory) {
 
 app.get('/api/paper-trade/portfolio', async (req, res) => {
   try {
-    let portfolio = loadPortfolio();
+    const paperUid = resolvePaperUniverseFromRequest(req);
+    let portfolio = loadPaperPortfolioForUniverse(paperUid);
     if (!portfolio) return res.json({ success: true, portfolio: null });
 
     if (portfolio.holdings.length > 0) {
@@ -11065,8 +11888,9 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
         : null;
 
     const cfg = portfolio.config || {};
+    const paperRlAgent = getRlAgentForPaperPortfolio(portfolio);
     const rlPaperSummaryOn =
-      paperPortfolioRlEnabled(portfolio) && TRAINED_RL_AGENT != null;
+      paperPortfolioRlEnabled(portfolio) && trainedRlAgentReadyForInference(paperRlAgent) && rlEvalEnvEnabled();
 
     res.json({
       success: true,
@@ -11095,7 +11919,7 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
           smallestPosition,
           cashDragRough,
           rlEnabled: rlPaperSummaryOn,
-          rlAgentUpdates: TRAINED_RL_AGENT?.totalUpdates ?? 0,
+          rlAgentUpdates: paperRlAgent?.totalUpdates ?? 0,
           rlLastAction: portfolio._rlLastAction ?? null,
           rlLastState: portfolio._rlLastStateFeatures ?? null,
           rlOnlineLearning: cfg.rlOnlineLearning === true || process.env.RL_ONLINE_LEARNING === '1'
@@ -11118,9 +11942,9 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
 
 // Uses unified DEFAULT_COMPOSITE_WEIGHTS, FACTOR_NAMES, FACTOR_LABELS defined above
 
+/** Config-only: user wants RL overlay when an agent is available (does not require a file on disk). */
 function paperPortfolioRlEnabled(portfolio) {
-  if (TRAINED_RL_AGENT == null) return false;
-  const c = portfolio.config || {};
+  const c = portfolio?.config || {};
   if (c.rlAgent === false || c.rlAgent === 'false' || c.rlAgent === '0') return false;
   if (c.rlAgent === true || c.rlAgent === 'true' || c.rlAgent === '1') return true;
   if (c.useRlAgent === false || c.useRlAgent === 'false') return false;
@@ -11390,12 +12214,18 @@ function generateRebalanceReport(portfolio, sells, rankings, priceHistory, curre
   };
 }
 
-async function paperRebalanceExecute(portfolio, persist) {
-    const { strategy, universe: universeId, topN } = portfolio.config;
+async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
+    const { strategy, topN } = portfolio.config;
+    const universeId = paperTradingUniverseId(portfolio);
     const universe = UNIVERSE_TICKERS[universeId];
     if (!universe) throw new Error('Unknown universe');
 
-    const today = new Date().toISOString().split('T')[0];
+    const serverToday = new Date().toISOString().split('T')[0];
+    let today =
+      typeof execOpts.asOfDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(execOpts.asOfDate.trim())
+        ? execOpts.asOfDate.trim()
+        : serverToday;
+    if (today > serverToday) today = serverToday;
     const lookbackStart = new Date(Date.now() - 500 * 86400000).toISOString().split('T')[0];
 
     const priceHistory = {};
@@ -11487,6 +12317,7 @@ async function paperRebalanceExecute(portfolio, persist) {
     let weightsForRank = { ...weightsBeforeAdaptive };
     const compositePaper =
       strategy === 'full_composite' || strategy === 'full_composite_aggressive' || strategy === 'full_composite_turbo';
+    const paperRlAgentExec = getRlAgentForPaperPortfolio(portfolio);
     if (compositePaper) {
       if (adaptiveModeCfg === 'fixed') {
         weightsForRank = { ...weightsBeforeAdaptive };
@@ -11610,131 +12441,152 @@ async function paperRebalanceExecute(portfolio, persist) {
     let rlPaperMeta = null;
     let rlPaperDecisionForReport = null;
     let rlPaperSkipRebalance = false;
-    if (compositePaper && paperPortfolioRlEnabled(portfolio) && spyPaper?.length && TRAINED_RL_AGENT) {
-      const agent = TRAINED_RL_AGENT;
-      let navPre = portfolio.cash;
-      for (const h of portfolio.holdings) {
-        const ph = priceHistory[h.ticker];
-        const p = ph?.length ? ph[ph.length - 1].close : h.entryPrice;
-        navPre += h.shares * p;
-      }
-      const prevRb =
-        portfolio.rebalanceHistory && portfolio.rebalanceHistory.length > 0
-          ? portfolio.rebalanceHistory[portfolio.rebalanceHistory.length - 1]
-          : null;
-      let recentAlpha = 0;
-      if (prevRb?.date && prevRb.portfolioValue > 0) {
-        const pSpy0 = getPrice(spyPaper, prevRb.date);
-        const pSpy1 = getPrice(spyPaper, today);
-        if (pSpy0 > 0 && pSpy1 > 0) {
-          const spyRet = pSpy1 / pSpy0 - 1;
-          const portRet = navPre / prevRb.portfolioValue - 1;
-          recentAlpha = portRet - spyRet;
-        }
-      }
-      const breadthRatio =
-        typeof regimeMetaPaper.breadthRatio === 'number' && Number.isFinite(regimeMetaPaper.breadthRatio)
-          ? regimeMetaPaper.breadthRatio
-          : 0.5;
-      const stateFeatures = {
-        regimeBucket: regimeStringToBucket(regimeMetaPaper.regime),
-        recentAlpha,
-        breadthRatio,
-        realizedVol: spyRealizedVolAnnualized(spyPaper, today),
-        avgTopScore: avgTopNAvgComposite(rankings, 15)
-      };
-      const stateIdx = encodeState(stateFeatures);
-
-      const onlineRlAllowed =
-        process.env.RL_ONLINE_LEARNING === '1' || portfolio.config.rlOnlineLearning === true;
-      if (
-        onlineRlAllowed &&
-        portfolio._rlPrevState != null &&
-        portfolio._rlPrevAction != null &&
-        portfolio.rebalanceHistory.length > 0
-      ) {
-        const r = paperRlOnlineReward(portfolio, spyPaper, today);
-        agent.update(portfolio._rlPrevState, portfolio._rlPrevAction, r, stateIdx);
-        writeRlAgentFileOnly(agent);
-      }
-
-      const sel = agent.selectAction(stateIdx, true, { randomAction: false });
-      let actionIdxPaper = sel.actionIdx;
-      let dec = decodeAction(actionIdxPaper);
-      let bullFloorAppliedPaper = false;
-      if (regimeMetaPaper.regime === 'strong_bull' && dec.exposure < 0.8) {
-        const bullActionIdxs = [];
-        for (let eIdx = 2; eIdx <= 3; eIdx++) {
-          for (let pIdx = 0; pIdx <= 3; pIdx++) {
-            for (let sIdx = 0; sIdx <= 2; sIdx++) {
-              bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
+    if (compositePaper && paperPortfolioRlEnabled(portfolio) && rlEvalEnvEnabled() && spyPaper?.length) {
+      if (!trainedRlAgentReadyForInference(paperRlAgentExec)) {
+        console.warn(
+          '[RL-PAPER] RL enabled in config but no usable trained agent — using rules-based defaults (regime exposure, topN, invVol, standard rebalance).'
+        );
+      } else {
+        try {
+          const agent = paperRlAgentExec;
+          let navPre = portfolio.cash;
+          for (const h of portfolio.holdings) {
+            const ph = priceHistory[h.ticker];
+            const p = ph?.length ? ph[ph.length - 1].close : h.entryPrice;
+            navPre += h.shares * p;
+          }
+          const prevRb =
+            portfolio.rebalanceHistory && portfolio.rebalanceHistory.length > 0
+              ? portfolio.rebalanceHistory[portfolio.rebalanceHistory.length - 1]
+              : null;
+          let recentAlpha = 0;
+          if (prevRb?.date && prevRb.portfolioValue > 0) {
+            const pSpy0 = getPrice(spyPaper, prevRb.date);
+            const pSpy1 = getPrice(spyPaper, today);
+            if (pSpy0 > 0 && pSpy1 > 0) {
+              const spyRet = pSpy1 / pSpy0 - 1;
+              const portRet = navPre / prevRb.portfolioValue - 1;
+              recentAlpha = portRet - spyRet;
             }
           }
-        }
-        const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
-          agent.getQ(stateIdx, aIdx) > agent.getQ(stateIdx, best) ? aIdx : best,
-          bullActionIdxs[0]
-        );
-        const origExp = dec.exposure;
-        actionIdxPaper = bestBullAction;
-        const decBull = decodeAction(bestBullAction);
-        dec = decBull;
-        bullFloorAppliedPaper = true;
-        console.log(`[RL-PAPER] strong_bull floor: overrode exp=${origExp} → ${decBull.exposure} on ${today}`);
-      }
-      rlPaperSkipRebalance = (dec.rebalanceWait ?? 'standard') === 'skip';
-      portfolio._rlPrevState = stateIdx;
-      portfolio._rlPrevAction = actionIdxPaper;
-      portfolio._rlLastAction = {
-        exposure: dec.exposure,
-        positionCount: dec.positionCount,
-        sizingMethod: dec.sizingMethod,
-        rebalanceWait: dec.rebalanceWait ?? 'standard'
-      };
-      portfolio._rlLastStateFeatures = stateFeatures;
+          const breadthRatio =
+            typeof regimeMetaPaper.breadthRatio === 'number' && Number.isFinite(regimeMetaPaper.breadthRatio)
+              ? regimeMetaPaper.breadthRatio
+              : 0.5;
+          const stateFeatures = {
+            regimeBucket: regimeStringToBucket(regimeMetaPaper.regime),
+            recentAlpha,
+            breadthRatio,
+            realizedVol: spyRealizedVolAnnualized(spyPaper, today),
+            avgTopScore: avgTopNAvgComposite(rankings, 15)
+          };
+          const stateIdx = encodeState(stateFeatures);
 
-      rlPaperExposure = dec.exposure;
-      adjustedTopNPaper = Math.max(3, Math.min(dec.positionCount, rankings.length));
-      positionSizingPaper = dec.sizingMethod;
-      rlPaperMeta = {
-        stateIdx,
-        actionIdx: actionIdxPaper,
-        exposure: dec.exposure,
-        positionCount: dec.positionCount,
-        sizingMethod: dec.sizingMethod,
-        rebalanceWait: dec.rebalanceWait ?? 'standard',
-        fallback: sel.fallback,
-        bullFloorApplied: bullFloorAppliedPaper
-      };
-      rlPaperDecisionForReport = {
-        stateIdx,
-        actionIdx: actionIdxPaper,
-        exposure: dec.exposure,
-        positionCount: dec.positionCount,
-        sizingMethod: dec.sizingMethod,
-        rebalanceWait: dec.rebalanceWait ?? 'standard',
-        fallback: sel.fallback,
-        bullFloorApplied: bullFloorAppliedPaper,
-        stateFeatures: {
-          regime: regimeMetaPaper.regime,
-          regimeBucket: stateFeatures.regimeBucket,
-          recentAlpha: parseFloat(Number(stateFeatures.recentAlpha).toFixed(4)),
-          breadthRatio: parseFloat(Number(stateFeatures.breadthRatio).toFixed(3)),
-          realizedVol: parseFloat(Number(stateFeatures.realizedVol).toFixed(4)),
-          avgTopScore: parseFloat(Number(stateFeatures.avgTopScore).toFixed(1))
-        },
-        note: rlPaperSkipRebalance
-          ? 'RL chose SKIP_REBALANCE — hold portfolio until next cycle'
-          : `RL chose ${(dec.exposure * 100).toFixed(0)}% exposure, ${dec.positionCount} positions, ${dec.sizingMethod} sizing`
-      };
-      console.log(
-        `[RL-PAPER] Rebalance: state=${stateIdx}, exposure=${dec.exposure}, topN=${adjustedTopNPaper}, sizing=${dec.sizingMethod}, wait=${dec.rebalanceWait ?? 'standard'}, fallback=${sel.fallback}, bullFloor=${bullFloorAppliedPaper}`
-      );
+          const onlineRlAllowed =
+            process.env.RL_ONLINE_LEARNING === '1' || portfolio.config.rlOnlineLearning === true;
+          if (
+            onlineRlAllowed &&
+            portfolio._rlPrevState != null &&
+            portfolio._rlPrevAction != null &&
+            portfolio.rebalanceHistory.length > 0
+          ) {
+            const r = paperRlOnlineReward(portfolio, spyPaper, today);
+            agent.update(portfolio._rlPrevState, portfolio._rlPrevAction, r, stateIdx);
+            const uidPaper = paperTradingUniverseId(portfolio);
+            saveRlAgentToDisk(agent, isDqnAgentInstance(agent) ? null : uidPaper);
+            console.log(
+              `[RL-ONLINE] Updated agent for ${uidPaper}: reward=${Number(r).toFixed(4)}, states=${agent.statesVisited}`
+            );
+          }
+
+          const sel = agent.selectAction(stateIdx, true, { randomAction: false });
+          let actionIdxPaper = sel.actionIdx;
+          let dec = decodeAction(actionIdxPaper);
+          let bullFloorAppliedPaper = false;
+          if (regimeMetaPaper.regime === 'strong_bull' && dec.exposure < 0.8) {
+            const bullActionIdxs = [];
+            for (let eIdx = 2; eIdx <= 3; eIdx++) {
+              for (let pIdx = 0; pIdx <= 3; pIdx++) {
+                for (let sIdx = 0; sIdx <= 2; sIdx++) {
+                  bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
+                }
+              }
+            }
+            const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
+              agent.getQ(stateIdx, aIdx) > agent.getQ(stateIdx, best) ? aIdx : best,
+              bullActionIdxs[0]
+            );
+            const origExp = dec.exposure;
+            actionIdxPaper = bestBullAction;
+            const decBull = decodeAction(bestBullAction);
+            dec = decBull;
+            bullFloorAppliedPaper = true;
+            console.log(`[RL-PAPER] strong_bull floor: overrode exp=${origExp} → ${decBull.exposure} on ${today}`);
+          }
+          rlPaperSkipRebalance = (dec.rebalanceWait ?? 'standard') === 'skip';
+          portfolio._rlPrevState = stateIdx;
+          portfolio._rlPrevAction = actionIdxPaper;
+          portfolio._rlLastAction = {
+            exposure: dec.exposure,
+            positionCount: dec.positionCount,
+            sizingMethod: dec.sizingMethod,
+            rebalanceWait: dec.rebalanceWait ?? 'standard'
+          };
+          portfolio._rlLastStateFeatures = stateFeatures;
+
+          rlPaperExposure = dec.exposure;
+          adjustedTopNPaper = Math.max(3, Math.min(dec.positionCount, rankings.length));
+          positionSizingPaper = dec.sizingMethod;
+          rlPaperMeta = {
+            stateIdx,
+            actionIdx: actionIdxPaper,
+            exposure: dec.exposure,
+            positionCount: dec.positionCount,
+            sizingMethod: dec.sizingMethod,
+            rebalanceWait: dec.rebalanceWait ?? 'standard',
+            fallback: sel.fallback,
+            bullFloorApplied: bullFloorAppliedPaper
+          };
+          rlPaperDecisionForReport = {
+            stateIdx,
+            actionIdx: actionIdxPaper,
+            exposure: dec.exposure,
+            positionCount: dec.positionCount,
+            sizingMethod: dec.sizingMethod,
+            rebalanceWait: dec.rebalanceWait ?? 'standard',
+            fallback: sel.fallback,
+            bullFloorApplied: bullFloorAppliedPaper,
+            stateFeatures: {
+              regime: regimeMetaPaper.regime,
+              regimeBucket: stateFeatures.regimeBucket,
+              recentAlpha: parseFloat(Number(stateFeatures.recentAlpha).toFixed(4)),
+              breadthRatio: parseFloat(Number(stateFeatures.breadthRatio).toFixed(3)),
+              realizedVol: parseFloat(Number(stateFeatures.realizedVol).toFixed(4)),
+              avgTopScore: parseFloat(Number(stateFeatures.avgTopScore).toFixed(1))
+            },
+            note: rlPaperSkipRebalance
+              ? 'RL chose SKIP_REBALANCE — hold portfolio until next cycle'
+              : `RL chose ${(dec.exposure * 100).toFixed(0)}% exposure, ${dec.positionCount} positions, ${dec.sizingMethod} sizing`
+          };
+          console.log(
+            `[RL-PAPER] Rebalance: state=${stateIdx}, exposure=${dec.exposure}, topN=${adjustedTopNPaper}, sizing=${dec.sizingMethod}, wait=${dec.rebalanceWait ?? 'standard'}, fallback=${sel.fallback}, bullFloor=${bullFloorAppliedPaper}`
+          );
+        } catch (rlErr) {
+          console.warn('[RL-PAPER] RL decision failed — using rules-based defaults:', rlErr?.message || rlErr);
+        }
+      }
     }
 
     {
       const hardMaxPaper = REGIME_MAX_POSITIONS[regimeMetaPaper.regime] ?? 13;
-      if (compositePaper && paperPortfolioRlEnabled(portfolio) && spyPaper?.length && TRAINED_RL_AGENT) {
+      if (
+        compositePaper &&
+        paperPortfolioRlEnabled(portfolio) &&
+        rlEvalEnvEnabled() &&
+        spyPaper?.length &&
+        trainedRlAgentReadyForInference(paperRlAgentExec) &&
+        rlPaperMeta
+      ) {
         adjustedTopNPaper = Math.max(3, Math.min(adjustedTopNPaper, hardMaxPaper, rankings.length));
       } else {
         adjustedTopNPaper = Math.max(3, Math.min(adjustedTopNPaper, Math.min(topN, hardMaxPaper), rankings.length));
@@ -11818,8 +12670,9 @@ async function paperRebalanceExecute(portfolio, persist) {
     const rlCompositeActivePaper =
       compositePaper &&
       paperPortfolioRlEnabled(portfolio) &&
+      rlEvalEnvEnabled() &&
       spyPaper?.length &&
-      TRAINED_RL_AGENT &&
+      trainedRlAgentReadyForInference(paperRlAgentExec) &&
       rlPaperMeta;
     const lastRebalanceRegimePaper = portfolio.lastRebalanceRegime;
     const minHoldDaysForSell =
@@ -12047,11 +12900,11 @@ async function paperRebalanceExecute(portfolio, persist) {
       valuationScore: p.valuationScore,
       valueScore: p.valueScore,
       dcfScore: p.dcfScore,
-      earningsMomentum: p.earningsMomentumScore ?? 50
+      earningsMomentum: p.earningsMomentumScore != null && Number.isFinite(p.earningsMomentumScore) ? p.earningsMomentumScore : null
     }));
 
     // Take NAV snapshot first to get live prices
-    portfolio = await takeNavSnapshot(portfolio, { skipSave: true });
+    portfolio = await takeNavSnapshot(portfolio, { skipSave: true, snapshotDate: today });
 
     const livePortfolioValue = portfolio.navHistory.length > 0
       ? portfolio.navHistory[portfolio.navHistory.length - 1].portfolioValue
@@ -12165,6 +13018,16 @@ async function paperRebalanceExecute(portfolio, persist) {
       stops: stopsHoisted,
       portfolioValue: parseFloat(livePortfolioValue.toFixed(2)),
       cash: parseFloat(portfolio.cash.toFixed(2)),
+      portfolio: {
+        asOfDate: today,
+        cash: parseFloat(portfolio.cash.toFixed(2)),
+        totalValue: parseFloat(livePortfolioValue.toFixed(2)),
+        initialCapital: portfolio.initialCapital,
+        holdings: portfolio.holdings,
+        positions: portfolio.holdings,
+        holdingsCount: portfolio.holdings.length,
+        config: portfolio.config
+      },
       report: report || null,
       rebalance: {
         date: today,
@@ -12204,11 +13067,13 @@ async function paperRebalanceExecute(portfolio, persist) {
 app.post('/api/paper-trade/rebalance', async (req, res) => {
   try {
     clearBacktestRuntimeCaches();
-    const portfolio = loadPortfolio();
+    const paperUid = resolvePaperUniverseFromRequest(req);
+    const portfolio = loadPaperPortfolioForUniverse(paperUid);
     if (!portfolio) {
       return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
     }
-    const out = await paperRebalanceExecute(portfolio, true);
+    const asOf = resolvePaperAsOfDate(req.body || {});
+    const out = await paperRebalanceExecute(portfolio, true, { asOfDate: asOf });
     res.json(out);
   } catch (e) {
     if (e && e.message === 'Unknown universe') {
@@ -12224,12 +13089,14 @@ app.post('/api/paper-trade/rebalance', async (req, res) => {
 app.get('/api/paper-trade/preview', async (req, res) => {
   try {
     clearBacktestRuntimeCaches();
-    const p = loadPortfolio();
+    const paperUid = resolvePaperUniverseFromRequest(req);
+    const p = loadPaperPortfolioForUniverse(paperUid);
     if (!p) {
       return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
     }
     const portfolio = structuredClone(p);
-    const out = await paperRebalanceExecute(portfolio, false);
+    const asOf = resolvePaperAsOfDate(req.query || {});
+    const out = await paperRebalanceExecute(portfolio, false, { asOfDate: asOf });
     res.json({ ...out, preview: true });
   } catch (e) {
     if (e && e.message === 'Unknown universe') {
@@ -12244,7 +13111,8 @@ app.get('/api/paper-trade/preview', async (req, res) => {
 
 app.get('/api/paper-trade/schedule', (req, res) => {
   try {
-    const portfolio = loadPortfolio();
+    const paperUid = resolvePaperUniverseFromRequest(req);
+    const portfolio = loadPaperPortfolioForUniverse(paperUid);
     if (!portfolio) {
       return res.status(404).json({ success: false, error: 'No portfolio. POST /api/paper-trade/init first.' });
     }
@@ -12259,7 +13127,8 @@ app.get('/api/paper-trade/schedule', (req, res) => {
 // =====================================================================
 
 app.get('/api/paper-trade/history', (req, res) => {
-  const portfolio = loadPortfolio();
+  const paperUid = resolvePaperUniverseFromRequest(req);
+  const portfolio = loadPaperPortfolioForUniverse(paperUid);
   if (!portfolio) return res.json({ success: true, history: null });
 
   res.json({
@@ -12282,7 +13151,8 @@ app.get('/api/paper-trade/rebalance-entry', (req, res) => {
   if (!date || typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
     return res.status(400).json({ success: false, error: 'Missing or invalid date (use YYYY-MM-DD)' });
   }
-  const portfolio = loadPortfolio();
+  const paperUid = resolvePaperUniverseFromRequest(req);
+  const portfolio = loadPaperPortfolioForUniverse(paperUid);
   if (!portfolio) {
     return res.status(404).json({ success: false, error: 'No paper portfolio' });
   }
@@ -12350,9 +13220,17 @@ app.get('/api/options/scan', async (req, res) => {
     const pit = await loadPitFundamentalsForUniverse(universe, today, priceHistory);
     const fundamentalsLive = pit.map;
 
-    const weights = { fundamental: 0.2, momentum: 0.4, value: 0.4, dcf: 0, valuation: 0, earningsMomentum: 0 };
-    const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, weights, {
-      earningsMap: null
+    const scanWeights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+    let earningsMapScan = null;
+    if ((scanWeights.earningsMomentum ?? 0) > 1e-9) {
+      try {
+        earningsMapScan = await fetchAllEarnings(universe);
+      } catch (e) {
+        console.warn('[OPTIONS SCAN] fetchAllEarnings failed:', e.message);
+      }
+    }
+    const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, scanWeights, {
+      earningsMap: earningsMapScan
     });
 
     const spySeries = priceHistory['SPY'];
@@ -12362,15 +13240,22 @@ app.get('/api/options/scan', async (req, res) => {
         : { regime: 'normal', breadthRatio: null };
 
     const opportunities = [];
+    const slice = rankings.slice(0, 30);
+    let scanEvaluated = 0;
+    let scanPassedCcScore = 0;
+    let scanPassedCcIvr = 0;
+    let scanPassedCspScore = 0;
 
-    for (const stock of rankings.slice(0, 30)) {
+    for (const stock of slice) {
       const { ticker, compositeScore, price } = stock;
       if (!ticker || price == null || !Number.isFinite(Number(price))) continue;
+      scanEvaluated++;
 
       const ivRank = await getIvRank(ticker);
       const chain = await getOptionsChain(ticker, Number(price), null, { liveChainMode: 'single' });
 
-      if (compositeScore >= 55 && compositeScore <= 75 && ivRank >= 40) {
+      if (compositeScore >= 52 && compositeScore <= 78 && ivRank >= 40) {
+        scanPassedCcScore++;
         const ccCandidates = chain
           .filter(
             (o) =>
@@ -12382,6 +13267,7 @@ app.get('/api/options/scan', async (req, res) => {
           )
           .sort((a, b) => b.mid - a.mid);
         if (ccCandidates.length > 0) {
+          scanPassedCcIvr++;
           const cc = ccCandidates[0];
           const annualizedYield = (cc.mid / Number(price)) * (365 / cc.dte) * 100;
           opportunities.push({
@@ -12414,7 +13300,8 @@ app.get('/api/options/scan', async (req, res) => {
         }
       }
 
-      if (compositeScore >= 72 && ivRank >= 35) {
+      if (compositeScore >= 68 && ivRank >= 35) {
+        scanPassedCspScore++;
         const cspCandidates = chain
           .filter(
             (o) =>
@@ -12511,6 +13398,10 @@ app.get('/api/options/scan', async (req, res) => {
         }
       }
     }
+
+    console.log(
+      `[OPTIONS SCAN] universe=${universeId} tickersEvaluated=${scanEvaluated} CC_band=${scanPassedCcScore} CC_withChain=${scanPassedCcIvr} CSP_prefilter=${scanPassedCspScore} opportunities=${opportunities.length}`
+    );
 
     opportunities.sort((a, b) => {
       if (a.strategy === 'REGIME_HEDGE' && b.strategy !== 'REGIME_HEDGE') return -1;
@@ -12891,6 +13782,359 @@ function weightSweepShortLabel(w) {
 }
 
 /**
+ * POST /api/diagnostics/forward-confidence
+ * Sub-period backtests + regime split; forward score (0–1) and estimated annual alpha.
+ */
+app.post('/api/diagnostics/forward-confidence', async (req, res) => {
+  req.setTimeout(600000);
+  res.setTimeout(600000);
+  try {
+    clearBacktestRuntimeCaches();
+    const body = req.body || {};
+    const universeId = String(body.universeId || '').trim();
+    const period = String(body.period || '3y').trim();
+    const weights = normalizeWeightSweepWeights(body.weights);
+    const topN = Math.max(1, parseInt(String(body.topN ?? '15'), 10) || 15);
+    const capital = parseFloat(String(body.initialCapital ?? '10000')) || 10000;
+    if (!weights) {
+      return res.status(400).json({ success: false, error: 'Invalid weights (expect pillar weights summing to ~1)' });
+    }
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) {
+      return res.status(400).json({ success: false, error: 'Unknown universeId' });
+    }
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+    const mainDays = periodDays[period] || 1095;
+    const endDate = new Date();
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const fetchDays = Math.max(mainDays, 1825) + 400;
+    const dataStart = new Date(endDate.getTime() - fetchDays * 86400000);
+    const startDateStr = dataStart.toISOString().split('T')[0];
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY' });
+    }
+    const simOptionsBase = {
+      adaptiveMode: 'fixed',
+      positionSizing: 'invVol',
+      regimeEnabled: true,
+      rlAgent: false,
+      rlMode: 'off',
+      skipMlRankingAdjustments: true,
+      correlationFilter: false,
+      maxCorrelated: 3,
+      correlationLookbackDays: 60
+    };
+    const runWindow = async (daysWindow) => {
+      const start = new Date(endDate.getTime() - daysWindow * 86400000).toISOString().split('T')[0];
+      const rebalanceDates = getRebalanceDates(start, endDateStr, 'bimonthly');
+      if (rebalanceDates.length < 2) return null;
+      const simStart = rebalanceDates[0];
+      const simEnd = rebalanceDates[rebalanceDates.length - 1];
+      const cpiObsStart = subtractMonths(simStart, 60);
+      const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, process.env.FRED_API_KEY);
+      const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+        cpiObservations,
+        simStart,
+        INFLATION_BASELINE_ANNUAL
+      );
+      return runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        'full_composite',
+        weights,
+        cashInflationMult,
+        universeId,
+        { ...simOptionsBase }
+      );
+    };
+    const primarySim = await runWindow(mainDays);
+    if (!primarySim?.dailyValues?.length) {
+      return res.status(500).json({ success: false, error: 'Primary simulation failed' });
+    }
+    const primaryPerf = extractDiagnosticPerformance(primarySim, capital);
+    const primaryAlphaPct = primaryPerf ? parseFloat(primaryPerf.alpha) : 0;
+    const regimeSplit = computeRegimeSplitPerformance(
+      primarySim.dailyValues,
+      spyPrices,
+      universe,
+      priceHistory
+    );
+    const regimeDiversification = buildRegimeDiversification(regimeSplit);
+    const subperiodAnalysis = {};
+    const subAlphas = [];
+    for (const sk of ['1y', '2y', '3y', '5y']) {
+      const d = periodDays[sk];
+      if (mainDays < d) continue;
+      const sim = await runWindow(d);
+      const perf = sim ? extractDiagnosticPerformance(sim, capital) : null;
+      if (perf) {
+        subperiodAnalysis[sk] = {
+          totalReturn: parseFloat(perf.totalReturn),
+          alpha: parseFloat(perf.alpha),
+          sharpe: parseFloat(perf.sharpe),
+          maxDrawdown: parseFloat(perf.maxDrawdown)
+        };
+        subAlphas.push(parseFloat(perf.alpha));
+      }
+    }
+    console.log('[FORWARD] subperiod alphas:', {
+      '1y': subperiodAnalysis['1y']?.alpha,
+      '2y': subperiodAnalysis['2y']?.alpha,
+      '3y': subperiodAnalysis['3y']?.alpha
+    });
+    const deep = mergeDeepForwardScores(subAlphas, regimeDiversification, weights, primaryAlphaPct);
+    const interpretation = buildForwardInterpretationLine(
+      deep.scores,
+      regimeDiversification,
+      {
+        stableSignal: deep.scores.stability >= 0.55,
+        regimeRobust: (regimeDiversification?.positiveAlphaRegimes ?? 0) >= 2,
+        recencyWarning: deep.scores.recencyDiscount < 0.45
+      }
+    );
+    res.json({
+      success: true,
+      universeId,
+      period,
+      weights,
+      subperiodAnalysis,
+      regimeSplit,
+      regimeDiversification,
+      scores: deep.scores,
+      forwardEstimate: deep.forwardEstimate,
+      interpretation
+    });
+  } catch (error) {
+    console.error('[diagnostics/forward-confidence]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/**
+ * POST /api/diagnostics/forward-weight-recommendation
+ * Reuses weight-sweep grid; ranks by forward confidence (not OOS Sharpe).
+ */
+app.post('/api/diagnostics/forward-weight-recommendation', async (req, res) => {
+  req.setTimeout(21600000);
+  res.setTimeout(21600000);
+  const body = req.body || {};
+  const universeId = String(body.universeId || '').trim();
+  const trainPeriod = String(body.period || body.trainPeriod || '3y').trim();
+  const testPeriod = String(body.testPeriod || '1y').trim();
+  const topN = Math.max(1, parseInt(String(body.topN ?? '15'), 10) || 15);
+  const capital = parseFloat(String(body.initialCapital ?? '10000')) || 10000;
+  const universe = UNIVERSE_TICKERS[universeId];
+  if (!universe) {
+    return res.status(400).json({ success: false, error: 'Unknown universeId' });
+  }
+  let weightConfigs = Array.isArray(body.configs) ? body.configs : [];
+  if (weightConfigs.length === 0) {
+    weightConfigs = generateDefaultWeightSweepConfigs();
+  } else {
+    weightConfigs = weightConfigs.map((c) => normalizeWeightSweepWeights(c)).filter(Boolean);
+  }
+  if (weightConfigs.length === 0) {
+    return res.status(400).json({ success: false, error: 'No valid weight configs' });
+  }
+  const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+  const trainDays = periodDays[trainPeriod] || periodDays['3y'];
+  const testDays = periodDays[testPeriod] || periodDays['1y'];
+  const fetchDays = Math.max(trainDays, testDays, periodDays['3y']);
+  const endDate = new Date();
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const dataStart = new Date(endDate.getTime() - fetchDays * 86400000 - 400 * 86400000);
+  const startDateStr = dataStart.toISOString().split('T')[0];
+  const simOptionsBase = {
+    adaptiveMode: 'fixed',
+    positionSizing: 'invVol',
+    regimeEnabled: true,
+    rlAgent: false,
+    rlMode: 'off',
+    skipMlRankingAdjustments: true,
+    correlationFilter:
+      body.correlationFilter === true ||
+      body.correlationFilter === 'true' ||
+      String(body.correlationFilter || '').toLowerCase() === 'true',
+    maxCorrelated:
+      body.maxCorrelated != null && Number.isFinite(Number(body.maxCorrelated))
+        ? Math.max(1, Math.floor(Number(body.maxCorrelated)))
+        : 3,
+    correlationLookbackDays:
+      body.correlationLookbackDays != null && Number.isFinite(Number(body.correlationLookbackDays))
+        ? Math.max(20, Math.floor(Number(body.correlationLookbackDays)))
+        : 60
+  };
+  try {
+    clearBacktestRuntimeCaches();
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter((t) => t && t.trim() !== '');
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+    const fundamentals = {};
+    const tickersForFundamentals = tickersToFetch.filter((t) => t !== 'SPY');
+    const fundRows = await mapWithConcurrency(tickersForFundamentals, FUNDAMENTALS_FETCH_CONCURRENCY, async (ticker) => {
+      const fund = await fetchFundamentals(ticker);
+      return { ticker, fund };
+    });
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY' });
+    }
+    const backtestStartTrain = new Date(endDate.getTime() - trainDays * 86400000).toISOString().split('T')[0];
+    const backtestStartOos = new Date(endDate.getTime() - testDays * 86400000).toISOString().split('T')[0];
+    const rebalanceDatesTrain = getRebalanceDates(backtestStartTrain, endDateStr, 'bimonthly');
+    const rebalanceDatesOos = getRebalanceDates(backtestStartOos, endDateStr, 'bimonthly');
+    if (rebalanceDatesTrain.length < 2 || rebalanceDatesOos.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+    const simEnd = rebalanceDatesTrain[rebalanceDatesTrain.length - 1];
+    const cpiObsStart = subtractMonths(rebalanceDatesTrain[0], 60);
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, process.env.FRED_API_KEY);
+    const runOnePeriod = async (weights, rebalanceDates) => {
+      const simStart = rebalanceDates[0];
+      const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+        cpiObservations,
+        simStart,
+        INFLATION_BASELINE_ANNUAL
+      );
+      return runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        'full_composite',
+        weights,
+        cashInflationMult,
+        universeId,
+        { ...simOptionsBase }
+      );
+    };
+    const ranked = [];
+    let bestOos = null;
+    for (let i = 0; i < weightConfigs.length; i++) {
+      const wts = weightConfigs[i];
+      const simTrain = await runOnePeriod(wts, rebalanceDatesTrain);
+      const simOos = await runOnePeriod(wts, rebalanceDatesOos);
+      const inSample = weightSweepPerfRow(simTrain, capital);
+      const outOfSample = weightSweepPerfRow(simOos, capital);
+      const monthly = buildMonthlyReturnsFromDailyValues(simTrain.dailyValues || []);
+      const rs = computeRegimeSplitPerformance(
+        simTrain.dailyValues || [],
+        spyPrices,
+        universe,
+        priceHistory
+      );
+      const rd = buildRegimeDiversification(rs);
+      const fl = buildForwardScoresAndEstimate({
+        monthlyWithReturns: monthly,
+        regimeDiversification: rd,
+        weights: wts,
+        historicalAnnualAlphaPct: inSample.alpha
+      });
+      if (
+        outOfSample.alpha > 0 &&
+        (!bestOos || outOfSample.sharpe > bestOos.oosSharpe)
+      ) {
+        bestOos = {
+          weights: { ...wts },
+          oosSharpe: outOfSample.sharpe,
+          oosAlpha: outOfSample.alpha,
+          forwardConfidence: fl.scores.forwardConfidence
+        };
+      }
+      ranked.push({
+        weights: wts,
+        forwardConfidence: fl.scores.forwardConfidence,
+        estimatedAnnualAlpha: fl.forwardEstimate.estimatedAnnualAlpha,
+        oosSharpe: outOfSample.sharpe,
+        oosAlpha: outOfSample.alpha,
+        inSampleSharpe: inSample.sharpe,
+        stability: `${Math.round(fl.scores.stability * 100)}% stability score`,
+        robustness: `${rd.positiveAlphaRegimes}/${rd.totalRegimesObserved || 0} regimes α>0`,
+        simplicity: `${FACTOR_NAMES.filter((f) => Math.abs(wts[f] || 0) > 1e-6).length} active factors`,
+        scores: fl.scores
+      });
+    }
+    ranked.sort((a, b) => b.forwardConfidence - a.forwardConfidence);
+    const top5 = ranked.slice(0, 5);
+    const simplestAmongTop = [...top5].sort(
+      (a, b) => FACTOR_NAMES.filter((f) => Math.abs(a.weights[f] || 0) > 1e-6).length -
+        FACTOR_NAMES.filter((f) => Math.abs(b.weights[f] || 0) > 1e-6).length
+    )[0];
+    const recommendation = top5.length
+      ? {
+          weights: simplestAmongTop?.weights || top5[0].weights,
+          reason: 'Highest forward confidence with simplest weight structure among top tier'
+        }
+      : null;
+    const survivors = ranked.filter((r) => r.oosAlpha > 0);
+    survivors.sort((a, b) => b.oosSharpe - a.oosSharpe);
+    const oldPick = survivors[0];
+    res.json({
+      success: true,
+      swept: weightConfigs.length,
+      rankedByForwardConfidence: ranked.slice(0, Math.min(5, ranked.length)),
+      recommendation,
+      previousRecommendation: oldPick
+        ? {
+            weights: oldPick.weights,
+            oosSharpe: oldPick.oosSharpe,
+            forwardConfidence: oldPick.forwardConfidence,
+            whyItIsWorse:
+              oldPick.forwardConfidence < (top5[0]?.forwardConfidence ?? 0)
+                ? 'Peak OOS Sharpe can be noisy; this config scores lower on stability / regime robustness / simplicity.'
+                : 'Shown for comparison with legacy OOS-Sharpe-only ranking.',
+            whyDifferent:
+              'Legacy rank used out-of-sample Sharpe only; forward score penalizes unstable / regime-concentrated / complex configs.'
+          }
+        : null
+    });
+  } catch (error) {
+    console.error('[diagnostics/forward-weight-recommendation]', error);
+    res.status(500).json({ success: false, error: error.message || String(error) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+/**
  * POST /api/diagnostics/weight-sweep
  * Walk-forward style screen: 3y in-sample proxy + 1y OOS per weight vector; rank by OOS Sharpe.
  */
@@ -13147,6 +14391,10 @@ app.get('/api/health', (req, res) => {
 // Use explicit `listening` / `error` handlers instead of passing a callback to listen().
 const server = app.listen(PORT);
 server.once('listening', () => {
+  ensureDualPaperPortfoliosInitialized();
+  console.log(
+    `[Yahoo] throttle: chartConcurrency=${YAHOO_CHART_CONCURRENCY} fundamentalsConcurrency=${FUNDAMENTALS_FETCH_CONCURRENCY} chartDelayMs=${YAHOO_CHART_DELAY_MS} (env: YAHOO_CHART_CONCURRENCY, YAHOO_FUNDAMENTALS_CONCURRENCY, YAHOO_CHART_DELAY_MS)`
+  );
   console.log(`Server running on http://localhost:${PORT}`);
 });
 server.on('error', (err) => {

@@ -49,7 +49,7 @@ const STATE_FEATURES = {
 const ALPHA_REP = [-0.06, -0.035, -0.01, 0.01, 0.035, 0.06];
 const BREADTH_REP = [0.2, 0.4, 0.6, 0.85];
 const VOL_REP = [0.08, 0.125, 0.2, 0.35];
-const SIGNAL_REP = [45, 60, 70, 80];
+const SIGNAL_REP = [83, 84.5, 87, 90];
 
 function decodedBinsToEncodeFeatures(d) {
   return {

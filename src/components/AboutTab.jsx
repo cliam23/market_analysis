@@ -68,7 +68,26 @@ export default function AboutTab() {
         </p>
       </div>
 
-      <Section title="Start here: running the app" defaultOpen={true}>
+      <Section title="Forward performance (how to read results)" defaultOpen={true}>
+        <p style={{ margin: "0 0 12px" }}>
+          This system is optimized for <strong style={{ color: "#f0f0f0" }}>forward</strong> expectations, not maximizing a single backtest number.
+          Every backtest and paper stat is <strong style={{ color: "#f0f0f0" }}>past data</strong>, including out-of-sample splits. The{" "}
+          <strong style={{ color: "#f0f0f0" }}>forward estimate</strong> and <strong style={{ color: "#f0f0f0" }}>forward confidence</strong>{" "}
+          blend sub-period stability, regime robustness, weight simplicity, and a discount when recent years look much stronger than the long run.
+        </p>
+        <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.75 }}>
+          <li>Prefer durable factor weights over the peak-alpha corner of the grid.</li>
+          <li>Discount periods where recent performance dominates long-run averages.</li>
+          <li>Favor fewer active factors when weights look like overfit tinkering.</li>
+          <li>Require economic rationale (why should the edge persist?), not only curve fit.</li>
+          <li>
+            <strong style={{ color: "#f0f0f0" }}>RL agent:</strong> parked by default when policy evaluation is off—pattern-matching RL
+            needs a structural story before re-enabling.
+          </li>
+        </ul>
+      </Section>
+
+      <Section title="Start here: running the app" defaultOpen={false}>
         <p style={{ margin: "0 0 12px" }}>
           The UI talks to a <strong style={{ color: "#f0f0f0" }}>Node server</strong> that loads prices and fundamentals, scores tickers, runs backtests, and stores paper portfolios.
           From the project folder, use <strong style={{ color: "#f0f0f0" }}>npm run dev:all</strong> so the API and the Vite front end run together.
@@ -192,7 +211,7 @@ export default function AboutTab() {
 
       <Section title="Optional Python Random Forest (admin / .env)">
         <p style={{ margin: "0 0 10px" }}>
-          The <strong style={{ color: "#f0f0f0" }}>tabular RF rank blend</strong> is <strong style={{ color: "#f0f0f0" }}>off by default</strong> and unrelated to Q-learning. To use it you need Python dependencies (see <strong style={{ color: "#f0f0f0" }}>ml/README.md</strong>), a trained model under <strong style={{ color: "#f0f0f0" }}>models/</strong>, and typically a virtualenv the server can invoke.
+          The <strong style={{ color: "#f0f0f0" }}>tabular RF rank blend</strong> is <strong style={{ color: "#f0f0f0" }}>off by default</strong> and unrelated to Q-learning. To use it you need Python dependencies (see <strong style={{ color: "#f0f0f0" }}>README.md (ML layer section)</strong>), a trained model under <strong style={{ color: "#f0f0f0" }}>models/</strong>, and typically a virtualenv the server can invoke.
         </p>
         <ul style={{ margin: "0 0 10px", paddingLeft: 18, lineHeight: 2 }}>
           <li><strong style={{ color: "#f0f0f0" }}>ML_RANK_WEIGHT</strong> (0–1): blends the model into <strong style={{ color: "#f0f0f0" }}>composite ranking</strong> on paper rebalance and on composite <strong style={{ color: "#f0f0f0" }}>backtest</strong> rebalances. Higher values give more influence to the learned score. Requires a compatible trained RF pipeline.</li>

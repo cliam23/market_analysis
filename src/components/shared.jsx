@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-export { MONO, SANS, TEXT, GREEN, RED, AMBER } from "../lib/theme.js";
-import { SANS } from "../lib/theme.js";
+import { MONO } from "../lib/theme.js";
 
 /** Primary run / scan / cancel actions: dedicated row, right-aligned (Backtest, Rankings, Search, etc.). */
 export const RUN_ACTION_BAR_STYLE = {
@@ -178,6 +177,44 @@ export function fmtPct(pct, signed = false) {
   const val = parseFloat(pct);
   const sign = signed && val > 0 ? "+" : "";
   return sign + val.toFixed(1) + "%";
+}
+
+export function Select({ value, onChange, options, label, style, compact }) {
+  const labelSize = compact ? 9 : 10;
+  const labelMb = compact ? 2 : 4;
+  const pad = compact ? "5px 8px" : "8px 10px";
+  const fontSize = compact ? 11 : 12;
+  return (
+    <div style={{ minWidth: 0, width: "100%", ...style }}>
+      {label && (
+        <div style={{ fontSize: labelSize, color: "#f0f0f0", fontWeight: 700, letterSpacing: compact ? 0.6 : 1, marginBottom: labelMb, fontFamily: MONO }}>
+          {label}
+        </div>
+      )}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: compact ? 5 : 6,
+          padding: pad,
+          color: "#f0f0f0",
+          fontSize,
+          fontFamily: MONO,
+          cursor: "pointer",
+          width: "100%",
+          minWidth: 0,
+          maxWidth: "100%",
+          boxSizing: "border-box"
+        }}
+      >
+        {options.map(o => (
+          <option key={o.id} value={o.id}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 export function TrendBadge({ status }) {

@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Box, Pill, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
+import { apiFetch } from "../lib/api.js";
 import { MONO, SANS, TEXT, GREEN, RED, AMBER, BORDER_LIGHT } from "../lib/theme.js";
+import { fmtMoney as _fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters.js";
+
+const fmtMoney = (n) => _fmtMoney(n, 2);
 
 const CARD_BORDER = "1px solid rgba(255,255,255,0.08)";
 const STRATEGY = {
@@ -8,18 +12,6 @@ const STRATEGY = {
   CASH_SECURED_PUT: { label: "CASH-SECURED PUT", border: "#3b82f6", bg: "rgba(59,130,246,0.15)", fg: "#3b82f6" },
   REGIME_HEDGE: { label: "REGIME HEDGE", border: "#ef4444", bg: "rgba(239,68,68,0.15)", fg: "#ef4444" }
 };
-
-function fmtMoney(n) {
-  if (n == null || Number.isNaN(Number(n))) return "—";
-  return `$${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function fmtPct(n, digits = 2) {
-  if (n == null || Number.isNaN(Number(n))) return "—";
-  const v = Number(n);
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(digits)}%`;
-}
 
 function fmtIv(iv) {
   if (iv == null || Number.isNaN(Number(iv))) return "—";
@@ -118,7 +110,7 @@ export default function OptionsTab({ visible = true }) {
     setScanLoading(true);
     setScanError(null);
     try {
-      const res = await fetch("/api/options/scan");
+      const res = await apiFetch("/api/options/scan");
       const j = await res.json();
       if (!j.success) throw new Error(j.error || "Scan failed");
       setScan(j);
@@ -133,7 +125,7 @@ export default function OptionsTab({ visible = true }) {
   const fetchPortfolio = useCallback(async () => {
     setPfLoading(true);
     try {
-      const res = await fetch("/api/options/paper/portfolio");
+      const res = await apiFetch("/api/options/paper/portfolio");
       const j = await res.json();
       if (!j.success) throw new Error(j.error || "Portfolio failed");
       setPortfolioWrap(j.portfolio);
@@ -213,7 +205,7 @@ export default function OptionsTab({ visible = true }) {
         iv: opp.iv,
         ivRank: opp.ivRank
       };
-      const res = await fetch("/api/options/paper/open", {
+      const res = await apiFetch("/api/options/paper/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -236,7 +228,7 @@ export default function OptionsTab({ visible = true }) {
     if (!closeModal) return;
     setCloseSubmitting(true);
     try {
-      const res = await fetch("/api/options/paper/close", {
+      const res = await apiFetch("/api/options/paper/close", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -269,7 +261,7 @@ export default function OptionsTab({ visible = true }) {
     }
     setDeletingId(pos.id);
     try {
-      const res = await fetch("/api/options/paper/delete", {
+      const res = await apiFetch("/api/options/paper/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ positionId: pos.id })

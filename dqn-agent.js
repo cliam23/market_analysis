@@ -1,8 +1,10 @@
 /**
  * Deep Q-Network portfolio policy (same action space as q-learning-agent.js: 96 discrete actions).
  *
- * Uses `@tensorflow/tfjs` (pure JS CPU backend). `@tensorflow/tfjs-node` is optional
- * for speed but often fails on very new Node or paths with spaces — install locally if needed.
+ * Prefers `@tensorflow/tfjs-node` (native libtensorflow) when installed — see
+ * https://github.com/tensorflow/tfjs-node . Falls back to `@tensorflow/tfjs` CPU.
+ * Native install needs a supported Node LTS (e.g. 20/22); very new Node, or a project
+ * path containing spaces, can prevent the addon from building (optional npm install).
  *
  * `encodeState(obs)` returns a **5-dimensional** normalized vector for the DQN.
  * For the legacy discrete index used by `server.js` today, use `encodeDiscreteStateIndex(obs)`.
@@ -13,7 +15,20 @@
  * Zero imports from server.js.
  */
 
-import * as tf from '@tensorflow/tfjs';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+
+const tf = (() => {
+  try {
+    return require('@tensorflow/tfjs-node');
+  } catch {
+    console.warn(
+      '[DQN] @tensorflow/tfjs-node not loaded — using @tensorflow/tfjs (CPU). For native speed: npm install (optional) with Node 20/22 LTS and a project path without spaces. https://github.com/tensorflow/tfjs-node'
+    );
+    return require('@tensorflow/tfjs');
+  }
+})();
 
 // ── Shared constants (match q-learning-agent.js) ───────────────────────────
 
@@ -30,7 +45,7 @@ export const REGIME_BUCKET_MAP = {
 export const ALPHA_BINS = [-Infinity, -0.05, -0.02, 0, 0.02, 0.05, Infinity];
 export const BREADTH_BINS = [-Infinity, 0.3, 0.5, 0.7, Infinity];
 export const VOL_BINS = [-Infinity, 0.1, 0.15, 0.25, Infinity];
-export const SIGNAL_BINS = [-Infinity, 84, 89, 91, Infinity];
+export const SIGNAL_BINS = [-Infinity, 84, 85.5, 88, Infinity];
 
 export const N_REGIME = 5;
 export const N_ALPHA = 6;
@@ -67,7 +82,7 @@ export const DEFAULT_ACTION = {
 const ALPHA_REP = [-0.06, -0.035, -0.01, 0.01, 0.035, 0.06];
 const BREADTH_REP = [0.2, 0.4, 0.6, 0.85];
 const VOL_REP = [0.08, 0.125, 0.2, 0.35];
-const SIGNAL_REP = [82, 87, 90, 95];
+const SIGNAL_REP = [82.5, 84.75, 86.75, 90];
 
 export function discretize(value, bins) {
   for (let i = 1; i < bins.length; i++) {

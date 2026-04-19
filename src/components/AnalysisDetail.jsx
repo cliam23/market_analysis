@@ -5,6 +5,7 @@ const DCFTab = lazy(() => import("./DCFTab.jsx"));
 const CompsTab = lazy(() => import("./CompsTab.jsx"));
 
 import { MONO, SANS } from "../lib/theme.js";
+import { apiFetch } from "../lib/api.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 
 function Box({ border, children, style: sx = {} }) {
@@ -184,7 +185,7 @@ function NetworkInput({ ticker, onSubmit }) {
     submitAcRef.current = ac;
     setSubmitting(true);
     try {
-      await fetch(`/api/analysis/${ticker}/network-input`, {
+      await apiFetch(`/api/analysis/${ticker}/network-input`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: ac.signal,
@@ -1154,7 +1155,7 @@ export default function AnalysisDetail({ ticker, onBack }) {
 
     (async () => {
       try {
-        const res = await fetch(`/api/analysis/${ticker}`, { signal: ac.signal });
+        const res = await apiFetch(`/api/analysis/${ticker}`, { signal: ac.signal });
         const json = await res.json();
 
         if (!json.success) {
@@ -1187,7 +1188,7 @@ export default function AnalysisDetail({ ticker, onBack }) {
 
     (async () => {
       try {
-        const res = await fetch(`/api/dcf/${ticker}`, { signal: ac.signal });
+        const res = await apiFetch(`/api/dcf/${ticker}`, { signal: ac.signal });
         const json = await res.json();
         if (dcfReqId.current !== id) return;
         if (json.success) {
