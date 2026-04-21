@@ -1,17 +1,17 @@
-export const MONO = "'IBM Plex Mono', monospace";
-export const SANS = "'DM Sans', sans-serif";
+export const MONO = "var(--font-mono)";
+export const SANS = "var(--font-sans)";
 
-export const TEXT = "#f0f0f0";
+export const TEXT = "var(--text-primary)";
 
-export const GREEN = "#22c55e";
-export const GREEN_LIGHT = "#4ade80";
-export const RED = "#ef4444";
-export const RED_LIGHT = "#f87171";
-export const AMBER = "#eab308";
-export const AMBER_LIGHT = "#f59e0b";
+export const GREEN = "var(--green)";
+export const GREEN_LIGHT = "var(--green)";
+export const RED = "var(--red)";
+export const RED_LIGHT = "var(--red)";
+export const AMBER = "var(--yellow)";
+export const AMBER_LIGHT = "var(--yellow)";
 
-export const BG = "rgba(255,255,255,0.02)";
-export const BG_HOVER = "rgba(255,255,255,0.04)";
+export const BG = "var(--bg-card)";
+export const BG_HOVER = "var(--bg-card-hover)";
 export const BG_ACTIVE = "rgba(255,255,255,0.08)";
-export const BORDER = "rgba(255,255,255,0.06)";
-export const BORDER_LIGHT = "rgba(255,255,255,0.12)";
+export const BORDER = "var(--border-card)";
+export const BORDER_LIGHT = "var(--border-card-hover)";

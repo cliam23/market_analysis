@@ -28,6 +28,7 @@ function OptionsNavIcon(props) {
 }
 
 const NAV = [
+  { id: "dashboard", label: "Dashboard", Icon: LayoutDashboard },
   { id: "search", label: "Search", Icon: Search },
   { id: "backtest", label: "Backtest", Icon: LineChart },
   { id: "papertrade", label: "Trading", Icon: Wallet },

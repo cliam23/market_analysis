@@ -4,6 +4,10 @@
  * - Dev: Vite proxies `/api` → `VITE_API_TARGET` (default localhost:3001).
  * - Preview: same proxy in vite.config `preview`.
  * - Split deploy: set `VITE_API_BASE=https://your-api-host` (no trailing slash).
+ *
+ * If `VITE_API_BASE` is set in `.env`, requests go **directly** to that host (Vite’s `/api`
+ * proxy is bypassed). Point it at the same API you run locally (e.g. `http://localhost:3001`)
+ * or KPIs will look “disconnected” / stale compared to the server you restarted.
  */
 const RAW = import.meta.env.VITE_API_BASE ?? "";
 export const API_BASE = String(RAW).replace(/\/$/, "");

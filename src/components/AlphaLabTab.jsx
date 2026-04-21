@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+/** @returns {AbortSignal | undefined} */
+function longDiagSignal() {
+  try {
+    if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      return AbortSignal.timeout(300000);
+    }
+  } catch {
+    /* ignore */
+  }
+  return undefined;
+}
 import { FlaskConical } from "lucide-react";
-import { MONO, SANS, TEXT, GREEN_LIGHT, RED_LIGHT, AMBER, AMBER_LIGHT, BORDER_LIGHT } from "../lib/theme.js";
+import { SANS, TEXT, GREEN_LIGHT, RED_LIGHT, AMBER, AMBER_LIGHT } from "../lib/theme.js";
 import { apiFetch } from "../lib/api.js";
 import { fmtMoney as _fmtMoney, fmtPctSigned } from "../lib/formatters.js";
 import weightSweepCached from "../assets/weight-sweep-result.json";
@@ -18,24 +29,23 @@ const DEFAULT_V2_WEIGHTS = {
   valuation: 0
 };
 
-const LEGACY_WEIGHTS = {
-  momentum: 0.4,
-  value: 0.4,
-  fundamental: 0.2,
-  earningsMomentum: 0,
-  dcf: 0,
-  valuation: 0
-};
-
 const WEIGHT_KEYS = ["momentum", "value", "fundamental", "earningsMomentum"];
 
 const WEIGHT_COLORS = {
-  momentum: "#6366f1",
-  value: "#14b8a6",
-  fundamental: "#a855f7",
-  earningsMomentum: "#f59e0b",
+  momentum: "#58a6ff",
+  value: "#f0883e",
+  fundamental: "#3fb950",
+  earningsMomentum: "#bc8cff",
   dcf: "#6b7280",
   valuation: "#9ca3af"
+};
+
+const REGIME_SHORT = {
+  strong_bull: "bull",
+  normal: "normal",
+  pullback: "pullback",
+  caution: "caution",
+  bear: "bear"
 };
 
 const fmtUsd = (n) => _fmtMoney(n, 2);
@@ -72,6 +82,18 @@ function stabilityClass(consistency) {
   return "ma-alphalab-badge ma-alphalab-badge--mixed";
 }
 
+function rlModeLabel(agentType) {
+  const t = String(agentType || "").toLowerCase();
+  if (t === "dqn") return "DQN";
+  return "Q-learning";
+}
+
+function universeShortLabel(id) {
+  if (id === "sp500_top50") return "top 50";
+  if (id === "sp500_top150") return "top 150";
+  return id || "";
+}
+
 function CardShell({ title, subtitle, children, actions, className = "" }) {
   return (
     <section className={`ma-alphalab-card ${className}`.trim()}>
@@ -91,8 +113,10 @@ function SkeletonBlock({ h = 14, w = "100%" }) {
   return <div className="ma-alphalab-skel" style={{ height: h, width: w, borderRadius: 6 }} />;
 }
 
-function WeightStackBar({ weights, label }) {
+function WeightStackBar({ weights, label, variant = "active" }) {
   const w = weights || {};
+  const dim = variant === "anchor";
+  const barH = dim ? 14 : 22;
   const segs = WEIGHT_KEYS.map((k) => ({
     key: k,
     pct: Math.max(0, Math.min(1, Number(w[k]) || 0)) * 100,
@@ -100,11 +124,22 @@ function WeightStackBar({ weights, label }) {
   })).filter((s) => s.pct > 0.05);
   const sum = segs.reduce((a, s) => a + s.pct, 0);
   return (
-    <div style={{ marginTop: 8 }}>
-      <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 4 }}>
+    <div style={{ marginTop: dim ? 10 : 8, opacity: dim ? 0.82 : 1 }}>
+      <div
+        className="ma-mono"
+        style={{ fontSize: dim ? 9 : 10, color: "var(--color-text-muted)", marginBottom: 4 }}
+      >
         {label}
       </div>
-      <div style={{ display: "flex", height: 22, borderRadius: 6, overflow: "hidden", border: `1px solid ${CARD_BORDER}` }}>
+      <div
+        style={{
+          display: "flex",
+          height: barH,
+          borderRadius: 6,
+          overflow: "hidden",
+          border: `1px solid ${CARD_BORDER}`
+        }}
+      >
         {sum < 99 && <div style={{ flex: 100 - sum, background: "rgba(255,255,255,0.04)" }} />}
         {segs.map((s) => (
           <div
@@ -119,7 +154,17 @@ function WeightStackBar({ weights, label }) {
           />
         ))}
       </div>
-      <div className="ma-mono" style={{ fontSize: 10, marginTop: 6, opacity: 0.85, display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
+      <div
+        className="ma-mono"
+        style={{
+          fontSize: dim ? 9 : 10,
+          marginTop: 6,
+          opacity: dim ? 0.75 : 0.9,
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "8px 14px"
+        }}
+      >
         {WEIGHT_KEYS.map((k) => {
           const lab = k === "earningsMomentum" ? "E" : k === "fundamental" ? "Q" : k === "momentum" ? "M" : k === "value" ? "V" : k;
           return (
@@ -138,26 +183,25 @@ export default function AlphaLabTab({ visible }) {
   const [universeId, setUniverseId] = useState("sp500_top150");
   const [period, setPeriod] = useState("3y");
 
-  const [ucLoading, setUcLoading] = useState(true);
+  const [ucLoading, setUcLoading] = useState(false);
   const [ucData, setUcData] = useState(null);
   const [ucErr, setUcErr] = useState(null);
 
-  const [facLoading, setFacLoading] = useState(true);
+  const [facLoading, setFacLoading] = useState(false);
   const [facData, setFacData] = useState(null);
   const [facErr, setFacErr] = useState(null);
 
   const [rlStatus, setRlStatus] = useState(null);
   const [rlCompare, setRlCompare] = useState(null);
-  const [rlLoading, setRlLoading] = useState(true);
   const [rlErr, setRlErr] = useState(null);
 
-  const [hedgeLoading, setHedgeLoading] = useState(true);
+  const [hedgeLoading, setHedgeLoading] = useState(false);
   const [hedgeData, setHedgeData] = useState(null);
   const [hedgeErr, setHedgeErr] = useState(null);
 
   const [paperPf, setPaperPf] = useState(null);
   const [paperErr, setPaperErr] = useState(null);
-  const [paperLoading, setPaperLoading] = useState(true);
+  const [paperLoading, setPaperLoading] = useState(false);
   const [weightSweepRunning, setWeightSweepRunning] = useState(false);
   const [weightSweepElapsed, setWeightSweepElapsed] = useState(0);
   const [weightSweepResult, setWeightSweepResult] = useState(null);
@@ -169,6 +213,11 @@ export default function AlphaLabTab({ visible }) {
   const [fcErr, setFcErr] = useState(null);
   const [fwRec, setFwRec] = useState(null);
   const [fwLoading, setFwLoading] = useState(false);
+  const [retrainBusy, setRetrainBusy] = useState(false);
+  const [retrainMsg, setRetrainMsg] = useState(null);
+  const [rlInitLoading, setRlInitLoading] = useState(false);
+  const [rlCompareLoading, setRlCompareLoading] = useState(false);
+  const [rlCompareErr, setRlCompareErr] = useState(null);
 
   const loadForwardConfidence = useCallback(async () => {
     setFcLoading(true);
@@ -209,21 +258,16 @@ export default function AlphaLabTab({ visible }) {
     }
   }, [universeId, period]);
 
-  useEffect(() => {
-    if (!visible) return;
-    loadForwardConfidence();
-  }, [visible, loadForwardConfidence]);
-
   const loadUniverseCompare = useCallback(async () => {
     setUcLoading(true);
     setUcErr(null);
     try {
-      const res = await apiFetch("/api/diagnostics/universe-compare");
+      const res = await apiFetch("/api/diagnostics/universe-compare", { signal: longDiagSignal() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setUcData(data);
     } catch (e) {
-      setUcErr(e.message);
+      setUcErr(e.name === "AbortError" ? "Request timed out (5 min) — try again." : e.message);
       setUcData(null);
     } finally {
       setUcLoading(false);
@@ -247,9 +291,25 @@ export default function AlphaLabTab({ visible }) {
     }
   }, [universeId, period]);
 
-  const loadRlBlock = useCallback(async () => {
-    setRlLoading(true);
+  const loadRlStatus = useCallback(async () => {
+    setRlInitLoading(true);
     setRlErr(null);
+    try {
+      const sRes = await apiFetch("/api/rl/status");
+      const sData = await sRes.json();
+      if (!sRes.ok) throw new Error(sData.error || "RL status failed");
+      setRlStatus(sData);
+    } catch (e) {
+      setRlErr(e.message);
+      setRlStatus(null);
+    } finally {
+      setRlInitLoading(false);
+    }
+  }, []);
+
+  const loadRlCompare = useCallback(async () => {
+    setRlCompareLoading(true);
+    setRlCompareErr(null);
     try {
       const params = new URLSearchParams({
         universeId,
@@ -258,19 +318,15 @@ export default function AlphaLabTab({ visible }) {
         strategy: "full_composite",
         rebalanceFreq: "bimonthly"
       });
-      const [sRes, cRes] = await Promise.all([apiFetch("/api/rl/status"), apiFetch(`/api/rl/compare?${params}`)]);
-      const sData = await sRes.json();
+      const cRes = await apiFetch(`/api/rl/compare?${params}`);
       const cData = await cRes.json();
-      if (!sRes.ok) throw new Error(sData.error || "RL status failed");
-      setRlStatus(sData);
       if (!cRes.ok) throw new Error(cData.error || "RL compare failed");
       setRlCompare(cData);
     } catch (e) {
-      setRlErr(e.message);
-      setRlStatus(null);
+      setRlCompareErr(e.message);
       setRlCompare(null);
     } finally {
-      setRlLoading(false);
+      setRlCompareLoading(false);
     }
   }, [universeId, period]);
 
@@ -295,7 +351,7 @@ export default function AlphaLabTab({ visible }) {
     setPaperLoading(true);
     setPaperErr(null);
     try {
-      const res = await apiFetch("/api/paper-trade/portfolio");
+      const res = await apiFetch(`/api/paper-trade/portfolio?universe=${encodeURIComponent(universeId)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Portfolio failed");
       setPaperPf(data);
@@ -305,20 +361,57 @@ export default function AlphaLabTab({ visible }) {
     } finally {
       setPaperLoading(false);
     }
-  }, []);
+  }, [universeId]);
+
+  useEffect(() => {
+    setUcData(null);
+    setUcErr(null);
+    setUcLoading(true);
+    setFacData(null);
+    setFacErr(null);
+    setFacLoading(true);
+    setHedgeData(null);
+    setHedgeErr(null);
+    setHedgeLoading(true);
+    setFcData(null);
+    setFcErr(null);
+    setFcLoading(true);
+    setFwRec(null);
+    setFwLoading(true);
+    setRlCompare(null);
+    setRlCompareErr(null);
+    setRlCompareLoading(true);
+    setRlInitLoading(true);
+  }, [universeId, period]);
 
   useEffect(() => {
     if (!visible) return;
-    loadUniverseCompare();
-    loadPaperWeights();
-  }, [visible, loadUniverseCompare, loadPaperWeights]);
+    void Promise.all([
+      loadRlStatus(),
+      loadPaperWeights(),
+      loadUniverseCompare(),
+      loadFactors(),
+      loadHedge(),
+      loadForwardWeightRec(),
+      loadRlCompare()
+    ]);
+  }, [
+    visible,
+    universeId,
+    period,
+    loadRlStatus,
+    loadPaperWeights,
+    loadUniverseCompare,
+    loadFactors,
+    loadHedge,
+    loadForwardWeightRec,
+    loadRlCompare
+  ]);
 
   useEffect(() => {
     if (!visible) return;
-    loadFactors();
-    loadRlBlock();
-    loadHedge();
-  }, [visible, loadFactors, loadRlBlock, loadHedge]);
+    loadForwardConfidence();
+  }, [visible, universeId, period, paperPf, loadForwardConfidence]);
 
   useEffect(() => {
     return () => {
@@ -332,17 +425,27 @@ export default function AlphaLabTab({ visible }) {
 
   const factorRows = useMemo(() => {
     const cfgs = facData?.configs || [];
-    return cfgs.filter((c) => c.weights && c.consistency != null);
+    const rows = cfgs.filter((c) => c.weights && c.consistency != null);
+    return [...rows].sort((a, b) => parseMetric(b.sharpe) - parseMetric(a.sharpe));
   }, [facData]);
 
-  const maxSharpe = useMemo(() => {
+  const maxFactorRet = useMemo(() => {
     let m = 0.01;
     for (const r of factorRows) {
-      const sh = Number(r.sharpe);
-      if (Number.isFinite(sh) && Math.abs(sh) > m) m = Math.abs(sh);
+      const tr = Math.abs(Number(r.totalReturn));
+      if (Number.isFinite(tr) && tr > m) m = tr;
     }
     return m;
   }, [factorRows]);
+
+  const ucWinnerUniverse = useMemo(() => {
+    const r50 = parseMetric(row50?.totalReturn);
+    const r150 = parseMetric(row150?.totalReturn);
+    if (r50 == null || r150 == null) return null;
+    if (r150 > r50) return "sp500_top150";
+    if (r50 > r150) return "sp500_top50";
+    return null;
+  }, [row50, row150]);
 
   const hedgeConfigs = hedgeData?.configs || [];
   const bestSharpe = useMemo(() => {
@@ -368,8 +471,63 @@ export default function AlphaLabTab({ visible }) {
     return { rulesDd: d0, hedgeDd: d1, delta };
   }, [hedgeConfigs]);
 
-  const activeWeightsDisplay =
-    paperPf?.portfolio?.activeWeights || paperPf?.portfolio?.config?.weights || DEFAULT_V2_WEIGHTS;
+  const rlPanelStats = useMemo(() => {
+    const at = String(rlStatus?.agentType ?? rlStatus?.defaultAgentType ?? "").toLowerCase();
+    const isDqn = at === "dqn";
+    const uni = rlStatus?.agents?.[universeId];
+    return {
+      statesVisited: isDqn ? rlStatus?.statesVisited ?? 0 : uni?.statesVisited ?? rlStatus?.statesVisited ?? 0,
+      totalUpdates: isDqn ? rlStatus?.totalUpdates ?? 0 : uni?.totalUpdates ?? rlStatus?.totalUpdates ?? 0,
+      loaded: isDqn ? !!(rlStatus?.agentLoaded ?? rlStatus?.loaded) : !!(uni?.loaded ?? false)
+    };
+  }, [rlStatus, universeId]);
+
+  const rlStateCoveragePct = useMemo(() => {
+    const tot = Number(rlStatus?.totalStates) || 0;
+    const vis = Number(rlPanelStats.statesVisited) || 0;
+    if (tot <= 0) return 0;
+    return Math.min(100, (vis / tot) * 100);
+  }, [rlStatus, rlPanelStats]);
+
+  const anchorWeightsDisplay =
+    paperPf?.portfolio?.config?.weights || paperPf?.portfolio?.activeWeights || DEFAULT_V2_WEIGHTS;
+  const wh = paperPf?.portfolio?.weightHistory;
+  const lastAdaptiveFromHistory =
+    Array.isArray(wh) && wh.length > 0 ? wh[wh.length - 1]?.weights : null;
+  const activeWeightsDisplay = lastAdaptiveFromHistory || paperPf?.portfolio?.activeWeights || anchorWeightsDisplay;
+
+  const postRlTrainSmoke = async () => {
+    setRetrainBusy(true);
+    setRetrainMsg(null);
+    try {
+      const body = {
+        universeId,
+        period: "5y",
+        episodes: 120,
+        skipPostTrainEval: true,
+        rebalanceFreq: "bimonthly",
+        topN: 15,
+        strategy: "full_composite",
+        agentType: "qlearning",
+        ...(anchorWeightsDisplay && typeof anchorWeightsDisplay === "object" ? { weights: anchorWeightsDisplay } : {})
+      };
+      const res = await apiFetch("/api/rl/train", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setRetrainMsg(`Training finished (${data.episodes ?? "?"} episodes). Refreshing stats…`);
+      await loadRlStatus();
+      await loadRlCompare();
+      setRetrainMsg(null);
+    } catch (e) {
+      setRetrainMsg(e.message || String(e));
+    } finally {
+      setRetrainBusy(false);
+    }
+  };
 
   const runWeightSweep = async () => {
     setWeightSweepRunning(true);
@@ -411,12 +569,7 @@ export default function AlphaLabTab({ visible }) {
         display: "flex",
         flexWrap: "wrap",
         alignItems: "center",
-        gap: "12px 20px",
-        marginBottom: 20,
-        padding: "14px 18px",
-        borderRadius: 12,
-        border: `1px solid ${CARD_BORDER}`,
-        background: "var(--color-surface-elevated)"
+        gap: "12px 20px"
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -453,137 +606,223 @@ export default function AlphaLabTab({ visible }) {
   );
 
   return (
-    <div
-      style={{
-        maxWidth: 1100,
-        margin: "0 auto",
-        padding: "8px 16px 48px",
-        fontFamily: SANS,
-        color: TEXT,
-        boxSizing: "border-box"
-      }}
-    >
+    <div className="ma-page-container ma-alphalab-page" style={{ fontFamily: SANS, color: TEXT }}>
       <header style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 14 }}>
           <FlaskConical size={28} strokeWidth={1.75} color={AMBER_LIGHT} aria-hidden />
-          <div>
-            <div className="ma-mono" style={{ fontSize: 10, fontWeight: 800, letterSpacing: 4, color: AMBER_LIGHT }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="ma-mono" style={{ fontSize: 11, fontWeight: 800, letterSpacing: 2, color: AMBER_LIGHT }}>
               ALPHA LAB
             </div>
-            <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0, letterSpacing: -0.5 }}>V2 diagnostics dashboard</h1>
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--color-text-muted)", maxWidth: 560 }}>
+              Research & diagnostics dashboard
+            </p>
+            <div style={{ marginTop: 16 }}>{controls}</div>
           </div>
         </div>
-        <p style={{ margin: 0, fontSize: 13, opacity: 0.75, maxWidth: 720 }}>
-          Compare universes, factor stability, RL vs rules, hedging, and pillar weights. Heavy requests may take several minutes.
-        </p>
       </header>
 
       <AlphaLabEquityCurves visible={visible} universeId={universeId} period={period} />
 
-      {controls}
-
-      <CardShell
-        title="Forward confidence analysis"
-        subtitle="POST /api/diagnostics/forward-confidence · optional forward-weight recommendation (slow)"
-        actions={
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" className="ma-alphalab-btn" onClick={loadForwardConfidence} disabled={fcLoading}>
-              {fcLoading ? "…" : "Refresh"}
-            </button>
-            <button type="button" className="ma-alphalab-btn" onClick={loadForwardWeightRec} disabled={fwLoading}>
-              {fwLoading ? "Running…" : "Forward weight rec"}
-            </button>
-          </div>
-        }
-      >
-        {fcLoading && !fcData ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <SkeletonBlock h={36} />
-            <SkeletonBlock h={60} />
-          </div>
-        ) : null}
-        {fcErr ? (
-          <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
-            {fcErr}
-          </div>
-        ) : null}
-        {fcData?.scores && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="ma-mono" style={{ fontSize: 12, lineHeight: 1.6 }}>
-              <strong style={{ color: "#fff" }}>Forward confidence</strong>{" "}
-              <span style={{ color: GREEN_LIGHT }}>{((fcData.scores?.forwardConfidence ?? 0) * 100).toFixed(0)}%</span>
-              {" · "}
-              <span style={{ color: "var(--color-text-muted)" }}>
-                Est. annual alpha ~{fcData.forwardEstimate?.estimatedAnnualAlpha}% (illustrative)
-              </span>
+      <div className="ma-alphalab-grid">
+        {/* Row 1: RL + weights */}
+        <CardShell title={`${rlModeLabel(rlStatus?.agentType ?? rlStatus?.defaultAgentType)} agent (${universeShortLabel(universeId)})`}>
+          {rlInitLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <SkeletonBlock h={24} />
+              <SkeletonBlock h={100} />
             </div>
-            <WeightStackBar weights={fcData.weights} label="Weights (paper defaults if no portfolio)" />
-            {fcData.regimeSplit && (
-              <div>
-                <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
-                  Regime alpha (sampled days, %)
+          ) : rlErr && !rlStatus ? (
+            <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
+              {rlErr}
+            </div>
+          ) : (
+            <div className="ma-alphalab-fadein">
+              <div className="ma-mono" style={{ fontSize: 12, lineHeight: 1.7, marginBottom: 12 }}>
+                <div>
+                  Agent: <span style={{ color: GREEN_LIGHT }}>{rlModeLabel(rlStatus?.agentType ?? rlStatus?.defaultAgentType)}</span>
+                  {" · "}
+                  Action space: <span className="ma-num">{rlStatus?.totalActions ?? "—"}</span>
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {["strong_bull", "normal", "pullback", "caution", "bear"].map((k) => {
-                    const r = fcData.regimeSplit[k];
-                    if (!r || r.daysInRegime < 5) return null;
-                    return (
-                      <div
-                        key={k}
-                        className="ma-mono"
-                        style={{
-                          fontSize: 10,
-                          padding: "6px 8px",
-                          borderRadius: 6,
-                          border: `1px solid ${CARD_BORDER}`,
-                          background: "rgba(255,255,255,0.02)"
-                        }}
-                      >
-                        {k}:{" "}
-                        <span style={{ color: r.alpha >= 0 ? GREEN_LIGHT : RED_LIGHT }}>{fmtPct2(r.alpha)}</span>
-                      </div>
-                    );
-                  })}
+                <div style={{ marginTop: 6 }}>
+                  States:{" "}
+                  <span className="ma-num">
+                    {rlPanelStats.statesVisited.toLocaleString()} / {(rlStatus?.totalStates ?? 0).toLocaleString()}
+                  </span>
+                  {" · "}
+                  Updates: <span className="ma-num">{rlPanelStats.totalUpdates.toLocaleString()}</span>
                 </div>
+                <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                  <div
+                    style={{
+                      width: `${rlStateCoveragePct}%`,
+                      height: "100%",
+                      borderRadius: 3,
+                      background: rlStateCoveragePct >= 99 ? GREEN_LIGHT : AMBER_LIGHT,
+                      transition: "width 0.4s ease"
+                    }}
+                  />
+                </div>
+                {!rlPanelStats.loaded ? (
+                  <div style={{ color: AMBER_LIGHT, marginTop: 8, fontSize: 11 }}>
+                    No trained agent for this universe — run training or check the on-disk policy file.
+                  </div>
+                ) : null}
               </div>
-            )}
-            {fcData.subperiodAnalysis && Object.keys(fcData.subperiodAnalysis).length > 0 && (
-              <div>
-                <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
-                  Sub-period alpha (rules backtest)
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {Object.entries(fcData.subperiodAnalysis).map(([k, v]) => (
-                    <div key={k} className="ma-mono" style={{ fontSize: 10, opacity: 0.9 }}>
-                      {k}: {fmtPct2(v.alpha)} α
-                    </div>
-                  ))}
-                </div>
+              <div className="ma-mono" style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, color: AMBER_LIGHT, margin: "16px 0 8px" }}>
+                BACKTEST COMPARISON
               </div>
-            )}
-            {fcData.interpretation ? (
-              <p style={{ margin: 0, fontSize: 12, lineHeight: 1.65, opacity: 0.85 }}>{fcData.interpretation}</p>
+              {rlCompareLoading ? (
+                <SkeletonBlock h={100} />
+              ) : rlCompareErr ? (
+                <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 11, padding: "8px 0" }}>
+                  {rlCompareErr}
+                </div>
+              ) : rlCompare ? (
+                <div style={{ overflowX: "auto" }} className="ma-alphalab-fadein">
+                  <table className="ma-alphalab-table">
+                    <thead>
+                      <tr>
+                        <th />
+                        <th className="ma-num">Return</th>
+                        <th className="ma-num">Alpha</th>
+                        <th className="ma-num">Sharpe</th>
+                        <th className="ma-num">Max DD</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {["baseline", "rlEval"].map((key) => {
+                        const row = rlCompare?.[key];
+                        const rlLbl = `${rlModeLabel(rlStatus?.agentType ?? rlStatus?.defaultAgentType)} (eval)`;
+                        const label = key === "rlEval" ? rlLbl : "Rules";
+                        const baseSh = parseMetric(rlCompare?.baseline?.sharpe);
+                        const evSh = parseMetric(rlCompare?.rlEval?.sharpe);
+                        const rowBest =
+                          key === "rlEval"
+                            ? Number.isFinite(evSh) && Number.isFinite(baseSh) && evSh > baseSh
+                            : Number.isFinite(baseSh) && Number.isFinite(evSh) && baseSh > evSh;
+                        return (
+                          <tr
+                            key={key}
+                            style={
+                              rowBest
+                                ? {
+                                    borderLeft: "3px solid rgba(34,197,94,0.85)",
+                                    background: "rgba(34,197,94,0.06)"
+                                  }
+                                : { borderLeft: "3px solid transparent" }
+                            }
+                          >
+                            <td className="ma-mono">{label}</td>
+                            <td className="ma-num" style={{ color: parseMetric(row?.totalReturn) >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
+                              {fmtPct2(parseMetric(row?.totalReturn))}
+                            </td>
+                            <td className="ma-num" style={{ color: parseMetric(row?.alpha) >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
+                              {fmtPct2(parseMetric(row?.alpha))}
+                            </td>
+                            <td className="ma-num">{fmtNum2(parseMetric(row?.sharpe))}</td>
+                            <td className="ma-num" style={{ color: RED_LIGHT }}>{fmtPct2(parseMetric(row?.maxDrawdown))}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <SkeletonBlock h={100} />
+              )}
+              <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+                <button type="button" className="ma-alphalab-btn" disabled={retrainBusy} onClick={() => postRlTrainSmoke()}>
+                  {retrainBusy ? "Training…" : `Retrain ${rlModeLabel("qlearning")}`}
+                </button>
+                {retrainMsg ? (
+                  <span className="ma-mono" style={{ fontSize: 11, color: retrainMsg.includes("finished") ? GREEN_LIGHT : RED_LIGHT }}>
+                    {retrainMsg}
+                  </span>
+                ) : (
+                  <span className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
+                    Smoke train (120 ep) — use RL Agent tab for full runs.
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </CardShell>
+
+        <CardShell
+          title="Weight configuration"
+          actions={
+            <button type="button" className="ma-alphalab-btn" onClick={runWeightSweep} disabled={weightSweepRunning}>
+              {weightSweepRunning ? `Sweep… ${weightSweepElapsed}s` : "Run weight sweep"}
+            </button>
+          }
+        >
+          {paperLoading ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
+              <SkeletonBlock h={22} />
+              <SkeletonBlock h={22} />
+            </div>
+          ) : null}
+          {paperErr ? (
+            <div className="ma-mono" style={{ color: AMBER_LIGHT, fontSize: 11, marginBottom: 8 }}>
+              Paper portfolio: {paperErr}
+            </div>
+          ) : null}
+          {!paperLoading ? (
+            <WeightStackBar weights={activeWeightsDisplay} label="Active (adaptive, last rebalance)" variant="active" />
+          ) : null}
+          {!paperLoading ? (
+            <div style={{ marginTop: 14 }}>
+              <WeightStackBar weights={anchorWeightsDisplay} label="Anchor (config)" variant="anchor" />
+            </div>
+          ) : null}
+          <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: paperLoading ? 0 : 12 }}>
+            Cached sweep snapshot — top OOS Sharpe:{" "}
+            <span className="ma-num" style={{ color: GREEN_LIGHT }}>
+              {weightSweepCached?.recommendation?.oosSharpe != null ? fmtNum2(weightSweepCached.recommendation.oosSharpe) : "—"}
+            </span>
+            {weightSweepCached?.recommendation?.overfitRatio != null ? (
+              <>
+                {" "}
+                · overfit {fmtNum2(weightSweepCached.recommendation.overfitRatio)}
+              </>
             ) : null}
           </div>
-        )}
-        {fwRec?.recommendation?.weights && (
-          <div className="ma-mono" style={{ marginTop: 12, fontSize: 11, lineHeight: 1.6 }}>
-            <strong>Recommendation</strong> ({fwRec.recommendation.reason}):{" "}
-            <WeightStackBar weights={fwRec.recommendation.weights} label="Recommended weights" />
+          <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: 8 }}>
+            Long run: ~2 hours · tests 50+ weight combos
           </div>
-        )}
-        {fwRec?.previousRecommendation && (
-          <div style={{ marginTop: 8, fontSize: 11, opacity: 0.75 }}>
-            Legacy OOS-Sharpe pick: OOS Sharpe {fwRec.previousRecommendation.oosSharpe?.toFixed?.(2) ?? fwRec.previousRecommendation.oosSharpe} · forward{" "}
-            {((fwRec.previousRecommendation.forwardConfidence ?? 0) * 100).toFixed(0)}%
-          </div>
-        )}
-      </CardShell>
+          {weightSweepRunning ? (
+            <div className="ma-alphalab-progress" style={{ marginTop: 12 }}>
+              <div className="ma-alphalab-progress__bar" />
+              <span className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
+                Running weight sweep…
+              </span>
+            </div>
+          ) : null}
+          {weightSweepErr ? (
+            <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 11, marginTop: 8 }}>
+              {weightSweepErr}
+            </div>
+          ) : null}
+          {weightSweepResult?.success ? (
+            <div
+              className="ma-mono"
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                padding: 10,
+                borderRadius: 8,
+                border: "1px solid var(--color-positive)",
+                background: "rgba(34,197,94,0.06)"
+              }}
+            >
+              Sweep done: {weightSweepResult.swept ?? "—"} configs · best OOS Sharpe {fmtNum2(weightSweepResult.recommendation?.oosSharpe)}
+            </div>
+          ) : null}
+        </CardShell>
 
-      <div className="ma-alphalab-grid">
-        {/* Card 1 */}
-        <CardShell title="Universe comparison" subtitle="GET /api/diagnostics/universe-compare · 3y bimonthly (fixed)">
-          {ucLoading ? (
+        <CardShell title="Universe comparison">
+          {ucLoading || (!ucData && !ucErr) ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <SkeletonBlock h={40} />
               <SkeletonBlock h={40} />
@@ -592,15 +831,18 @@ export default function AlphaLabTab({ visible }) {
             <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
               {ucErr}
             </div>
-          ) : (
-            <div className="ma-alphalab-uc">
+          ) : ucData && row50 && row150 ? (
+            <div className="ma-alphalab-uc ma-alphalab-fadein">
               {[row50, row150].filter(Boolean).map((row) => (
                 <div
                   key={row.universe}
-                  className={"ma-alphalab-uc__col" + (universeId === row.universe ? " ma-alphalab-uc__col--focus" : "")}
+                  className={
+                    "ma-alphalab-uc__col" +
+                    (ucWinnerUniverse === row.universe ? " ma-alphalab-uc__col--winner" : "")
+                  }
                 >
                   <div className="ma-mono" style={{ fontSize: 11, color: AMBER_LIGHT, marginBottom: 10 }}>
-                    {row.universe === "sp500_top50" ? "S&P top 50" : "S&P top 150"} · {row.tickers} names
+                    {row.universe === "sp500_top50" ? "Top 50" : "Top 150"} · {row.tickers} names
                   </div>
                   <table className="ma-alphalab-mini-table">
                     <tbody>
@@ -629,35 +871,27 @@ export default function AlphaLabTab({ visible }) {
                   className="ma-mono ma-alphalab-delta-strip"
                   style={{ fontSize: 11, marginTop: 4, color: "var(--color-text-dim)", gridColumn: "1 / -1" }}
                 >
-                  Δ (150 vs 50): return{" "}
+                  Δ:{" "}
                   <span style={{ color: ucData.improvement.returnDelta >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
-                    {fmtPct2(ucData.improvement.returnDelta)}
+                    {fmtPct2(ucData.improvement.returnDelta)} return
                   </span>
-                  · alpha{" "}
+                  {" · "}
                   <span style={{ color: ucData.improvement.alphaDelta >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
-                    {fmtPct2(ucData.improvement.alphaDelta)}
+                    {fmtPct2(ucData.improvement.alphaDelta)} alpha
                   </span>
-                  · Sharpe{" "}
-                  <span style={{ color: ucData.improvement.sharpeDelta >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
-                    {fmtNum2(ucData.improvement.sharpeDelta)}
-                  </span>
+                  {ucWinnerUniverse === "sp500_top150" ? (
+                    <span style={{ display: "block", marginTop: 6, color: GREEN_LIGHT }}>Top 150 is the stronger universe on this window.</span>
+                  ) : ucWinnerUniverse === "sp500_top50" ? (
+                    <span style={{ display: "block", marginTop: 6, color: "var(--color-text-muted)" }}>Top 50 leads on this window.</span>
+                  ) : null}
                 </div>
               ) : null}
             </div>
-          )}
+          ) : null}
         </CardShell>
 
-        {/* Card 2 */}
-        <CardShell
-          title="Factor strength"
-          subtitle={`GET /api/diagnostics/factors/${universeId} · subperiods`}
-          actions={
-            <button type="button" className="ma-alphalab-btn" onClick={loadFactors} disabled={facLoading}>
-              {facLoading ? "Running…" : "Run diagnostic"}
-            </button>
-          }
-        >
-          {facLoading ? (
+        <CardShell title="Factor strength">
+          {facLoading || (!facData && !facErr) ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {[1, 2, 3, 4, 5].map((i) => (
                 <SkeletonBlock key={i} h={36} />
@@ -667,12 +901,17 @@ export default function AlphaLabTab({ visible }) {
             <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
               {facErr}
             </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          ) : facData ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }} className="ma-alphalab-fadein">
+              {factorRows.length === 0 ? (
+                <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                  No factor rows returned.
+                </div>
+              ) : null}
               {factorRows.map((row) => {
                 const sh = Number(row.sharpe);
                 const tr = Number(row.totalReturn);
-                const barW = maxSharpe > 0 ? (Math.abs(sh) / maxSharpe) * 100 : 0;
+                const barW = maxFactorRet > 0 ? (Math.abs(tr) / maxFactorRet) * 100 : 0;
                 const star = weightsMatchActive(row.weights) || row.name === "Current best";
                 return (
                   <div key={row.name} style={{ borderBottom: `1px solid ${CARD_BORDER}`, paddingBottom: 10 }}>
@@ -710,99 +949,11 @@ export default function AlphaLabTab({ visible }) {
                 );
               })}
             </div>
-          )}
+          ) : null}
         </CardShell>
 
-        {/* Card 3 */}
-        <CardShell title="RL agent performance" subtitle="GET /api/rl/status · GET /api/rl/compare">
-          {rlLoading ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <SkeletonBlock h={24} />
-              <SkeletonBlock h={120} />
-            </div>
-          ) : rlErr ? (
-            <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
-              {rlErr}
-            </div>
-          ) : (
-            <>
-              <div className="ma-mono" style={{ fontSize: 12, lineHeight: 1.7, marginBottom: 14 }}>
-                <div>
-                  Agent: <span style={{ color: GREEN_LIGHT }}>{rlStatus?.agentType ?? "—"}</span> · Action space:{" "}
-                  <span className="ma-num">{rlStatus?.totalActions ?? "—"}</span> · States:{" "}
-                  <span className="ma-num">
-                    {(rlStatus?.statesVisited ?? 0).toLocaleString()} / {(rlStatus?.totalStates ?? 0).toLocaleString()}
-                  </span>
-                </div>
-                <div>
-                  Q-table params: <span className="ma-num">{(rlStatus?.qTableSize ?? 0).toLocaleString()}</span> · Updates:{" "}
-                  <span className="ma-num">{(rlStatus?.totalUpdates ?? 0).toLocaleString()}</span>
-                </div>
-                {!rlStatus?.loaded ? (
-                  <div style={{ color: AMBER_LIGHT, marginTop: 8 }}>
-                    DQN not yet trained — using default actions (eval still runs; numbers may be noisy).
-                  </div>
-                ) : (
-                  <div style={{ color: "var(--color-text-dim)", marginTop: 8, fontSize: 11 }}>
-                    OOS Sharpe / overfitRatio: run <span style={{ color: AMBER_LIGHT }}>POST /api/rl/train</span> from RL Agent tab
-                    for holdout metrics.
-                  </div>
-                )}
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table className="ma-alphalab-table">
-                  <thead>
-                    <tr>
-                      <th />
-                      <th className="ma-num">Return</th>
-                      <th className="ma-num">Alpha</th>
-                      <th className="ma-num">Sharpe</th>
-                      <th className="ma-num">Max DD</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {["baseline", "rlEval"].map((key) => {
-                      const row = rlCompare?.[key];
-                      const label = key === "rlEval" ? "DQN (eval)" : "Rules";
-                      return (
-                        <tr key={key}>
-                          <td className="ma-mono">{label}</td>
-                          <td className="ma-num" style={{ color: parseMetric(row?.totalReturn) >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
-                            {fmtPct2(parseMetric(row?.totalReturn))}
-                          </td>
-                          <td className="ma-num" style={{ color: parseMetric(row?.alpha) >= 0 ? GREEN_LIGHT : RED_LIGHT }}>
-                            {fmtPct2(parseMetric(row?.alpha))}
-                          </td>
-                          <td className="ma-num">{fmtNum2(parseMetric(row?.sharpe))}</td>
-                          <td className="ma-num" style={{ color: RED_LIGHT }}>
-                            {fmtPct2(parseMetric(row?.maxDrawdown))}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div style={{ marginTop: 14 }}>
-                <button
-                  type="button"
-                  className="ma-alphalab-btn ma-alphalab-btn--disabled"
-                  disabled
-                  title="Retrain is disabled until the DQN architecture is frozen."
-                >
-                  Retrain DQN
-                </button>
-                <span className="ma-mono" style={{ fontSize: 10, marginLeft: 10, color: "var(--color-text-muted)" }}>
-                  Hover for tooltip
-                </span>
-              </div>
-            </>
-          )}
-        </CardShell>
-
-        {/* Card 4 */}
-        <CardShell title="Hedging impact" subtitle="GET /api/diagnostics/hedge-impact">
-          {hedgeLoading ? (
+        <CardShell title="Hedging impact">
+          {hedgeLoading || (!hedgeData && !hedgeErr) ? (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               {[1, 2, 3, 4].map((i) => (
                 <SkeletonBlock key={i} h={80} />
@@ -812,12 +963,12 @@ export default function AlphaLabTab({ visible }) {
             <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
               {hedgeErr}
             </div>
-          ) : (
+          ) : hedgeData ? (
             <>
-              <div className="ma-alphalab-hedge-grid">
-                {["Rules only", "DQN only", "Rules + Hedge", "DQN + Hedge"].map((name) => {
-                  const c = hedgeConfigs.find((x) => x.name === name);
-                  const best = c && bestSharpe.name === c.name;
+              <div className="ma-alphalab-hedge-grid ma-alphalab-fadein">
+                {hedgeConfigs.map((c) => {
+                  const name = c.name;
+                  const best = bestSharpe.name === c.name;
                   return (
                     <div
                       key={name}
@@ -859,251 +1010,144 @@ export default function AlphaLabTab({ visible }) {
                   (positive = drawdown less severe with hedge)
                 </div>
               ) : null}
+              {bestSharpe.name != null && Number.isFinite(bestSharpe.sharpe) ? (
+                <div className="ma-mono" style={{ fontSize: 11, marginTop: 10, color: "var(--color-text-muted)" }}>
+                  Best Sharpe: <span style={{ color: GREEN_LIGHT }}>{bestSharpe.name}</span> ({fmtNum2(bestSharpe.sharpe)})
+                </div>
+              ) : null}
             </>
-          )}
+          ) : null}
         </CardShell>
 
-        {/* Card 5 */}
         <CardShell
-          title="Weight configuration"
-          subtitle="Paper config + cached sweep JSON"
+          title="Forward confidence"
           actions={
-            <button type="button" className="ma-alphalab-btn" onClick={runWeightSweep} disabled={weightSweepRunning}>
-              {weightSweepRunning ? `Sweep… ${weightSweepElapsed}s` : "Run weight sweep"}
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" className="ma-alphalab-btn" onClick={loadForwardConfidence} disabled={fcLoading}>
+                {fcLoading ? "…" : "Refresh"}
+              </button>
+              <button type="button" className="ma-alphalab-btn" onClick={loadForwardWeightRec} disabled={fwLoading}>
+                {fwLoading ? "…" : "Weight rec"}
+              </button>
+            </div>
           }
         >
-          {paperLoading ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-              <SkeletonBlock h={22} />
-              <SkeletonBlock h={22} />
+          {(fcLoading && !fcData) || (!fcData && !fcErr && fwLoading && !fwRec) ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <SkeletonBlock h={36} />
+              <SkeletonBlock h={120} />
+            </div>
+          ) : fcErr && !fcData ? (
+            <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 12 }}>
+              {fcErr}
+            </div>
+          ) : fcData?.scores ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }} className="ma-alphalab-fadein">
+              <div>
+                <div className="ma-mono" style={{ fontSize: 12, marginBottom: 8 }}>
+                  Forward confidence{" "}
+                  <span style={{ color: GREEN_LIGHT }}>{((fcData.scores?.forwardConfidence ?? 0) * 100).toFixed(0)}%</span>
+                </div>
+                <div className="ma-alphalab-conf-bar" style={{ position: "relative" }}>
+                  <div
+                    className="ma-alphalab-conf-bar__fill"
+                    style={{ transform: `scaleX(${1 - (fcData.scores?.forwardConfidence ?? 0)})` }}
+                  />
+                </div>
+              </div>
+              <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                Est. annual alpha:{" "}
+                <span style={{ color: GREEN_LIGHT }}>~{fcData.forwardEstimate?.estimatedAnnualAlpha ?? "—"}%</span>
+                <div style={{ marginTop: 6 }}>
+                  Range: {fcData.forwardEstimate?.confidenceBand?.low ?? "—"}% – {fcData.forwardEstimate?.confidenceBand?.high ?? "—"}%
+                </div>
+              </div>
+              {["stability", "robustness", "simplicity", "recencyDiscount"].map((k) => {
+                const lab =
+                  k === "recencyDiscount" ? "Recency disc" : k === "stability" ? "Stability" : k === "robustness" ? "Robustness" : "Simplicity";
+                const v = fcData.scores?.[k] ?? 0;
+                return (
+                  <div key={k}>
+                    <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 4 }}>
+                      {lab}{" "}
+                      <span style={{ color: TEXT }}>{(v * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="ma-alphalab-score-bar">
+                      <div className="ma-alphalab-score-bar__fill" style={{ width: `${Math.min(100, v * 100)}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <WeightStackBar weights={fcData.weights} label="Weights (paper config)" variant="anchor" />
+              {fcData.subperiodAnalysis && Object.keys(fcData.subperiodAnalysis).length > 0 ? (
+                <div>
+                  <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
+                    Sub-periods
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {["1y", "2y", "3y", "5y"].map((k) => {
+                      const v = fcData.subperiodAnalysis[k];
+                      if (!v) return null;
+                      return (
+                        <div key={k} className="ma-mono" style={{ fontSize: 11 }}>
+                          {k}:{" "}
+                          <span style={{ color: v.alpha >= 0 ? GREEN_LIGHT : RED_LIGHT }}>{fmtPct2(v.alpha)}</span> α
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {fcData.regimeSplit ? (
+                <div>
+                  <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginBottom: 6 }}>
+                    Regimes
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {["strong_bull", "normal", "pullback", "caution", "bear"].map((k) => {
+                      const r = fcData.regimeSplit[k];
+                      if (!r || r.daysInRegime < 5) return null;
+                      const pos = r.alpha >= 0;
+                      return (
+                        <div
+                          key={k}
+                          className="ma-mono"
+                          style={{
+                            fontSize: 10,
+                            padding: "6px 8px",
+                            borderRadius: 6,
+                            background: pos ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                            border: `1px solid ${pos ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)"}`
+                          }}
+                        >
+                          {REGIME_SHORT[k] ?? k}{" "}
+                          <span style={{ color: pos ? GREEN_LIGHT : RED_LIGHT }}>{fmtPct2(r.alpha)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {fcData.interpretation ? (
+                <p style={{ margin: 0, fontSize: 12, lineHeight: 1.65, opacity: 0.85 }}>{fcData.interpretation}</p>
+              ) : null}
             </div>
           ) : null}
-          {paperErr ? (
-            <div className="ma-mono" style={{ color: AMBER_LIGHT, fontSize: 11, marginBottom: 8 }}>
-              Paper portfolio: {paperErr}
+          {fwRec?.recommendation?.weights && (
+            <div className="ma-mono" style={{ marginTop: 12, fontSize: 11, lineHeight: 1.6 }}>
+              <strong>Recommendation</strong> ({fwRec.recommendation.reason}):{" "}
+              <WeightStackBar weights={fwRec.recommendation.weights} label="Recommended weights" />
             </div>
-          ) : null}
-          {!paperLoading ? <WeightStackBar weights={activeWeightsDisplay} label="Active (paper / server default)" /> : null}
-          {!paperLoading ? <WeightStackBar weights={LEGACY_WEIGHTS} label="Legacy reference M40/V40/Q20" /> : null}
-          <div className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)", marginTop: paperLoading ? 0 : 12 }}>
-            Cached sweep snapshot — top OOS Sharpe:{" "}
-            <span className="ma-num" style={{ color: GREEN_LIGHT }}>
-              {weightSweepCached?.recommendation?.oosSharpe != null
-                ? fmtNum2(weightSweepCached.recommendation.oosSharpe)
-                : "—"}
-            </span>
-            {weightSweepCached?.recommendation?.overfitRatio != null ? (
-              <>
-                {" "}
-                · overfit {fmtNum2(weightSweepCached.recommendation.overfitRatio)}
-              </>
-            ) : null}
-          </div>
-          {weightSweepRunning ? (
-            <div className="ma-alphalab-progress" style={{ marginTop: 12 }}>
-              <div className="ma-alphalab-progress__bar" />
-              <span className="ma-mono" style={{ fontSize: 10 }}>
-                POST /api/diagnostics/weight-sweep — long-running
-              </span>
+          )}
+          {fwRec?.previousRecommendation && (
+            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.75 }}>
+              Legacy OOS-Sharpe pick: OOS Sharpe {fwRec.previousRecommendation.oosSharpe?.toFixed?.(2) ?? fwRec.previousRecommendation.oosSharpe} · forward{" "}
+              {((fwRec.previousRecommendation.forwardConfidence ?? 0) * 100).toFixed(0)}%
             </div>
-          ) : null}
-          {weightSweepErr ? (
-            <div className="ma-mono" style={{ color: RED_LIGHT, fontSize: 11, marginTop: 8 }}>
-              {weightSweepErr}
-            </div>
-          ) : null}
-          {weightSweepResult?.success ? (
-            <div
-              className="ma-mono"
-              style={{
-                marginTop: 10,
-                fontSize: 11,
-                padding: 10,
-                borderRadius: 8,
-                border: "1px solid var(--color-positive)",
-                background: "rgba(34,197,94,0.06)"
-              }}
-            >
-              Sweep done: {weightSweepResult.swept ?? "—"} configs · best OOS Sharpe{" "}
-              {fmtNum2(weightSweepResult.recommendation?.oosSharpe)}
-            </div>
-          ) : null}
+          )}
         </CardShell>
       </div>
 
-      <style>{`
-        .ma-alphalab-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-          gap: 16px;
-          align-items: start;
-        }
-        .ma-alphalab-card {
-          background: var(--color-surface);
-          border: 1px solid ${CARD_BORDER};
-          border-radius: 12px;
-          padding: 18px 20px;
-          transition: border-color 0.2s ease, background 0.2s ease;
-        }
-        .ma-alphalab-card:hover {
-          border-color: ${CARD_BORDER_HOVER};
-          background: var(--color-surface-elevated);
-        }
-        .ma-alphalab-card__head {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 12px;
-          margin-bottom: 14px;
-        }
-        .ma-alphalab-card__title {
-          font-size: 10px;
-          font-weight: 800;
-          letter-spacing: 2px;
-          font-family: ${MONO};
-          color: ${AMBER_LIGHT};
-        }
-        .ma-alphalab-card__sub {
-          font-size: 11px;
-          color: var(--color-text-muted);
-          font-family: ${MONO};
-          margin-top: 4px;
-          opacity: 0.85;
-        }
-        .ma-alphalab-card__actions { flex-shrink: 0; }
-        .ma-alphalab-skel {
-          background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 75%);
-          background-size: 200% 100%;
-          animation: ma-alphalab-pulse 1.4s ease-in-out infinite;
-        }
-        @keyframes ma-alphalab-pulse {
-          0% { background-position: 200% 0; }
-          100% { background-position: -200% 0; }
-        }
-        .ma-alphalab-seg {
-          font-family: var(--font-mono);
-          font-size: 11px;
-          font-weight: 700;
-          padding: 6px 12px;
-          border-radius: 8px;
-          border: 1px solid ${CARD_BORDER};
-          background: rgba(0,0,0,0.2);
-          color: var(--color-text-muted);
-          cursor: pointer;
-        }
-        .ma-alphalab-seg--on {
-          border-color: var(--color-accent);
-          color: var(--color-text-primary);
-          background: var(--color-sidebar-active-bg);
-        }
-        .ma-alphalab-btn {
-          font-family: var(--font-mono);
-          font-size: 11px;
-          font-weight: 700;
-          padding: 8px 14px;
-          border-radius: 8px;
-          border: 1px solid ${BORDER_LIGHT};
-          background: rgba(99,102,241,0.2);
-          color: var(--color-text-primary);
-          cursor: pointer;
-        }
-        .ma-alphalab-btn:disabled {
-          opacity: 0.45;
-          cursor: not-allowed;
-        }
-        .ma-alphalab-btn--disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-        .ma-alphalab-mini-table {
-          width: 100%;
-          font-family: var(--font-mono);
-          font-size: 12px;
-          border-collapse: collapse;
-        }
-        .ma-alphalab-mini-table td {
-          padding: 4px 0;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-        }
-        .ma-alphalab-mini-table td:first-child {
-          color: var(--color-text-muted);
-          width: 44%;
-        }
-        .ma-alphalab-uc {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 16px;
-        }
-        @media (max-width: 520px) {
-          .ma-alphalab-uc { grid-template-columns: 1fr; }
-        }
-        .ma-alphalab-uc__col--focus {
-          outline: 1px solid var(--color-accent);
-          outline-offset: 6px;
-          border-radius: 8px;
-        }
-        .ma-alphalab-badge {
-          font-family: var(--font-mono);
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 8px;
-          border-radius: 999px;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-        }
-        .ma-alphalab-badge--stable {
-          background: var(--pill-green-bg);
-          color: var(--pill-green-text);
-        }
-        .ma-alphalab-badge--mixed {
-          background: var(--pill-amber-bg);
-          color: var(--pill-amber-text);
-        }
-        .ma-alphalab-badge--unstable {
-          background: var(--pill-red-bg);
-          color: var(--pill-red-text);
-        }
-        .ma-alphalab-table {
-          width: 100%;
-          border-collapse: collapse;
-          font-family: var(--font-mono);
-          font-size: 12px;
-        }
-        .ma-alphalab-table th,
-        .ma-alphalab-table td {
-          padding: 8px 10px;
-          border-bottom: 1px solid rgba(255,255,255,0.06);
-          text-align: left;
-        }
-        .ma-alphalab-table .ma-num { text-align: right; }
-        .ma-alphalab-hedge-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
-        }
-        @media (max-width: 560px) {
-          .ma-alphalab-hedge-grid { grid-template-columns: 1fr; }
-        }
-        .ma-alphalab-progress {
-          height: 6px;
-          border-radius: 3px;
-          background: rgba(255,255,255,0.06);
-          overflow: hidden;
-          position: relative;
-        }
-        .ma-alphalab-progress__bar {
-          height: 100%;
-          width: 40%;
-          border-radius: 3px;
-          background: var(--color-accent);
-          animation: ma-alphalab-indet 1.2s ease-in-out infinite;
-        }
-        @keyframes ma-alphalab-indet {
-          0% { transform: translateX(-100%); }
-          100% { transform: translateX(350%); }
-        }
-      `}</style>
     </div>
   );
 }

@@ -14,9 +14,9 @@ import { apiFetch } from "../lib/api.js";
 
 const COLORS = {
   benchmark: "#6b7280",
-  rulesOnly: "#6366f1",
-  rulesHedged: "#818cf8",
-  dqnHedged: "#22c55e"
+  rulesOnly: "#58a6ff",
+  rulesHedged: "rgba(88, 166, 255, 0.55)",
+  rlEval: "#3fb950"
 };
 
 function fmtPctSigned(n) {
@@ -31,13 +31,13 @@ function mergeEquityRows(curves) {
   if (!rules.length) return [];
   const b = new Map((curves?.benchmark || []).map((p) => [p.date, p.value]));
   const h = new Map((curves?.rulesHedged || []).map((p) => [p.date, p.value]));
-  const d = new Map((curves?.dqnHedged || []).map((p) => [p.date, p.value]));
+  const r = new Map((curves?.rlEval || []).map((p) => [p.date, p.value]));
   return rules.map((row) => ({
     date: row.date,
     benchmark: b.get(row.date) ?? null,
     rulesOnly: row.value,
     rulesHedged: h.get(row.date) ?? null,
-    dqnHedged: d.get(row.date) ?? null
+    rlEval: r.get(row.date) ?? null
   }));
 }
 
@@ -66,6 +66,14 @@ function EquityTooltip({ active, payload, label }) {
       ))}
     </div>
   );
+}
+
+function colorVsBench(val, bench) {
+  const v = Number(val);
+  const b = Number(bench);
+  if (!Number.isFinite(v) || !Number.isFinite(b)) return "var(--color-text-dim)";
+  if (v >= b) return "var(--green)";
+  return "var(--red)";
 }
 
 export default function AlphaLabEquityCurves({ visible, universeId, period }) {
@@ -97,23 +105,12 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
   }, [visible, load]);
 
   const chartData = useMemo(() => mergeEquityRows(raw?.curves), [raw]);
-  const hasDqn = (raw?.curves?.dqnHedged?.length ?? 0) > 0;
+  const hasRl = (raw?.curves?.rlEval?.length ?? 0) > 0;
+  const rlLabel = raw?.rlAgentKind === "dqn" ? "DQN (eval)" : "Q-learning (eval)";
 
-  const summaryText = useMemo(() => {
-    const s = raw?.summary;
-    if (!s) return "";
-    const parts = [
-      `Rules: ${fmtPctSigned(s.rulesOnly?.totalReturn)}`,
-      `Rules+Hedge: ${fmtPctSigned(s.rulesHedged?.totalReturn)}${
-        s.rulesHedged?.maxDrawdown != null ? ` (DD: ${fmtPctSigned(s.rulesHedged.maxDrawdown)})` : ""
-      }`,
-      `Benchmark: ${fmtPctSigned(s.benchmark?.totalReturn)}`
-    ];
-    if (hasDqn) {
-      parts.push(`DQN+Hedge: ${fmtPctSigned(s.dqnHedged?.totalReturn)}`);
-    }
-    return parts.join(" | ");
-  }, [raw, hasDqn]);
+  const benchRet = raw?.summary?.benchmark?.totalReturn;
+  const rulesRet = raw?.summary?.rulesOnly?.totalReturn;
+  const rlRet = raw?.summary?.rlEval?.totalReturn;
 
   const toggle = (key) => {
     setOff((o) => ({ ...o, [key]: !o[key] }));
@@ -157,18 +154,20 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
   };
 
   return (
-    <section className="ma-alphalab-card ma-alphalab-equity" style={{ width: "100%", maxWidth: "100%", marginBottom: 20 }}>
-      <div className="ma-alphalab-card__head">
+    <section className="ma-alphalab-card ma-alphalab-fadein" style={{ marginBottom: 20 }}>
+      <div className="ma-alphalab-card__head" style={{ marginBottom: 12 }}>
         <div>
-          <div className="ma-alphalab-card__title">Cumulative equity (indexed to 100)</div>
+          <div className="ma-alphalab-card__title">Cumulative equity</div>
           <div className="ma-alphalab-card__sub">
-            GET /api/diagnostics/equity-curves/{universeId} · {period} · click legend to toggle
+            {universeId} · {period} · click legend to toggle series
           </div>
         </div>
       </div>
-      <div className="ma-alphalab-card__body" style={{ paddingTop: 0 }}>
-        {loading ? (
-          <div className="ma-alphalab-skel" style={{ height: 320, width: "100%", borderRadius: 8 }} />
+      <div className="ma-alphalab-card__body">
+        {!visible ? null : loading ? (
+          <div className="ma-alphalab-equity-inner">
+            <div className="ma-alphalab-skel" style={{ height: 400, width: "100%", borderRadius: 8 }} />
+          </div>
         ) : err ? (
           <div className="ma-mono" style={{ color: "var(--color-negative)", fontSize: 12 }}>
             {err}
@@ -178,8 +177,8 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
             No curve data
           </div>
         ) : (
-          <>
-            <div style={{ width: "100%", height: 340 }}>
+          <div className="ma-alphalab-fadein ma-alphalab-equity-inner">
+            <div style={{ width: "100%", height: 400 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                   <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="4 4" vertical={false} />
@@ -226,49 +225,63 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
                     connectNulls
                     isAnimationActive={false}
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="rulesHedged"
-                    name="Rules + hedge"
-                    stroke={COLORS.rulesHedged}
-                    strokeWidth={off.rulesHedged ? 0 : 3}
-                    strokeOpacity={off.rulesHedged ? 0 : 1}
-                    dot={false}
-                    connectNulls
-                    isAnimationActive={false}
-                  />
-                  {hasDqn ? (
+                  {hasRl ? (
                     <Line
                       type="monotone"
-                      dataKey="dqnHedged"
-                      name="DQN + hedge"
-                      stroke={COLORS.dqnHedged}
-                      strokeWidth={off.dqnHedged ? 0 : 3}
-                      strokeOpacity={off.dqnHedged ? 0 : 1}
+                      dataKey="rlEval"
+                      name={rlLabel}
+                      stroke={COLORS.rlEval}
+                      strokeWidth={off.rlEval ? 0 : 3}
+                      strokeOpacity={off.rlEval ? 0 : 1}
                       dot={false}
                       connectNulls
                       isAnimationActive={false}
                     />
                   ) : null}
+                  <Line
+                    type="monotone"
+                    dataKey="rulesHedged"
+                    name="Rules + hedge"
+                    stroke={COLORS.rulesHedged}
+                    strokeWidth={off.rulesHedged ? 0 : 1.5}
+                    strokeOpacity={off.rulesHedged ? 0 : 0.9}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
-            {summaryText ? (
+            {raw?.summary ? (
               <div
                 className="ma-mono ma-num"
                 style={{
                   marginTop: 14,
                   fontSize: 11,
-                  lineHeight: 1.6,
-                  color: "var(--color-text-dim)",
+                  lineHeight: 1.8,
                   textAlign: "center",
                   flexWrap: "wrap"
                 }}
               >
-                {summaryText}
+                {hasRl ? (
+                  <>
+                    <span style={{ color: colorVsBench(rlRet, benchRet) }}>
+                      {rlLabel.replace(" (eval)", "")}: {fmtPctSigned(rlRet)}
+                    </span>
+                    <span style={{ color: "var(--color-text-dim)" }}> · </span>
+                  </>
+                ) : null}
+                <span style={{ color: colorVsBench(rulesRet, benchRet) }}>Rules: {fmtPctSigned(rulesRet)}</span>
+                <span style={{ color: "var(--color-text-dim)" }}> · </span>
+                <span style={{ color: "var(--color-text-muted)" }}>Benchmark: {fmtPctSigned(benchRet)}</span>
+                <span style={{ color: "var(--color-text-dim)" }}> · </span>
+                <span style={{ color: colorVsBench(raw.summary?.rulesHedged?.totalReturn, benchRet) }}>
+                  Rules+Hedge: {fmtPctSigned(raw.summary?.rulesHedged?.totalReturn)}
+                </span>
               </div>
             ) : null}
-          </>
+          </div>
         )}
       </div>
     </section>
