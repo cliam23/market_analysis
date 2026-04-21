@@ -6,19 +6,20 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   CartesianGrid,
-  Area,
   ComposedChart
 } from "recharts";
 
-import { Box, Pill, Select, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
+import { Box, Select, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { apiFetch, safeJson } from "../lib/api.js";
 import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS } from "../lib/constants.js";
 import { fmtDate, fmtWeightPct, weightToPct } from "../lib/formatters.js";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
 
 const PAPER_TRADE_SESSION_KEY = "ma-paper-trade-session-v1";
+
+/** Set by Dashboard when navigating to Trading with a universe. */
+const PAPER_TRADE_NAV_UNIVERSE_KEY = "ma-paper-trade-nav-universe";
 
 function readPaperTradeSessionCache() {
   if (typeof sessionStorage === "undefined") return null;
@@ -54,50 +55,84 @@ function clearPaperTradeSessionCache() {
   }
 }
 
-const PILLAR_BAR_COLORS = {
-  fundamental: "var(--color-accent)",
-  dcf: "var(--color-gray-pillar)",
-  valuation: "var(--color-purple)",
-  momentum: "var(--color-teal)",
-  value: "var(--color-amber)"
+const PT_PILLAR_COLORS = {
+  fundamental: "#3fb950",
+  dcf: "#8b949e",
+  valuation: "#d29922",
+  momentum: "#58a6ff",
+  value: "#f0883e"
 };
 
-function StatStripCell({ label, value, subLabel, subValue, valueTone = "neutral" }) {
-  const valueColor =
-    valueTone === "positive"
-      ? "var(--color-positive)"
-      : valueTone === "negative"
-        ? "var(--color-negative)"
-        : valueTone === "muted"
-          ? "var(--color-text-muted)"
-          : "var(--color-text-primary)";
+function useCountUpDollars(target, duration = 750, resetKey) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    if (!Number.isFinite(target)) {
+      setV(0);
+      return;
+    }
+    setV(0);
+    const t0 = performance.now();
+    let raf;
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = 1 - (1 - p) * (1 - p);
+      setV(target * eased);
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else setV(target);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration, resetKey]);
+  return v;
+}
+
+function regimePillClassPt(regime) {
+  const s = String(regime || "").toLowerCase();
+  if (/bear|crash|panic|stress/.test(s)) return "ma-pt-regime-pill ma-pt-regime-pill--bear";
+  if (/caution|pullback|correction/.test(s)) return "ma-pt-regime-pill ma-pt-regime-pill--caution";
+  if (/strong_bull|bull/.test(s)) return "ma-pt-regime-pill ma-pt-regime-pill--bull";
+  return "ma-pt-regime-pill ma-pt-regime-pill--norm";
+}
+
+function compositeTierColor(score) {
+  if (score == null || Number.isNaN(Number(score))) return "var(--text-secondary)";
+  const n = Number(score);
+  if (n >= 90) return "#3fb950";
+  if (n >= 80) return "var(--green)";
+  if (n >= 70) return "var(--yellow)";
+  return "var(--red)";
+}
+
+function PtToggle({ on, onChange, disabled, label }) {
   return (
-    <div className="ma-stat-strip__cell">
-      <div className="ma-stat-strip__label">{label}</div>
-      <div className="ma-stat-strip__value ma-num ma-mono" style={{ color: valueColor }}>
-        {value}
-      </div>
-      {subLabel != null && subValue != null && (
-        <div className="ma-stat-strip__sub">
-          {subLabel}: {subValue}
-        </div>
-      )}
+    <div className="ma-pt-toggle-row">
+      <span>{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        disabled={disabled}
+        className={`ma-pt-toggle ${on ? "ma-pt-toggle--on" : ""}`}
+        onClick={() => !disabled && onChange(!on)}
+      />
     </div>
   );
 }
 
-function CaptureCard({ label, valueDisplay, rawPct, fillClass }) {
-  const n = rawPct != null && Number.isFinite(Number(rawPct)) ? Number(rawPct) : null;
-  const w = n == null ? 0 : Math.min(100, Math.max(0, n));
+function PaperSlotSegmented({ activeId, disabled, onPick }) {
   return (
-    <div className="ma-capture-card">
-      <div className="ma-capture-card__value ma-num ma-mono" style={{ color: "var(--color-text-primary)" }}>
-        {valueDisplay}
-      </div>
-      <div className="ma-capture-bar">
-        <div className={fillClass} style={{ width: `${w}%` }} />
-      </div>
-      <div className="ma-capture-card__caption">{label}</div>
+    <div className="ma-pt-segmented" style={{ width: "100%", maxWidth: 440 }}>
+      {PAPER_DUAL_UNIVERSES.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          className={`ma-pt-seg ${activeId === t.id ? "ma-pt-seg--active" : ""}`}
+          disabled={disabled}
+          onClick={() => onPick(t.id)}
+        >
+          {t.id === "sp500_top50" ? "Top 50" : "Top 150"}
+        </button>
+      ))}
     </div>
   );
 }
@@ -132,11 +167,76 @@ const PAPER_DUAL_UNIVERSES = [
   { id: "sp500_top150", label: "S&P 500 Top 150" }
 ];
 
-function regimePillVariant(reg) {
-  const r = (reg || "").toLowerCase();
-  if (/stress|bear|defensive|crash|panic/.test(r)) return "red";
-  if (/cautious|elevated|high\s*vol/.test(r)) return "amber";
-  return "green";
+/** API puts metrics on `portfolio.summary`; older caches may omit it or use flat fields. */
+function effectivePaperSummary(portfolio) {
+  if (!portfolio) return null;
+  const s = portfolio.summary || {};
+  const leg = portfolio;
+  const num = (a, b, def = 0) => {
+    const x =
+      a != null && Number.isFinite(Number(a))
+        ? Number(a)
+        : b != null && Number.isFinite(Number(b))
+          ? Number(b)
+          : null;
+    return x != null ? x : def;
+  };
+  const numOrNull = (a, b) => {
+    const x =
+      a != null && Number.isFinite(Number(a))
+        ? Number(a)
+        : b != null && Number.isFinite(Number(b))
+          ? Number(b)
+          : null;
+    return x;
+  };
+  const hc =
+    s.holdingsCount != null && Number.isFinite(Number(s.holdingsCount))
+      ? Number(s.holdingsCount)
+      : Array.isArray(leg.holdings)
+        ? leg.holdings.length
+        : 0;
+  return {
+    ...s,
+    totalValue: num(s.totalValue, leg.totalValue, 0),
+    totalReturn: num(s.totalReturn, leg.totalReturn, 0),
+    spyReturn: num(s.spyReturn, leg.spyReturn, 0),
+    alpha: num(s.alpha, leg.alpha, 0),
+    daysActive: Math.max(0, Math.floor(num(s.daysActive, leg.daysActive, 0))),
+    holdingsCount: hc,
+    upCapture: numOrNull(s.upCapture, leg.upCapture),
+    downCapture: numOrNull(s.downCapture, leg.downCapture),
+    currentRegime: s.currentRegime ?? leg.currentRegime ?? null,
+    cashPct: s.cashPct != null ? num(s.cashPct, leg.cashPct, 0) : s.cashPct,
+    weightSpread: s.weightSpread ?? leg.weightSpread ?? null,
+    largestPosition: s.largestPosition ?? leg.largestPosition ?? null,
+    smallestPosition: s.smallestPosition ?? leg.smallestPosition ?? null,
+    adjustedTopN: s.adjustedTopN ?? leg.adjustedTopN ?? null,
+    notionalRegimeExposure: s.notionalRegimeExposure ?? leg.notionalRegimeExposure ?? null,
+    cashDragRough: s.cashDragRough ?? leg.cashDragRough ?? null
+  };
+}
+
+/** Implied starting capital from live NAV and return % (replaces unreliable flat `initialCapital` on some payloads). */
+function deriveInitialCapitalFromSummary(summary, config) {
+  if (!summary) {
+    const ic = config?.initialCapital;
+    if (ic != null && Number.isFinite(Number(ic))) return Number(ic);
+    return 100000;
+  }
+  const tv = summary.totalValue;
+  const tr = summary.totalReturn;
+  if (Number.isFinite(Number(tv)) && Number.isFinite(Number(tr))) {
+    const denom = 1 + Number(tr) / 100;
+    if (Math.abs(denom) > 1e-12) return Number(tv) / denom;
+  }
+  const ic = config?.initialCapital;
+  if (ic != null && Number.isFinite(Number(ic))) return Number(ic);
+  return 100000;
+}
+
+function paperRlConfigOn(config) {
+  return config.rlAgent !== false && config.rlAgent !== "false" && config.rlAgent !== "0" && config.rlAgent !== 0;
 }
 
 function ConfirmModal({ message, onConfirm, onCancel }) {
@@ -180,7 +280,7 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
   );
 }
 
-export default function PaperTradeTab({ visible = false }) {
+export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   const sessionSnapshot = useMemo(() => readPaperTradeSessionCache(), []);
   const [paperUniverseView, setPaperUniverseView] = useState(() => {
     const u = sessionSnapshot?.portfolio?.config?.universeId ?? sessionSnapshot?.portfolio?.config?.universe;
@@ -191,7 +291,7 @@ export default function PaperTradeTab({ visible = false }) {
   const [loading, setLoading] = useState(() => !(sessionSnapshot?.portfolio));
   const [rebalancing, setRebalancing] = useState(false);
   const [error, setError] = useState(null);
-  const [expandedRebalance, setExpandedRebalance] = useState(null);
+  const [expandedRebalanceKey, setExpandedRebalanceKey] = useState(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const [initForm, setInitForm] = useState({
@@ -206,8 +306,10 @@ export default function PaperTradeTab({ visible = false }) {
 
   const [autoRebalanced, setAutoRebalanced] = useState(false);
   const [loadBtnHover, setLoadBtnHover] = useState(false);
-  const [rebalBtnHover, setRebalBtnHover] = useState(false);
-  const [forwardInfo, setForwardInfo] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [showWeightHistory, setShowWeightHistory] = useState(false);
+  const [showPositionDetails, setShowPositionDetails] = useState(false);
+  const [holdingsSort, setHoldingsSort] = useState("weight");
   const paperApi = useAbortableApi();
   /** Skip one "tab became visible" refresh when Trading is the initial tab (bootstrap already loads). */
   const skipVisibleRefreshOnce = useRef(visible);
@@ -218,9 +320,20 @@ export default function PaperTradeTab({ visible = false }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- session snapshot is stable for the tab lifetime
   }, []);
 
-  // When switching to Trading, refresh quietly so NAV/holdings stay current without a full-page block.
+  // When switching to Trading, refresh quietly; honor Dashboard navigation intent first.
   useEffect(() => {
     if (!visible) return;
+    try {
+      const u = sessionStorage.getItem(PAPER_TRADE_NAV_UNIVERSE_KEY);
+      if (u === "sp500_top50" || u === "sp500_top150") {
+        sessionStorage.removeItem(PAPER_TRADE_NAV_UNIVERSE_KEY);
+        setPaperUniverseView(u);
+        fetchPortfolio(true, u);
+        return;
+      }
+    } catch {
+      /* ignore */
+    }
     if (skipVisibleRefreshOnce.current) {
       skipVisibleRefreshOnce.current = false;
       return;
@@ -230,33 +343,10 @@ export default function PaperTradeTab({ visible = false }) {
   }, [visible]);
 
   useEffect(() => {
-    const cfg = portfolio?.config;
-    if (!cfg?.universe || !cfg?.weights || !isCompositeStrategy(cfg.strategy)) {
-      setForwardInfo(null);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await apiFetch("/api/diagnostics/forward-confidence", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            universeId: cfg.universe,
-            period: "3y",
-            weights: cfg.weights
-          })
-        });
-        const data = await res.json();
-        if (!cancelled && res.ok && data.success) setForwardInfo(data);
-      } catch {
-        if (!cancelled) setForwardInfo(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [portfolio?.config?.universe, portfolio?.config?.weights, portfolio?.config?.strategy]);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     if (!portfolio || autoRebalanced || rebalancing) return;
@@ -272,11 +362,44 @@ export default function PaperTradeTab({ visible = false }) {
 
   const paperUniverseQs = `?universe=${encodeURIComponent(paperUniverseView)}`;
 
+  const summary = useMemo(() => effectivePaperSummary(portfolio), [portfolio]);
+  const derivedInitialCapital = useMemo(
+    () => deriveInitialCapitalFromSummary(summary, portfolio?.config),
+    [summary, portfolio?.config]
+  );
+
+  const animNavKey = portfolio
+    ? `${paperUniverseView}-${portfolio.createdAt}-${portfolio.rebalanceCount ?? 0}-${summary?.totalValue ?? 0}`
+    : "idle";
+  const animatedNavTotal = useCountUpDollars(summary?.totalValue ?? 0, 750, animNavKey);
+
+  const sortedHoldings = useMemo(() => {
+    const h = portfolio?.holdings;
+    if (!h?.length) return [];
+    const copy = [...h];
+    if (holdingsSort === "pnl") copy.sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
+    else if (holdingsSort === "score") copy.sort((a, b) => (b.scores?.composite ?? 0) - (a.scores?.composite ?? 0));
+    else copy.sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+    return copy;
+  }, [portfolio?.holdings, holdingsSort]);
+
+  const holdingsTierSets = useMemo(() => {
+    const h = portfolio?.holdings;
+    if (!h?.length) return { top: new Set(), bottom: new Set() };
+    const byPnL = [...h].sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
+    return {
+      top: new Set(byPnL.slice(0, 3).map((x) => x.ticker)),
+      bottom: new Set(byPnL.slice(-3).map((x) => x.ticker))
+    };
+  }, [portfolio?.holdings]);
+
   const fetchPortfolio = async (showLoader = true, universeOverride = null) => {
     const ac = paperApi.beginRequest();
     const uid = universeOverride ?? paperUniverseView;
     const qs = `?universe=${encodeURIComponent(uid)}`;
-    if (showLoader) setLoading(true);
+    // Full-page skeleton only when nothing is on screen; slot switches keep prior data until swap.
+    const useFullPageLoader = Boolean(showLoader && !portfolio);
+    if (useFullPageLoader) setLoading(true);
     setError(null);
     try {
       const [pRes, hRes] = await Promise.all([
@@ -295,7 +418,7 @@ export default function PaperTradeTab({ visible = false }) {
       if (!isAbortError(e)) setError(e.message);
     } finally {
       paperApi.clearIfCurrent(ac);
-      if (showLoader) setLoading(false);
+      if (useFullPageLoader) setLoading(false);
     }
   };
 
@@ -359,6 +482,9 @@ export default function PaperTradeTab({ visible = false }) {
         return;
       }
       paperApi.clearIfCurrent(ac);
+      const nb = data.buys?.length ?? 0;
+      const ns = data.sells?.length ?? 0;
+      setToast(`Rebalance complete · ${nb} buy${nb !== 1 ? "s" : ""} · ${ns} sell${ns !== 1 ? "s" : ""}`);
       await fetchPortfolio(false);
     } catch (e) {
       if (!isAbortError(e)) setError(e.message);
@@ -368,11 +494,7 @@ export default function PaperTradeTab({ visible = false }) {
   };
 
   const onRebalanceClick = () => {
-    if (rebalancing) {
-      paperApi.abortInFlight();
-      setRebalancing(false);
-      return;
-    }
+    if (rebalancing) return;
     rebalance();
   };
 
@@ -405,61 +527,29 @@ export default function PaperTradeTab({ visible = false }) {
     }
   };
 
-  const paperUniverseSlotBar = (
-    <div
-      style={{
-        display: "flex",
-        gap: 8,
-        marginBottom: 16,
-        flexWrap: "wrap",
-        alignItems: "center"
-      }}
-    >
-      <span
-        className="ma-mono"
-        style={{
-          fontSize: 10,
-          color: "var(--color-text-muted)",
-          textTransform: "uppercase",
-          letterSpacing: 1
-        }}
-      >
-        Portfolio slot
-      </span>
-      {PAPER_DUAL_UNIVERSES.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          className={paperUniverseView === t.id ? "ma-btn-secondary" : "ma-btn-ghost"}
-          style={{ fontSize: 12 }}
-          onClick={() => {
-            if (t.id === paperUniverseView) return;
-            setPaperUniverseView(t.id);
-            setInitForm((f) => ({ ...f, universe: t.id }));
-            fetchPortfolio(true, t.id);
-          }}
-        >
-          {t.label}
-        </button>
-      ))}
-    </div>
-  );
-
-  if (loading) {
+  if (loading && !portfolio) {
     return (
-      <Box style={{ padding: "48px 20px 40px", boxSizing: "border-box" }}>
+      <div className="ma-pt-page">
+        <PaperSlotSegmented
+          activeId={paperUniverseView}
+          disabled
+          onPick={() => {}}
+        />
+        <div className="ma-pt-skel" style={{ height: 100, marginTop: 16, marginBottom: 12 }} />
+        <div className="ma-pt-skel" style={{ height: 280, marginBottom: 12 }} />
+        <div className="ma-pt-skel" style={{ height: 160 }} />
         <div
           className="ma-mono"
           style={{
             textAlign: "center",
-            fontSize: 13,
-            color: "var(--color-text-muted)",
-            marginBottom: 16
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            marginTop: 16
           }}
         >
-          Loading paper portfolio...
+          Loading paper portfolio…
         </div>
-        <div style={{ ...RUN_ACTION_BAR_STYLE, marginTop: 0 }}>
+        <div style={{ ...RUN_ACTION_BAR_STYLE, marginTop: 16 }}>
           <button
             type="button"
             className="ma-btn-ghost"
@@ -477,17 +567,26 @@ export default function PaperTradeTab({ visible = false }) {
             {loadBtnHover ? "CANCEL" : "STOP LOADING"}
           </button>
         </div>
-      </Box>
+      </div>
     );
   }
 
   if (!portfolio) {
     return (
-      <div>
-        {paperUniverseSlotBar}
+      <div className="ma-pt-page">
+        <PaperSlotSegmented
+          activeId={paperUniverseView}
+          disabled={loading}
+          onPick={(id) => {
+            if (id === paperUniverseView) return;
+            setPaperUniverseView(id);
+            setInitForm((f) => ({ ...f, universe: id }));
+            fetchPortfolio(true, id);
+          }}
+        />
         {showResetConfirm && (
           <ConfirmModal
-            message="Are you sure? You will lose the results of the current paper trade."
+            message={`Reset portfolio to $${Number(initForm.initialCapital || 100000).toLocaleString()}? This cannot be undone.`}
             onConfirm={resetPortfolio}
             onCancel={() => setShowResetConfirm(false)}
           />
@@ -528,52 +627,17 @@ export default function PaperTradeTab({ visible = false }) {
             <Select label="UNIVERSE" value={initForm.universe} onChange={(v) => setInitForm((f) => ({ ...f, universe: v }))} options={UNIVERSE_OPTIONS} />
             <Select label="TOP N" value={initForm.topN} onChange={(v) => setInitForm((f) => ({ ...f, topN: v }))} options={TOP_N_OPTIONS} />
             {isCompositeStrategy(initForm.strategy) && (
-              <div
-                style={{
-                  gridColumn: "1 / -1",
-                  display: "flex",
-                  flexWrap: "wrap",
-                  gap: "16px 24px",
-                  alignItems: "center",
-                  paddingTop: 4
-                }}
-              >
-                <label
-                  className="ma-mono"
-                  style={{
-                    fontSize: 12,
-                    color: "var(--color-text-muted)",
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    cursor: "pointer"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={initForm.rlAgent}
-                    onChange={(e) => setInitForm((f) => ({ ...f, rlAgent: e.target.checked }))}
-                  />
-                  RL agent (when trained model is loaded)
-                </label>
-                <label
-                  className="ma-mono"
-                  style={{
-                    fontSize: 12,
-                    color: "var(--color-text-muted)",
-                    display: "flex",
-                    gap: 8,
-                    alignItems: "center",
-                    cursor: "pointer"
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={initForm.rlOnlineLearning}
-                    onChange={(e) => setInitForm((f) => ({ ...f, rlOnlineLearning: e.target.checked }))}
-                  />
-                  RL online learning
-                </label>
+              <div style={{ gridColumn: "1 / -1", paddingTop: 4, maxWidth: 360 }}>
+                <PtToggle
+                  label="RL agent (when trained)"
+                  on={initForm.rlAgent}
+                  onChange={(v) => setInitForm((f) => ({ ...f, rlAgent: v }))}
+                />
+                <PtToggle
+                  label="RL online learning"
+                  on={initForm.rlOnlineLearning}
+                  onChange={(v) => setInitForm((f) => ({ ...f, rlOnlineLearning: v }))}
+                />
               </div>
             )}
           </div>
@@ -620,7 +684,6 @@ export default function PaperTradeTab({ visible = false }) {
   }
 
   const {
-    summary,
     holdings,
     config,
     createdAt,
@@ -648,24 +711,34 @@ export default function PaperTradeTab({ visible = false }) {
       ? PILLAR_ORDER.map((key) => ({
           key,
           pct: weightToPct(activeWeights[key]),
-          color: PILLAR_BAR_COLORS[key]
+          color: PT_PILLAR_COLORS[key]
         }))
       : [];
   const weightBarTotal = weightBarParts.reduce((s, x) => s + x.pct, 0) || 1;
 
-  const chartMetaRight = [
-    lastRebalance && `Last: ${fmtDate(lastRebalance)}`,
-    nextRebalance && `Next: ${fmtDate(nextRebalance)}`
-  ]
-    .filter(Boolean)
-    .join("   ");
+  const chartSubtitle = `Since ${fmtDate(createdAt)} · ${stratLabel} · ${uniLabel} · Top ${config.topN}`;
+  const cashPctOfNav = summary && summary.totalValue > 0 ? ((cash / summary.totalValue) * 100).toFixed(1) : "0";
+  const captureRatiosMeaningful = (summary?.daysActive ?? 0) >= 30;
+  const rlConfigOn = paperRlConfigOn(config);
 
   return (
-    <div>
-      {paperUniverseSlotBar}
+    <div className="ma-pt-page" style={{ position: "relative" }}>
+      <PaperSlotSegmented
+        activeId={paperUniverseView}
+        disabled={loading}
+        onPick={(id) => {
+          if (id === paperUniverseView) return;
+          setPaperUniverseView(id);
+          setInitForm((f) => ({ ...f, universe: id }));
+          fetchPortfolio(true, id);
+        }}
+      />
+      <div className="ma-pt-slot-summary">
+        {uniLabel} · {holdings.length} positions · ${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Since {fmtDate(createdAt)}
+      </div>
       {showResetConfirm && (
         <ConfirmModal
-          message="Are you sure? You will lose the results of the current paper trade."
+          message={`Reset portfolio (implied start ~$${Math.round(derivedInitialCapital).toLocaleString()})? This cannot be undone.`}
           onConfirm={resetPortfolio}
           onCancel={() => setShowResetConfirm(false)}
         />
@@ -687,492 +760,465 @@ export default function PaperTradeTab({ visible = false }) {
         </Box>
       )}
 
-      {forwardInfo?.forwardEstimate && summary && (
-        <Box
-          style={{
-            marginBottom: 12,
-            borderColor: "rgba(251, 191, 36, 0.35)",
-            background: "rgba(251, 191, 36, 0.06)"
-          }}
-        >
-          <div className="ma-mono" style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, color: "#fcd34d", marginBottom: 8 }}>
-            FORWARD EXPECTATION (NOT HISTORICAL RETURN)
+      <div className="ma-pt-hero">
+        <div className="ma-pt-hero__grid">
+          <div>
+            <div className="ma-pt-hero__label">Total value</div>
+            <div className="ma-pt-hero__val ma-pt-hero__val--xl ma-mono">
+              ${Math.round(animatedNavTotal).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+            </div>
+            <div className="ma-pt-hero__cash">
+              Cash: ${cash.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({cashPctOfNav}%)
+            </div>
           </div>
-          <p style={{ margin: "0 0 8px", fontSize: 13, lineHeight: 1.6, color: "var(--color-text-primary)" }}>
-            Historical alpha is <strong>{summary.alpha >= 0 ? "+" : ""}{summary.alpha.toFixed(1)}%</strong> over the live window; illustrative forward annual alpha is closer to{" "}
-            <strong>+{forwardInfo.forwardEstimate.estimatedAnnualAlpha}%</strong> (range {forwardInfo.forwardEstimate.confidenceBand?.low ?? "—"}%–
-            {forwardInfo.forwardEstimate.confidenceBand?.high ?? "—"}%) with {(forwardInfo.scores?.forwardConfidence * 100).toFixed(0)}% forward confidence.
-            Recent outperformance can reflect factor tailwinds — plan on the forward band, not the peak backtest.
-          </p>
-        </Box>
-      )}
-
-      <div className="ma-stat-strip">
-        <StatStripCell
-          label="Total value"
-          value={`$${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          valueTone="neutral"
-        />
-        <StatStripCell
-          label="Total return"
-          value={`${summary.totalReturn >= 0 ? "+" : ""}${summary.totalReturn.toFixed(1)}%`}
-          subLabel="S&P"
-          subValue={`${summary.spyReturn >= 0 ? "+" : ""}${summary.spyReturn.toFixed(1)}%`}
-          valueTone={summary.totalReturn >= 0 ? "positive" : "negative"}
-        />
-        <StatStripCell
-          label="Alpha"
-          value={`${summary.alpha >= 0 ? "+" : ""}${summary.alpha.toFixed(1)}%`}
-          valueTone={summary.alpha >= 0 ? "positive" : "negative"}
-        />
-        <StatStripCell
-          label="Cash"
-          value={`$${cash.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          valueTone="muted"
-        />
-        <StatStripCell label="Days active" value={String(summary.daysActive)} valueTone="neutral" />
-      </div>
-
-      <div className="ma-capture-grid">
-        <CaptureCard
-          label="Up capture · SPY-up days · mean port / mean SPY"
-          valueDisplay={summary.upCapture != null ? `${summary.upCapture.toFixed(0)}%` : "—"}
-          rawPct={summary.upCapture}
-          fillClass="ma-capture-bar__fill--up"
-        />
-        <CaptureCard
-          label="Down capture · SPY-down days · mean port / mean SPY"
-          valueDisplay={summary.downCapture != null ? `${summary.downCapture.toFixed(0)}%` : "—"}
-          rawPct={summary.downCapture}
-          fillClass="ma-capture-bar__fill--down"
-        />
-      </div>
-
-      {summary.rlEnabled && (
-        <div className="ma-stat-strip" style={{ marginTop: 4 }}>
-          <StatStripCell label="RL agent" value="Active" valueTone="positive" />
-          <StatStripCell
-            label="RL updates"
-            value={(summary.rlAgentUpdates ?? 0).toLocaleString()}
-            valueTone="neutral"
-          />
-          {summary.rlLastAction && (
-            <>
-              <StatStripCell
-                label="RL exposure"
-                value={`${((summary.rlLastAction.exposure ?? 0) * 100).toFixed(0)}%`}
-                valueTone="neutral"
-              />
-              <StatStripCell
-                label="RL positions"
-                value={String(summary.rlLastAction.positionCount ?? "—")}
-                valueTone="neutral"
-              />
-              <StatStripCell
-                label="RL sizing"
-                value={String(summary.rlLastAction.sizingMethod ?? "—")}
-                valueTone="muted"
-              />
-            </>
-          )}
-          {summary.rlOnlineLearning && (
-            <StatStripCell label="RL online learn" value="On" valueTone="positive" />
-          )}
+          <div>
+            <div className="ma-pt-hero__label">Return</div>
+            <div
+              className="ma-pt-hero__val ma-pt-hero__val--lg ma-mono"
+              style={{ color: summary.totalReturn >= 0 ? "var(--green)" : "var(--red)" }}
+            >
+              {summary.totalReturn >= 0 ? "+" : ""}
+              {summary.totalReturn.toFixed(1)}%
+            </div>
+            <div className="ma-pt-hero__spy">
+              S&amp;P: {summary.spyReturn >= 0 ? "+" : ""}
+              {summary.spyReturn.toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div className="ma-pt-hero__label">Alpha</div>
+            <div
+              className="ma-pt-hero__val ma-pt-hero__val--lg ma-mono"
+              style={{ color: summary.alpha >= 0 ? "var(--green)" : "var(--red)" }}
+            >
+              {summary.alpha >= 0 ? "+" : ""}
+              {summary.alpha.toFixed(1)}%
+            </div>
+            <div className="ma-pt-hero__spy">vs benchmark</div>
+          </div>
+          <div>
+            <div className="ma-pt-hero__label">Active</div>
+            <div className="ma-pt-hero__val ma-pt-hero__val--lg ma-mono" style={{ color: "var(--text-primary)" }}>
+              {summary.daysActive} days
+            </div>
+          </div>
         </div>
-      )}
-
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: "10px 12px",
-          marginBottom: 14
-        }}
-      >
-        <span className="ma-mono" style={{ fontSize: 11, color: "var(--color-text-muted)", marginRight: 4 }}>
-          Regime / exposure
-        </span>
-        <Pill variant={regimePillVariant(summary.currentRegime)}>
-          {(summary.currentRegime ?? "—").toString()}
-        </Pill>
-        <Pill variant="indigo">
-          Adj. top N: {summary.adjustedTopN != null ? summary.adjustedTopN : "—"}
-        </Pill>
-        <Pill variant="indigo">
-          Notional: {summary.notionalRegimeExposure != null ? `${summary.notionalRegimeExposure}%` : "—"}
-        </Pill>
-        <Pill variant="green">
-          Cash %: {summary.cashPct != null ? `${summary.cashPct.toFixed(1)}%` : "—"}
-        </Pill>
-        <Pill variant="amber">
-          Spread: {summary.weightSpread != null ? `${summary.weightSpread}×` : "—"}
-        </Pill>
-        {summary.largestPosition && (
-          <span className="ma-ticker-chip ma-mono ma-num">
-            {summary.largestPosition.ticker}
-            <span>{summary.largestPosition.weight?.toFixed?.(1) ?? summary.largestPosition.weight}%</span>
-          </span>
-        )}
-        {summary.smallestPosition && (
-          <span className="ma-ticker-chip ma-mono ma-num">
-            {summary.smallestPosition.ticker}
-            <span>{summary.smallestPosition.weight?.toFixed?.(1) ?? summary.smallestPosition.weight}%</span>
-          </span>
-        )}
-        {summary.cashDragRough != null && (
-          <Pill variant="neutral" title="Rough heuristic: cash % × period SPY return">
-            Cash drag: {summary.cashDragRough >= 0 ? "+" : ""}
-            {summary.cashDragRough.toFixed(2)} pp
-          </Pill>
-        )}
-      </div>
-
-      {isCompositeStrategy(config.strategy) && activeWeights && (
-        <Box>
-          <div className="ma-section-title">Adaptive composite weights</div>
-          <p
-            className="ma-mono"
-            style={{
-              fontSize: 11,
-              color: "var(--color-text-muted)",
-              marginBottom: 14,
-              lineHeight: 1.5,
-              marginTop: 0
-            }}
-          >
-            Current pillar weights used for ranking (backtest-style single-period IC updates from the third rebalance onward, with caps). Same engine as Full Composite backtest.
-          </p>
-          <div className="ma-weight-bar">
-            {weightBarParts.map(({ key, pct, color }) => (
+        <div className="ma-pt-capture-row">
+          <div className="ma-pt-capture">
+            <div className="ma-pt-capture__label">Up capture</div>
+            <div className="ma-pt-capture__val ma-mono">
+              {captureRatiosMeaningful && summary.upCapture != null ? `${summary.upCapture.toFixed(0)}%` : "—"}
+            </div>
+            <div className="ma-pt-capture__bar">
               <div
-                key={key}
-                className="ma-weight-bar__seg"
+                className="ma-pt-capture__fill--up"
                 style={{
-                  width: `${(pct / weightBarTotal) * 100}%`,
-                  background: color
+                  width: `${
+                    captureRatiosMeaningful && summary.upCapture != null
+                      ? Math.min(100, Math.max(0, summary.upCapture))
+                      : 0
+                  }%`
                 }}
               />
-            ))}
+            </div>
           </div>
-          <div className="ma-weight-legend">
-            {PILLAR_ORDER.map((key) => (
-              <span key={key} className="ma-weight-chip">
-                <span className="ma-weight-chip__swatch" style={{ background: PILLAR_BAR_COLORS[key] }} />
-                {PILLAR_LABELS[key]}{" "}
-                <span style={{ color: "var(--color-text-primary)" }}>{fmtWeightPct(activeWeights[key])}</span>
-              </span>
-            ))}
-          </div>
-          {weightHistory && weightHistory.length > 0 && (
-            <>
-              <div className="ma-section-title" style={{ marginTop: 8, marginBottom: 8 }}>
-                Recent weight snapshots (last {weightHistory.length})
-              </div>
-              <div className="ma-table-wrap">
-                <table className="ma-table ma-table--zebra ma-table--sticky-head ma-table--compact">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Alpha</th>
-                      {PILLAR_ORDER.map((key) => (
-                        <th key={key} className="ma-num">
-                          {PILLAR_LABELS[key]}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {weightHistory.slice().reverse().map((row) => (
-                      <tr key={row.date}>
-                        <td className="ma-mono">{fmtDate(row.date)}</td>
-                        <td
-                          className="ma-mono ma-num"
-                          style={{
-                            color:
-                              row.alpha == null
-                                ? "var(--color-text-muted)"
-                                : row.alpha >= 0
-                                  ? "var(--color-positive)"
-                                  : "var(--color-negative)"
-                          }}
-                        >
-                          {row.alpha != null ? `${row.alpha >= 0 ? "+" : ""}${Number(row.alpha).toFixed(1)}%` : "—"}
-                        </td>
-                        {PILLAR_ORDER.map((key) => (
-                          <td key={key} className="ma-mono ma-num" style={{ color: "var(--color-text-dim)" }}>
-                            {row.weights?.[key] != null ? `${Number(row.weights[key]).toFixed(1)}%` : "—"}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
-        </Box>
-      )}
-
-      <Box>
-        <div className="ma-portfolio-head" style={{ gridTemplateColumns: "1fr auto", marginBottom: 8 }}>
-          <div className="ma-portfolio-head__title">Portfolio vs S&amp;P 500</div>
-          <div className="ma-portfolio-head__actions">
-            <button
-              type="button"
-              className={rebalancing && rebalBtnHover ? "ma-btn-ghost" : rebalancing ? "ma-btn-secondary" : "ma-btn-primary"}
-              onClick={onRebalanceClick}
-              onMouseEnter={() => setRebalBtnHover(true)}
-              onMouseLeave={() => setRebalBtnHover(false)}
-              style={rebalancing && !rebalBtnHover ? { opacity: 0.85 } : undefined}
-            >
-              {rebalancing && rebalBtnHover
-                ? "CANCEL"
-                : rebalancing
-                  ? "Running model..."
-                  : "Rebalance Now"}
-            </button>
-            <button type="button" className="ma-btn-danger-outline" onClick={() => setShowResetConfirm(true)}>
-              Reset
-            </button>
-          </div>
-          <div className="ma-portfolio-head__meta ma-mono">
-            Since {fmtDate(createdAt)} · {stratLabel} · {uniLabel} · Top {config.topN}
-          </div>
-          <div className="ma-portfolio-head__meta ma-mono" style={{ textAlign: "right" }}>
-            {chartMetaRight}
+          <div className="ma-pt-capture">
+            <div className="ma-pt-capture__label">Down capture</div>
+            <div className="ma-pt-capture__val ma-mono">
+              {captureRatiosMeaningful && summary.downCapture != null ? `${summary.downCapture.toFixed(0)}%` : "—"}
+            </div>
+            <div className="ma-pt-capture__bar">
+              <div
+                className="ma-pt-capture__fill--down"
+                style={{
+                  width: `${
+                    captureRatiosMeaningful && summary.downCapture != null
+                      ? Math.min(100, Math.max(0, summary.downCapture))
+                      : 0
+                  }%`
+                }}
+              />
+            </div>
+            {captureRatiosMeaningful && summary.downCapture == null && (
+              <div className="ma-pt-capture__muted">No down days yet</div>
+            )}
           </div>
         </div>
-        {isCompositeStrategy(config.strategy) && (
-          <div
-            className="ma-mono"
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "12px 20px",
-              alignItems: "center",
-              marginBottom: 12,
-              paddingBottom: 12,
-              borderBottom: "1px solid var(--color-border)"
-            }}
-          >
-            <span style={{ fontSize: 11, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              RL agent
-            </span>
-            <span
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: summary.rlEnabled ? "var(--color-positive)" : "var(--color-text-muted)"
-              }}
-            >
-              {summary.rlEnabled ? "ACTIVE" : "OFF"}
-            </span>
-            <label
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-dim)",
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                cursor: paperConfigSaving ? "wait" : "pointer"
-              }}
-            >
-              <input
-                type="checkbox"
-                disabled={paperConfigSaving || rebalancing}
-                checked={config.rlAgent !== false && config.rlAgent !== "false" && config.rlAgent !== "0" && config.rlAgent !== 0}
-                onChange={(e) => patchPaperConfig({ rlAgent: e.target.checked })}
-              />
-              Use on rebalance
-            </label>
-            <label
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-dim)",
-                display: "flex",
-                gap: 8,
-                alignItems: "center",
-                cursor: paperConfigSaving ? "wait" : "pointer"
-              }}
-            >
-              <input
-                type="checkbox"
-                disabled={paperConfigSaving || rebalancing}
-                checked={config.rlOnlineLearning === true || config.rlOnlineLearning === "true" || config.rlOnlineLearning === "1" || config.rlOnlineLearning === 1}
-                onChange={(e) => patchPaperConfig({ rlOnlineLearning: e.target.checked })}
-              />
-              Online Q-update
-            </label>
+        {!captureRatiosMeaningful && (
+          <div className="ma-pt-capture__muted" style={{ marginTop: 10, textAlign: "center" }}>
+            Collecting data — capture ratios need 30+ days of history.
           </div>
         )}
-        {chartData.length > 1 ? (
-          <ResponsiveContainer width="100%" height={220}>
-            <ComposedChart data={chartData} margin={{ top: 8, right: 28, bottom: 4, left: 4 }}>
-              <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="4 4" vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 11, fill: "var(--color-text-muted)" }}
-                tickLine={false}
-                axisLine={{ stroke: "var(--color-border)" }}
-                tickFormatter={(v) => {
-                  const d = new Date(v + "T00:00:00");
-                  return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
-                }}
-                minTickGap={40}
-              />
-              <YAxis
-                tick={{ fontSize: 11, fill: "var(--color-text-muted)" }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                domain={["dataMin - 500", "dataMax + 500"]}
-              />
-              <Tooltip content={<ChartTooltip />} />
-              <Legend
-                wrapperStyle={{ fontSize: 11, paddingTop: 8, fontFamily: "var(--font-mono)" }}
-                formatter={(val) => (
+      </div>
+
+      <div className="ma-pt-chart-row">
+        <div className="ma-pt-chart-card">
+          <div className="ma-pt-chart-head">
+            <div className="ma-pt-chart-title">PORTFOLIO vs S&amp;P 500</div>
+            <div className="ma-pt-chart-sub">{chartSubtitle}</div>
+          </div>
+          {chartData.length > 1 ? (
+            <>
+              <div className="ma-pt-chart-area">
+                <ResponsiveContainer width="100%" height={300}>
+                  <ComposedChart data={chartData} margin={{ top: 8, right: 20, bottom: 4, left: 4 }}>
+                    <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="4 4" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
+                      tickLine={false}
+                      axisLine={{ stroke: "var(--border-card)" }}
+                      tickFormatter={(v) => {
+                        const d = new Date(v + "T00:00:00");
+                        return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+                      }}
+                      minTickGap={40}
+                    />
+                    <YAxis
+                      tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                      domain={["dataMin - 500", "dataMax + 500"]}
+                    />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Line
+                      type="monotone"
+                      dataKey="Portfolio"
+                      stroke="var(--green)"
+                      strokeWidth={2}
+                      dot={false}
+                      name="Portfolio"
+                      isAnimationActive
+                      animationDuration={850}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="S&P 500"
+                      stroke="var(--text-secondary)"
+                      strokeWidth={1.5}
+                      dot={false}
+                      strokeDasharray="5 5"
+                      name="S&P 500"
+                      isAnimationActive
+                      animationDuration={850}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="ma-pt-legend">
+                <div className="ma-pt-legend__item">
+                  <span className="ma-pt-legend__dot" style={{ background: "var(--green)" }} />
+                  Portfolio
+                </div>
+                <div className="ma-pt-legend__item">
                   <span
+                    className="ma-pt-legend__dot"
                     style={{
-                      color: val === "Portfolio" ? "var(--color-chart-portfolio)" : "var(--color-chart-benchmark)"
+                      background: "transparent",
+                      border: "2px dashed var(--text-secondary)",
+                      width: 10,
+                      height: 10
                     }}
-                  >
-                    {val}
-                  </span>
-                )}
-              />
-              <Area
-                type="monotone"
-                dataKey="Portfolio"
-                stroke="var(--color-chart-portfolio)"
-                fill="var(--color-chart-fill)"
-                strokeWidth={2}
-                dot={false}
-                name="Portfolio"
-              />
-              <Line
-                type="monotone"
-                dataKey="S&P 500"
-                stroke="var(--color-chart-benchmark)"
-                strokeWidth={2}
-                dot={false}
-                strokeDasharray="5 4"
-                name="S&P 500"
-              />
-            </ComposedChart>
-          </ResponsiveContainer>
-        ) : (
-          <div style={{ textAlign: "center", padding: "30px 0" }}>
-            <div style={{ display: "flex", justifyContent: "center", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
-              <div style={{ textAlign: "center" }}>
-                <div className="ma-field-label" style={{ marginBottom: 6 }}>
-                  Your return
-                </div>
-                <div
-                  className="ma-mono ma-num"
-                  style={{
-                    fontSize: 20,
-                    fontWeight: 800,
-                    color: summary.totalReturn >= 0 ? "var(--color-positive)" : "var(--color-negative)"
-                  }}
-                >
-                  {summary.totalReturn >= 0 ? "+" : ""}
-                  {summary.totalReturn.toFixed(1)}%
-                </div>
-              </div>
-              <div style={{ fontSize: 18, color: "var(--color-text-muted)", fontWeight: 300, alignSelf: "center" }}>
-                vs
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <div className="ma-field-label" style={{ marginBottom: 6 }}>
+                  />
                   S&amp;P 500
                 </div>
-                <div
-                  className="ma-mono ma-num"
-                  style={{
-                    fontSize: 20,
-                    fontWeight: 800,
-                    color: summary.spyReturn >= 0 ? "var(--color-chart-benchmark)" : "var(--color-negative)"
-                  }}
-                >
-                  {summary.spyReturn >= 0 ? "+" : ""}
-                  {summary.spyReturn.toFixed(1)}%
-                </div>
               </div>
-              <div style={{ fontSize: 18, color: "var(--color-text-muted)", fontWeight: 300, alignSelf: "center" }}>
-                =
-              </div>
-              <div style={{ textAlign: "center" }}>
-                <div className="ma-field-label" style={{ marginBottom: 6 }}>
-                  Alpha
-                </div>
-                <div
-                  className="ma-mono ma-num"
-                  style={{
-                    fontSize: 20,
-                    fontWeight: 800,
-                    color: summary.alpha >= 0 ? "var(--color-positive)" : "var(--color-negative)"
-                  }}
-                >
-                  {summary.alpha >= 0 ? "+" : ""}
-                  {summary.alpha.toFixed(1)}%
-                </div>
-              </div>
+            </>
+          ) : (
+            <div className="ma-mono" style={{ textAlign: "center", padding: "40px 12px", color: "var(--text-secondary)", fontSize: 12 }}>
+              Chart appears after 2+ NAV points — run a rebalance to begin tracking.
             </div>
-            <div className="ma-mono" style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
-              Chart appears after 2+ data points (rebalance to begin tracking)
-            </div>
+          )}
+        </div>
+
+        <div className="ma-pt-quick">
+          <div className="ma-pt-quick__title">REGIME &amp; STATUS</div>
+          <div className={regimePillClassPt(summary.currentRegime)}>
+            {(summary.currentRegime ?? "—").toString().replace(/_/g, " ")}
           </div>
-        )}
-      </Box>
+          <div className="ma-pt-rl-row">
+            <span className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              RL agent
+            </span>
+            <span className={`ma-pt-rl-pill ${rlConfigOn ? "ma-pt-rl-pill--on" : "ma-pt-rl-pill--off"}`}>
+              {rlConfigOn ? "ON" : "OFF"}
+            </span>
+          </div>
+          {isCompositeStrategy(config.strategy) && (
+            <>
+              <PtToggle
+                label="Use on rebalance"
+                disabled={paperConfigSaving || rebalancing}
+                on={rlConfigOn}
+                onChange={(v) => patchPaperConfig({ rlAgent: v })}
+              />
+              <PtToggle
+                label="Online Q-update"
+                disabled={paperConfigSaving || rebalancing}
+                on={
+                  config.rlOnlineLearning === true ||
+                  config.rlOnlineLearning === "true" ||
+                  config.rlOnlineLearning === "1" ||
+                  config.rlOnlineLearning === 1
+                }
+                onChange={(v) => patchPaperConfig({ rlOnlineLearning: v })}
+              />
+            </>
+          )}
+          <div className="ma-pt-dates">
+            {lastRebalance && <div>Last: {fmtDate(lastRebalance)}</div>}
+            {nextRebalance && <div>Next: {fmtDate(nextRebalance)}</div>}
+          </div>
+          {isCompositeStrategy(config.strategy) && activeWeights && (
+            <>
+              <div className="ma-pt-quick__title" style={{ marginTop: 4 }}>
+                ADAPTIVE WEIGHTS
+              </div>
+              <div className="ma-pt-weight-bar">
+                {weightBarParts.map(({ key, pct, color }) => (
+                  <div
+                    key={key}
+                    className="ma-pt-weight-seg"
+                    style={{
+                      width: `${(pct / weightBarTotal) * 100}%`,
+                      background: color,
+                      minWidth: pct > 0.5 ? 2 : 0
+                    }}
+                    title={`${PILLAR_LABELS[key]} ${pct.toFixed(1)}%`}
+                  >
+                    {pct >= 8 ? `${PILLAR_LABELS[key].slice(0, 1)} ${pct.toFixed(0)}%` : ""}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+          <div className="ma-pt-actions">
+            <button type="button" className="ma-pt-btn-primary" disabled={rebalancing} onClick={onRebalanceClick}>
+              {rebalancing ? (
+                <>
+                  <span className="ma-pt-spin" aria-hidden />
+                  Rebalancing…
+                </>
+              ) : (
+                "REBALANCE NOW"
+              )}
+            </button>
+            <button type="button" className="ma-pt-btn-danger" onClick={() => setShowResetConfirm(true)}>
+              RESET
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {(summary.weightSpread != null || summary.largestPosition || summary.smallestPosition) && (
+        <div className="ma-bt-card" style={{ marginBottom: "var(--section-gap)" }}>
+          <button
+            type="button"
+            className="ma-bt-collapsible__hdr"
+            onClick={() => setShowPositionDetails((s) => !s)}
+            style={{ width: "100%" }}
+          >
+            <span className="ma-mono" style={{ fontSize: 11 }}>
+              Position details
+            </span>
+            <span>{showPositionDetails ? "▲" : "▼"}</span>
+          </button>
+          {showPositionDetails && (
+            <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.7, marginTop: 10 }}>
+              {summary.adjustedTopN != null && <div>Adj. top N: {summary.adjustedTopN}</div>}
+              {summary.notionalRegimeExposure != null && <div>Notional exposure: {summary.notionalRegimeExposure}%</div>}
+              {summary.cashPct != null && <div>Cash %: {summary.cashPct.toFixed(1)}%</div>}
+              {summary.weightSpread != null && <div>Spread: {summary.weightSpread}×</div>}
+              {summary.largestPosition && (
+                <div>
+                  Largest: {summary.largestPosition.ticker}{" "}
+                  {summary.largestPosition.weight?.toFixed?.(1) ?? summary.largestPosition.weight}%
+                </div>
+              )}
+              {summary.smallestPosition && (
+                <div>
+                  Smallest: {summary.smallestPosition.ticker}{" "}
+                  {summary.smallestPosition.weight?.toFixed?.(1) ?? summary.smallestPosition.weight}%
+                </div>
+              )}
+              {summary.cashDragRough != null && (
+                <div>
+                  Cash drag (heuristic): {summary.cashDragRough >= 0 ? "+" : ""}
+                  {summary.cashDragRough.toFixed(2)} pp
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {isCompositeStrategy(config.strategy) && activeWeights && weightHistory && weightHistory.length > 0 && (
+        <div className="ma-bt-card" style={{ marginBottom: "var(--section-gap)" }}>
+          <button
+            type="button"
+            className="ma-bt-collapsible__hdr"
+            onClick={() => setShowWeightHistory((s) => !s)}
+            style={{ width: "100%" }}
+          >
+            <span className="ma-mono" style={{ fontSize: 11 }}>
+              Weight history ({weightHistory.length} snapshots)
+            </span>
+            <span>{showWeightHistory ? "▲" : "▼"}</span>
+          </button>
+          {showWeightHistory && (
+            <div className="ma-table-wrap" style={{ marginTop: 10 }}>
+              <table className="ma-table data-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Alpha</th>
+                    {PILLAR_ORDER.map((key) => (
+                      <th key={key} className="ma-num">
+                        {PILLAR_LABELS[key]}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {weightHistory.slice().reverse().map((row) => (
+                    <tr key={row.date}>
+                      <td className="ma-mono">{fmtDate(row.date)}</td>
+                      <td
+                        className="ma-mono ma-num"
+                        style={{
+                          color:
+                            row.alpha == null
+                              ? "var(--text-secondary)"
+                              : row.alpha >= 0
+                                ? "var(--green)"
+                                : "var(--red)"
+                        }}
+                      >
+                        {row.alpha != null ? `${row.alpha >= 0 ? "+" : ""}${Number(row.alpha).toFixed(1)}%` : "—"}
+                      </td>
+                      {PILLAR_ORDER.map((key) => (
+                        <td key={key} className="ma-mono ma-num" style={{ color: "var(--text-secondary)" }}>
+                          {row.weights?.[key] != null ? `${Number(row.weights[key]).toFixed(1)}%` : "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {holdings.length > 0 && (
-        <Box>
-          <div className="ma-section-title">Current holdings ({holdings.length})</div>
+        <div className="ma-bt-card" style={{ marginBottom: "var(--section-gap)" }}>
+          <div className="ma-bt-hero__kicker" style={{ marginBottom: 12 }}>
+            CURRENT HOLDINGS ({holdings.length})
+          </div>
+          <div className="ma-pt-holdings-sort">
+            <button
+              type="button"
+              className={`ma-pt-sort-btn ${holdingsSort === "pnl" ? "ma-pt-sort-btn--on" : ""}`}
+              onClick={() => setHoldingsSort("pnl")}
+            >
+              By P&amp;L
+            </button>
+            <button
+              type="button"
+              className={`ma-pt-sort-btn ${holdingsSort === "weight" ? "ma-pt-sort-btn--on" : ""}`}
+              onClick={() => setHoldingsSort("weight")}
+            >
+              By weight
+            </button>
+            <button
+              type="button"
+              className={`ma-pt-sort-btn ${holdingsSort === "score" ? "ma-pt-sort-btn--on" : ""}`}
+              onClick={() => setHoldingsSort("score")}
+            >
+              By score
+            </button>
+          </div>
           <div className="ma-table-wrap">
-            <table className="ma-table">
+            <table className="ma-table data-table ma-pt-holdings-table">
               <thead>
                 <tr>
-                  {["Ticker", "Shares", "Entry", "Current", "Position", "P&L $", "P&L %", "Weight", "Composite"].map((h) => (
-                    <th key={h} className={h !== "Ticker" ? "ma-num" : ""}>
-                      {h}
-                    </th>
-                  ))}
+                  <th>Ticker</th>
+                  <th className="ma-num ma-pt-col-hide-sm">Shares</th>
+                  <th className="ma-num ma-pt-col-hide-sm">Entry</th>
+                  <th className="ma-num ma-pt-col-hide-sm">Current</th>
+                  <th className="ma-num">Position</th>
+                  <th className="ma-num">P&amp;L $</th>
+                  <th className="ma-num">P&amp;L %</th>
+                  <th className="ma-num">Weight</th>
+                  <th className="ma-num">Composite</th>
                 </tr>
               </thead>
               <tbody>
-                {holdings.sort((a, b) => b.weight - a.weight).map((h) => (
-                  <tr key={h.ticker}>
-                    <td className="ma-mono" style={{ fontWeight: 600 }}>
-                      {h.ticker}
-                    </td>
-                    <td className="ma-mono ma-num">{h.shares}</td>
-                    <td className="ma-mono ma-num">${h.entryPrice.toFixed(2)}</td>
-                    <td className="ma-mono ma-num">${h.currentPrice.toFixed(2)}</td>
-                    <td className="ma-mono ma-num">
-                      ${(h.shares * h.currentPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                    </td>
-                    <td
-                      className="ma-mono ma-num"
-                      style={{ color: h.pnl >= 0 ? "var(--color-positive)" : "var(--color-negative)" }}
+                {sortedHoldings.map((h, hi) => {
+                  const pos = (h.shares || 0) * (h.currentPrice || 0);
+                  const wfrac = (Number(h.weight) || 0) / 100;
+                  const tier = compositeTierColor(h.scores?.composite);
+                  const rowClass = holdingsTierSets.top.has(h.ticker)
+                    ? "ma-pt-row--top"
+                    : holdingsTierSets.bottom.has(h.ticker)
+                      ? "ma-pt-row--bot"
+                      : "";
+                  return (
+                    <tr
+                      key={h.ticker}
+                      className={rowClass}
+                      style={{ animationDelay: `${hi * 30}ms` }}
                     >
-                      {h.pnl >= 0 ? "+" : ""}${h.pnl.toFixed(0)}
-                    </td>
-                    <td
-                      className="ma-mono ma-num"
-                      style={{ color: h.pnlPct >= 0 ? "var(--color-positive)" : "var(--color-negative)" }}
-                    >
-                      {h.pnlPct >= 0 ? "+" : ""}
-                      {h.pnlPct.toFixed(1)}%
-                    </td>
-                    <td className="ma-mono ma-num">{h.weight}%</td>
-                    <td className="ma-mono ma-num">{h.scores?.composite?.toFixed(1) || "—"}</td>
-                  </tr>
-                ))}
+                      <td className="ma-mono">
+                        {onOpenTicker ? (
+                          <button
+                            type="button"
+                            className="ma-pt-ticker-btn"
+                            style={{ fontWeight: 700 }}
+                            onClick={() => onOpenTicker(h.ticker)}
+                          >
+                            {h.ticker}
+                          </button>
+                        ) : (
+                          <span style={{ fontWeight: 700 }}>{h.ticker}</span>
+                        )}
+                      </td>
+                      <td className="ma-mono ma-num ma-pt-col-hide-sm">{h.shares}</td>
+                      <td className="ma-mono ma-num ma-pt-col-hide-sm">${h.entryPrice.toFixed(2)}</td>
+                      <td className="ma-mono ma-num ma-pt-col-hide-sm">${h.currentPrice.toFixed(2)}</td>
+                      <td className="ma-mono ma-num">${pos.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                      <td
+                        className="ma-mono ma-num"
+                        style={{ color: h.pnl >= 0 ? "var(--green)" : "var(--red)" }}
+                      >
+                        {h.pnl >= 0 ? "+" : ""}${h.pnl.toFixed(0)}
+                      </td>
+                      <td
+                        className="ma-mono ma-num"
+                        style={{ color: h.pnlPct >= 0 ? "var(--green)" : "var(--red)" }}
+                      >
+                        {h.pnlPct >= 0 ? "+" : ""}
+                        {h.pnlPct.toFixed(1)}%
+                      </td>
+                      <td className="ma-num">
+                        <div className="ma-pt-weight-cell">
+                          <div className="ma-pt-weight-mini">
+                            <span style={{ width: `${Math.min(100, wfrac * 100)}%` }} />
+                          </div>
+                          <span className="ma-mono">{h.weight}%</span>
+                        </div>
+                      </td>
+                      <td className="ma-mono ma-num" style={{ color: tier, fontWeight: 600 }}>
+                        {h.scores?.composite?.toFixed(1) || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </Box>
+        </div>
       )}
 
       {holdings.length === 0 && portfolio.rebalanceCount === 0 && (
@@ -1185,119 +1231,120 @@ export default function PaperTradeTab({ visible = false }) {
       )}
 
       {monthlyEventsSummary && monthlyEventsSummary.length > 0 && (
-        <Box>
-          <div className="ma-section-title" style={{ marginBottom: 10 }}>
-            Monthly activity
+        <div className="ma-bt-card" style={{ marginBottom: "var(--section-gap)" }}>
+          <div className="ma-bt-hero__kicker" style={{ marginBottom: 14 }}>
+            MONTHLY ACTIVITY
           </div>
-          <p className="ma-mono" style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 10, lineHeight: 1.5 }}>
-            Rebalances and stop exits by month — pairs with the chart above; detail lives in the rebalance log below.
-          </p>
-          <div
-            className="ma-mono"
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "6px 14px",
-              color: "var(--color-text-dim)",
-              lineHeight: 1.5,
-              fontSize: 11
-            }}
-          >
-            {monthlyEventsSummary.slice().reverse().map((row) => (
-              <span key={row.month}>
-                <strong style={{ color: "var(--color-text-primary)" }}>{row.month}</strong>
-                {": "}
-                {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""}
-                {row.stops > 0 ? (
-                  <span style={{ color: "var(--color-orange)" }}>
-                    {`, ${row.stops} stop exit${row.stops !== 1 ? "s" : ""}`}
-                  </span>
-                ) : null}
-              </span>
-            ))}
-          </div>
-          <div className="ma-mono" style={{ marginTop: 10, color: "var(--color-text-muted)", fontSize: 10, lineHeight: 1.5 }}>
-            Stop exits count only sells tagged STOP (rotations use ROTATION). For deeper trade history vs benchmark, use{" "}
-            <strong style={{ color: "var(--color-text-dim)" }}>Backtest</strong> → trade log.
-          </div>
-        </Box>
+          {monthlyEventsSummary
+            .slice()
+            .reverse()
+            .map((row) => {
+              const inMonth = rebalanceHistory.filter((r) => r.date && r.date.startsWith(row.month));
+              const labelMonth = row.month.length >= 7 ? new Date(`${row.month}-01T12:00:00`).toLocaleString("en-US", { month: "long", year: "numeric" }) : row.month;
+              return (
+                <div key={row.month} style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>{labelMonth}</div>
+                  <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10 }}>
+                    {row.rebalances} rebalance{row.rebalances !== 1 ? "s" : ""} · {row.stops} stop exit{row.stops !== 1 ? "s" : ""}
+                  </div>
+                  {inMonth
+                    .slice()
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .map((rb) => {
+                      const chronoIndex = rebalanceHistory.indexOf(rb);
+                      const sameDateIndices = rebalanceHistory.map((r, i) => (r.date === rb.date ? i : -1)).filter((i) => i >= 0);
+                      const occurrence = sameDateIndices.indexOf(chronoIndex);
+                      const occParam = sameDateIndices.length > 1 ? `&paperRebalanceOcc=${occurrence}` : "";
+                      const reportHref = `${window.location.origin}${window.location.pathname}?paperRebalance=${encodeURIComponent(rb.date)}${occParam}`;
+                      const buys = rb.buys?.length ?? 0;
+                      const sells = rb.sells?.length ?? 0;
+                      let note = "Portfolio update.";
+                      if (buys === 0 && sells === 0) note = "Portfolio held steady. No changes.";
+                      else if (buys > 0 && sells === 0) note = `Added: ${rb.buys.map((b) => b.ticker).join(", ")}`;
+                      else note = `${buys} buys · ${sells} sells`;
+                      return (
+                        <div key={`${rb.date}-${chronoIndex}`} className="ma-pt-month-card">
+                          <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
+                            {fmtDate(rb.date)} ·{" "}
+                            <span style={{ color: "var(--green)" }}>+{buys} buys</span> ·{" "}
+                            <span style={{ color: sells ? "var(--red)" : "var(--text-secondary)" }}>-{sells} sells</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 8 }}>{note}</div>
+                          <a href={reportHref} target="_blank" rel="noopener noreferrer" className="ma-mono" style={{ fontSize: 11, color: "var(--blue)" }}>
+                            Open full report →
+                          </a>
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+        </div>
       )}
 
       {rebalanceHistory.length > 0 && (
-        <Box>
-          <div className="ma-section-title">Rebalance log ({rebalanceHistory.length})</div>
+        <div className="ma-bt-card" style={{ marginBottom: "var(--section-gap)" }}>
+          <div className="ma-bt-hero__kicker" style={{ marginBottom: 12 }}>
+            REBALANCE LOG ({rebalanceHistory.length})
+          </div>
           {rebalanceHistory.slice().reverse().map((rb, idx) => {
-            const isExpanded = expandedRebalance === idx;
             const chronoIndex = rebalanceHistory.length - 1 - idx;
+            const ek = `${rb.date}#${chronoIndex}`;
+            const isExpanded = expandedRebalanceKey === ek;
             const sameDateIndices = rebalanceHistory
               .map((r, i) => (r.date === rb.date ? i : -1))
               .filter((i) => i >= 0);
             const occurrence = sameDateIndices.indexOf(chronoIndex);
             const occParam = sameDateIndices.length > 1 ? `&paperRebalanceOcc=${occurrence}` : "";
             const reportHref = `${window.location.origin}${window.location.pathname}?paperRebalance=${encodeURIComponent(rb.date)}${occParam}`;
+            const buys = rb.buys?.length ?? 0;
+            const sells = rb.sells?.length ?? 0;
+            const narrative =
+              buys === 0 && sells === 0 ? "No changes — all positions within thresholds" : "Expand for trade details";
             return (
-              <div key={`${rb.date}-${chronoIndex}`} style={{ marginBottom: 6 }}>
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setExpandedRebalance(isExpanded ? null : idx)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setExpandedRebalance(isExpanded ? null : idx);
-                    }
-                  }}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 12px",
-                    background: "var(--color-bg)",
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    border: "1px solid var(--color-border)",
-                    gap: 12,
-                    flexWrap: "wrap"
-                  }}
+              <div key={ek} className="ma-pt-rebal-card">
+                <button
+                  type="button"
+                  className="ma-pt-rebal-card__head"
+                  onClick={() => setExpandedRebalanceKey(isExpanded ? null : ek)}
                 >
-                  <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                    <span className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-primary)", fontWeight: 600 }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <div className="ma-mono" style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>
                       {fmtDate(rb.date)}
-                    </span>
-                    <span className="ma-mono" style={{ fontSize: 11, color: "var(--color-positive)" }}>
-                      +{rb.buys.length} buys
-                    </span>
-                    <span className="ma-mono" style={{ fontSize: 11, color: "var(--color-negative)" }}>
-                      -{rb.sells.length} sells
-                    </span>
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                      <span className="ma-pt-badge-buy">+{buys} buys</span>
+                      <span className={`ma-pt-badge-sell ${sells === 0 ? "ma-pt-badge--zero" : ""}`}>{sells} sells</span>
+                      {rb.regime ? (
+                        <span className={regimePillClassPt(rb.regime)} style={{ fontSize: 10, padding: "4px 8px" }}>
+                          {String(rb.regime).replace(/_/g, " ")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 8 }}>
+                      {narrative}
+                    </div>
                     <a
                       href={reportHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       className="ma-mono"
-                      style={{
-                        fontSize: 11,
-                        color: "var(--color-link)",
-                        textDecoration: "underline",
-                        cursor: "pointer"
-                      }}
+                      style={{ fontSize: 11, color: "var(--blue)", marginTop: 8, display: "inline-block" }}
                     >
                       Open full report
                     </a>
                   </div>
-                  <span className="ma-mono ma-num" style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+                  <div className="ma-mono ma-num" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
                     ${rb.portfolioValue?.toLocaleString(undefined, { maximumFractionDigits: 0 })} {isExpanded ? "▲" : "▼"}
-                  </span>
-                </div>
+                  </div>
+                </button>
                 {isExpanded && (
                   <div
                     style={{
-                      padding: "12px 14px",
-                      background: "var(--color-surface-elevated)",
-                      borderRadius: "0 0 8px 8px",
-                      border: "1px solid var(--color-border)",
-                      borderTop: "none"
+                      padding: "12px 14px 14px",
+                      borderTop: "1px solid var(--border-card)",
+                      background: "rgba(0,0,0,0.15)"
                     }}
                   >
                     <PaperRebalanceReportBody rb={rb} variant="inline" />
@@ -1306,15 +1353,11 @@ export default function PaperTradeTab({ visible = false }) {
               </div>
             );
           })}
-        </Box>
+        </div>
       )}
 
-      <Box>
-        <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.8 }}>
-          <strong style={{ color: "var(--color-text-primary)" }}>Forward paper trading</strong> — This tracks live model picks against the S&amp;P 500 with real market data. No real money is involved.
-          Fundamental scores use current data (point-in-time approximation). This is the honest out-of-sample test: the model can&apos;t overfit to data it hasn&apos;t seen yet.
-        </div>
-      </Box>
+      <div className="ma-pt-foot">Paper trading · No real money · Educational purposes</div>
+      {toast ? <div className="ma-pt-toast">{toast}</div> : null}
     </div>
   );
 }

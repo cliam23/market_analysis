@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, lazy, Suspense, useMemo } from "react";
+import { Search } from "lucide-react";
 import { LoadingSpinner, InfoTip, RUN_ACTION_BAR_STYLE } from "./shared.jsx";
 import { EDUCATION } from "../lib/education.js";
 const DCFTab = lazy(() => import("./DCFTab.jsx"));
@@ -62,14 +63,34 @@ function Pill({ children, color = "#888", style: sx = {} }) {
   );
 }
 
-function Ring({ value, max = 100, size = 52, sw = 4, color }) {
+function useCountUp(target, durationMs = 650) {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const to = Math.round(Number(target) || 0);
+    setV(0);
+    const t0 = performance.now();
+    let raf = 0;
+    const tick = (now) => {
+      const p = Math.min(1, (now - t0) / durationMs);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setV(Math.round(to * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, durationMs]);
+  return v;
+}
+
+function Ring({ value, max = 100, size = 52, sw = 4, color, displayValue, className }) {
   const r = (size - sw) / 2;
   const ci = 2 * Math.PI * r;
   const p = Math.min(value / max, 1);
   const c = color || (value >= 75 ? "#22c55e" : value >= 50 ? "#eab308" : "#ef4444");
-  
+  const show = displayValue !== undefined ? displayValue : value;
+
   return (
-    <svg width={size} height={size} style={{ flexShrink: 0 }}>
+    <svg width={size} height={size} className={className || ""} style={{ flexShrink: 0 }}>
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={sw} />
       <circle
         cx={size / 2}
@@ -83,10 +104,288 @@ function Ring({ value, max = 100, size = 52, sw = 4, color }) {
         strokeLinecap="round"
         transform={"rotate(-90 " + size / 2 + " " + size / 2 + ")"}
       />
-      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fill={c} fontSize={size * 0.26} fontWeight="800" fontFamily={MONO}>
-        {value}
+      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" fill={c} fontSize={size * 0.31} fontWeight="800" fontFamily={MONO}>
+        {show}
       </text>
     </svg>
+  );
+}
+
+function fmtMarketCap(mc) {
+  if (mc == null || !Number.isFinite(Number(mc))) return "—";
+  const n = Number(mc);
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  return `$${Math.round(n)}`;
+}
+
+function scoreTierClass100(score) {
+  const s = Number(score) || 0;
+  if (s >= 75) return "ma-score-pill ma-score-pill--hi";
+  if (s >= 50) return "ma-score-pill ma-score-pill--mid";
+  return "ma-score-pill ma-score-pill--lo";
+}
+
+function subBarFillClass(score, max) {
+  const r20 = max > 0 ? (Number(score) / Number(max)) * 20 : 0;
+  if (r20 >= 16) return "ma-subbar__fill ma-subbar__fill--g";
+  if (r20 >= 11) return "ma-subbar__fill ma-subbar__fill--b";
+  if (r20 >= 6) return "ma-subbar__fill ma-subbar__fill--y";
+  return "ma-subbar__fill ma-subbar__fill--r";
+}
+
+function subBarPct(score, max) {
+  return max > 0 ? Math.min(100, (Number(score) / Number(max)) * 100) : 0;
+}
+
+const PILLAR_HINT_COLORS = {
+  Quality: "#58a6ff",
+  Moat: "#a855f7",
+  Valuation: "#d29922",
+  ROIC: "#14b8a6",
+  "Earnings Quality": "#f778ba",
+  Momentum: "#3fb950",
+  "Shareholder Yield": "#f85171",
+  Fundamental: "#58a6ff",
+  DCF: "#79c0ff",
+  "Dynamic valuation": "#d29922",
+  "Price value": "#f97316",
+  "Quality Floor": "#4ade80"
+};
+
+function normalizePillarLabel(name) {
+  const n = String(name || "");
+  const lower = n.toLowerCase();
+  if (lower.includes("momentum")) return "Momentum";
+  if (lower.includes("yield") || lower.includes("shareholder")) return "Yield";
+  if (lower.includes("earnings quality") || lower === "earnings") return "Earnings";
+  if (lower.includes("valuat") || lower.includes("dcf") || lower.includes("price value")) return "Value";
+  if (lower.includes("quality") || lower.includes("floor")) return "Quality";
+  if (lower.includes("moat")) return "Moat";
+  return n.length > 14 ? n.slice(0, 14) : n;
+}
+
+function StockResearchHeader({ data }) {
+  const overall = data.composite?.score ?? data.buffettChecklist?.total ?? 0;
+  const displayScore = useCountUp(overall);
+  const tierColor = overall >= 75 ? "#3fb950" : overall >= 50 ? "#d29922" : "#f85149";
+  const chg = data.regularMarketChangePercent;
+  const chgNum = chg != null && Number.isFinite(Number(chg)) ? Number(chg) : null;
+
+  const pillars = useMemo(() => {
+    const comps = data.composite?.components;
+    if (!comps?.length) return [];
+    const totalW = comps.reduce((s, c) => s + (c.adjustedWeight || c.weight || 0), 0) || 1;
+    const seen = new Set();
+    const rows = [];
+    for (const c of comps) {
+      const label = normalizePillarLabel(c.name);
+      if (seen.has(label)) continue;
+      seen.add(label);
+      const col = PILLAR_HINT_COLORS[c.name] || PILLAR_HINT_COLORS[label] || "#8b949e";
+      rows.push({
+        label,
+        score: Math.min(100, Math.max(0, Math.round(c.score))),
+        color: col
+      });
+      if (rows.length >= 5) break;
+    }
+    return rows;
+  }, [data.composite]);
+
+  return (
+    <header className="ma-analysis-header">
+      <div className="ma-analysis-header__identity">
+        <h1 className="ma-analysis-header__name">{data.name || data.ticker}</h1>
+        <div className="ma-analysis-header__tickerline">
+          {data.ticker}
+          {data.exchangeName ? ` · ${data.exchangeName}` : ""}
+        </div>
+        <div className="ma-analysis-header__price-row">
+          <span className="ma-analysis-header__price">
+            {typeof data.price === "number" ? `$${data.price.toFixed(2)}` : "—"}
+          </span>
+          {chgNum != null && (
+            <span
+              className={
+                "ma-analysis-header__chg " +
+                (chgNum >= 0 ? "ma-analysis-header__chg--up" : "ma-analysis-header__chg--down")
+              }
+            >
+              {chgNum >= 0 ? "+" : ""}
+              {chgNum.toFixed(2)}%
+            </span>
+          )}
+        </div>
+        <div className="ma-analysis-header__meta">
+          {data.sector ? <span>Sector: {data.sector}</span> : null}
+          {data.sector && data.marketCap != null ? <span> · </span> : null}
+          <span>Market cap {fmtMarketCap(data.marketCap)}</span>
+        </div>
+      </div>
+      <div className="ma-analysis-scorecol">
+        <Ring
+          value={overall}
+          max={100}
+          size={80}
+          sw={4}
+          color={tierColor}
+          displayValue={displayScore}
+          className={overall >= 75 ? "ma-ring-count" : undefined}
+        />
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            color: "var(--text-secondary)",
+            fontFamily: MONO
+          }}
+        >
+          OVERALL
+        </div>
+        <div className="ma-analysis-pillars">
+          {pillars.map((p, i) => (
+            <div key={p.label + "-" + i} className="ma-analysis-pillar-row">
+              <span>{p.label}</span>
+              <div className="ma-analysis-pillar-bar">
+                <span
+                  style={{
+                    ["--bar-pct"]: `${p.score}%`,
+                    ["--bar-delay"]: `${40 + i * 35}ms`,
+                    background: p.color
+                  }}
+                />
+              </div>
+              <span className="ma-mono" style={{ fontSize: 11, color: "var(--text-primary)" }}>
+                {p.score}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function AnalysisToolbar({ ticker, onBack, onAnalyzeTicker }) {
+  const [q, setQ] = useState(ticker);
+  useEffect(() => setQ(ticker), [ticker]);
+  return (
+    <div className="ma-analysis-toolbar">
+      <button type="button" className="ma-analysis-toolbar__back" onClick={onBack}>
+        ← Back
+      </button>
+      <form
+        className="ma-analysis-toolbar__mini"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const t = q.trim().toUpperCase();
+          if (t) onAnalyzeTicker(t);
+        }}
+      >
+        <div className="ma-search-input-wrap">
+          <Search className="ma-search-icon" size={18} strokeWidth={2} aria-hidden />
+          <input
+            type="text"
+            value={q}
+            onChange={(e) => setQ(e.target.value.toUpperCase())}
+            placeholder="Search another ticker…"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+      </form>
+      <span className="ma-analysis-toolbar__hint">{ticker}</span>
+    </div>
+  );
+}
+
+function PortfolioStatusCard({ ticker, compositeScore, staggerMs = 420 }) {
+  const [loading, setLoading] = useState(true);
+  const [p50, setP50] = useState(null);
+  const [p150, setP150] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    Promise.all([
+      apiFetch("/api/paper-trade/portfolio?universe=sp500_top50").then((r) => r.json()),
+      apiFetch("/api/paper-trade/portfolio?universe=sp500_top150").then((r) => r.json())
+    ])
+      .then(([j50, j150]) => {
+        if (cancelled) return;
+        setP50(j50.success && j50.portfolio ? j50.portfolio : null);
+        setP150(j150.success && j150.portfolio ? j150.portfolio : null);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setP50(null);
+          setP150(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ticker]);
+
+  const findH = (port) => port?.holdings?.find((h) => h.ticker === ticker);
+  const h50 = findH(p50);
+  const h150 = findH(p150);
+  const held = !!(h50 || h150);
+
+  let reason = "Not among current holdings after the last rebalance.";
+  if (compositeScore != null && Number(compositeScore) < 48) {
+    reason = "Composite score is below a typical entry band for these portfolios.";
+  }
+
+  const line = (label, h) => (
+    <div key={label} style={{ marginBottom: 10 }}>
+      ✓ Held in <strong>{label}</strong> — weight {h.weight}% · entry ${Number(h.entryPrice).toFixed(2)} ·{" "}
+      {h.entryDate ? String(h.entryDate).slice(0, 10) : "—"} ·{" "}
+      <span style={{ color: h.pnlPct >= 0 ? "var(--green)" : "var(--red)" }}>
+        P&amp;L {h.pnlPct >= 0 ? "+" : ""}
+        {h.pnlPct}%
+      </span>
+    </div>
+  );
+
+  return (
+    <div
+      className={
+        "ma-portfolio-status " + (held ? "ma-portfolio-status--held" : "ma-portfolio-status--not")
+      }
+      style={{ ["--stagger"]: `${staggerMs}ms` }}
+    >
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: "0.12em",
+          color: "var(--text-secondary)",
+          marginBottom: 10
+        }}
+      >
+        PORTFOLIO STATUS
+      </div>
+      {loading ? (
+        <p style={{ color: "var(--text-secondary)", margin: 0 }}>Loading…</p>
+      ) : held ? (
+        <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-primary)" }}>
+          {h50 && line("Top 50", h50)}
+          {h150 && line("Top 150", h150)}
+        </div>
+      ) : (
+        <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-secondary)" }}>
+          ○ Not currently held in Top 50 or Top 150 paper portfolios.
+          <div style={{ marginTop: 8, color: "var(--text-secondary)" }}>{reason}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -115,57 +414,55 @@ const tc = (l) => ({ low: "#22c55e", moderate: "#eab308", high: "#f97316", sever
 const aiColors = { strong_tailwind: "#22c55e", tailwind: "#4ade80", neutral: "#94a3b8", headwind: "#f97316", strong_headwind: "#ef4444" };
 const strengthColors = { strong: "#22c55e", moderate: "#eab308", weak: "#f97316", none: "#ef4444" };
 
-function ScoreSection({ title, score, max, grade, infoTip, color: colorOverride, children }) {
+function ScoreSection({ title, score, max, grade, infoTip, color: colorOverride, children, staggerMs = 0 }) {
   const pct = max > 0 ? (score / max) * 100 : 0;
   const color = colorOverride || (pct >= 70 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444");
   return (
-    <Box border={color + "30"}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-        <Ring value={score} max={max} size={44} sw={4} color={color} />
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-          <SH color="#f0f0f0" compact>{title}</SH>
+    <div
+      className="ma-analysis-card"
+      style={{ ["--stagger"]: `${staggerMs}ms`, borderColor: color + "28" }}
+    >
+      <div className="ma-analysis-card__head">
+        <h3 className="ma-analysis-card__title">
+          {title}
           {infoTip && <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip>}
+        </h3>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {grade ? <span className="ma-grade-pill">{String(grade).toUpperCase()}</span> : null}
+          <span
+            className={scoreTierClass100(max > 0 ? (Number(score) / Number(max)) * 100 : 0)}
+          >
+            {Math.round(score)}/{max}
+          </span>
         </div>
-        <Pill color={color}>
-          {grade ? `${grade} ` : ""}{score}/{max}
-        </Pill>
       </div>
       {children}
-    </Box>
+    </div>
   );
 }
 
-function SubBar({ label, score, max, infoTip }) {
-  const pct = max > 0 ? Math.min(score / max, 1) * 100 : 0;
-  const color = pct >= 70 ? "#22c55e" : pct >= 50 ? "#eab308" : "#ef4444";
+function SubBar({ label, score, max, infoTip, delayMs = 0 }) {
+  const pct = subBarPct(score, max);
+  const fillClass = subBarFillClass(score, max);
+  const r20 = max > 0 ? (Number(score) / Number(max)) * 20 : 0;
+  const tier =
+    r20 >= 16 ? "#22c55e" : r20 >= 11 ? "#58a6ff" : r20 >= 6 ? "#d29922" : "#f85149";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div
-        style={{
-          fontSize: 11,
-          color: "#f0f0f0",
-          width: 124,
-          flexShrink: 0,
-          lineHeight: 1.25
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          width: 22,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center"
-        }}
-      >
+    <div className="ma-subbar">
+      <div className="ma-subbar__label">{label}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
         {infoTip ? <InfoTip title={infoTip.title}>{infoTip.content}</InfoTip> : null}
       </div>
-      <div style={{ flex: 1, minWidth: 0, height: 5, background: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 3, transition: "width 0.3s" }} />
+      <div className="ma-subbar__track">
+        <div
+          className={fillClass}
+          style={{
+            ["--sub-w"]: `${pct}%`,
+            ["--sub-delay"]: `${delayMs}ms`
+          }}
+        />
       </div>
-      <div style={{ fontSize: 12, fontWeight: 700, color, fontFamily: MONO, width: 40, flexShrink: 0, textAlign: "right" }}>
+      <div className="ma-subbar__score" style={{ color: tier }}>
         {score}/{max}
       </div>
     </div>
@@ -239,181 +536,46 @@ function NetworkInput({ ticker, onSubmit }) {
   );
 }
 
-function OverviewTab({ data }) {
+function OverviewTab({ data, ticker }) {
   const uv = parseFloat(data.intrinsicValue?.undervaluation) || 0;
   const hasEstimatedFields = data.dataQuality?.estimatedFields?.length > 0;
-  
+  const moat = data.moatAnalysis || {};
+  const moatCatKeys = [
+    { key: "supply_side", label: "Supply-side" },
+    { key: "network_effects", label: "Network" },
+    { key: "learning_curve", label: "Learning" },
+    { key: "switching_costs", label: "Switching" }
+  ];
+  const getMoatScore = (cat) => moat.categories?.[cat]?.score || 0;
+  const getMoatMax = (cat) =>
+    cat === "network_effects" ? moat.categories?.[cat]?.maxScore || 15 : 25;
+
   return (
     <>
       {hasEstimatedFields && (
-        <div style={{ 
-          fontSize: 12, 
-          color: "#f0f0f0", 
-          background: "rgba(255,255,255,0.02)", 
-          border: "1px solid rgba(255,255,255,0.06)", 
-          borderRadius: 6, 
-          padding: "8px 12px", 
-          marginBottom: 12,
-          display: "flex",
-          alignItems: "center",
-          gap: 6
-        }}>
-          <span>ℹ️</span>
-          <span>Some values estimated — Yahoo Finance historical data currently limited. Fields: {data.dataQuality.estimatedFields.join(", ")}</span>
+        <div
+          style={{
+            fontSize: 12,
+            color: "var(--text-secondary)",
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-card)",
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 16,
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8
+          }}
+        >
+          <span aria-hidden>ℹ️</span>
+          <span>Some values are estimated from limited historical statements.</span>
         </div>
       )}
-      
-      <Box border={(data.composite?.color || vc(data.verdict)) + "30"} style={{ background: `linear-gradient(135deg,${data.composite?.color || vc(data.verdict)}08,transparent)`, padding: "20px 24px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 20, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-            <Ring value={data.composite?.score || data.buffettChecklist?.total || 0} size={72} sw={5} color={data.composite?.color || "#818cf8"} />
-            <div style={{ fontSize: 12, fontWeight: 700, color: data.composite?.color || "#818cf8", fontFamily: MONO, textAlign: "center" }}>
-              {data.composite?.grade || ""} {data.composite?.label || ""}
-            </div>
-          </div>
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 8 }}>
-              <span style={{ fontSize: 28, fontWeight: 900, color: "#f0f0f0", fontFamily: MONO }}>{data.ticker}</span>
-              <span style={{ fontSize: 28, fontWeight: 900, color: "#f0f0f0", fontFamily: MONO }}>${data.price?.toFixed(2)}</span>
-              <Pill color={data.composite?.color || vc(data.verdict)}>{data.composite?.label || data.verdict?.replace(/_/g, " ").toUpperCase() || "HOLD"}</Pill>
-              {uv >= 0 && <Pill color="#22c55e">{uv.toFixed(1)}% UNDERVALUED</Pill>}
-              {uv < 0 && <Pill color="#ef4444">{Math.abs(uv).toFixed(1)}% OVERVALUED</Pill>}
-            </div>
-            <div style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 10 }}>{data.sector} {data.industry && `• ${data.industry}`}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <Pill color="#888">P/E {data.fundamentals?.forwardPE?.toFixed(1) || "N/A"}</Pill>
-              <Pill color="#888">ROIC {data.roicTree?.roic}%</Pill>
-              {data.fundamentals?.dividendYield > 0 && (
-                <Pill color="#22c55e">DIV {((data.fundamentals.dividendYield || 0) * 100).toFixed(1)}%</Pill>
-              )}
-            </div>
-          </div>
-        </div>
-        
-        {data.composite && data.composite.components && (() => {
-          const FACTOR_COLORS = {
-            Quality: "#22c55e",
-            Moat: "#a78bfa",
-            Valuation: "#eab308",
-            ROIC: "#06b6d4",
-            "Earnings Quality": "#f59e0b",
-            Momentum: "#818cf8",
-            "Shareholder Yield": "#f87171",
-            "Quality Floor": "#4ade80",
-            Fundamental: "#22c55e",
-            DCF: "#a78bfa",
-            "Dynamic valuation": "#eab308",
-            "Price value": "#f97316"
-          };
-          const comps = data.composite.components;
-          const totalWeight = comps.reduce((s, c) => s + (c.adjustedWeight || c.weight), 0);
 
-          return (
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#f0f0f0", fontFamily: MONO }}>SCORE BREAKDOWN</span>
-                <InfoTip title={EDUCATION.compositeScore?.title || "Composite Score"}>{EDUCATION.compositeScore?.content || "Weighted combination of all analysis signals"}</InfoTip>
-              </div>
-
-              <div style={{ display: "flex", height: 18, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
-                {comps.map((comp, i) => {
-                  const w = (comp.adjustedWeight || comp.weight) / totalWeight;
-                  const fc = FACTOR_COLORS[comp.name] || "#888";
-                  const score = Math.min(100, Math.max(0, comp.score));
-                  return (
-                    <div
-                      key={i}
-                      title={`${comp.name}: ${Math.round(score)}/100`}
-                      style={{
-                        width: `${w * 100}%`,
-                        background: fc + "25",
-                        position: "relative",
-                        borderRight: i < comps.length - 1 ? "1px solid rgba(0,0,0,0.4)" : "none"
-                      }}
-                    >
-                      <div style={{
-                        position: "absolute", left: 0, top: 0, bottom: 0,
-                        width: `${score}%`,
-                        background: fc,
-                        transition: "width 0.4s ease"
-                      }} />
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-                {comps.map((comp, i) => {
-                  const fc = FACTOR_COLORS[comp.name] || "#888";
-                  return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: fc, flexShrink: 0 }} />
-                      <span style={{ color: "#f0f0f0", fontFamily: MONO }}>{comp.name}: {Math.round(comp.score)}</span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {data.composite.strengths?.length > 0 && data.composite.weaknesses?.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 6, fontFamily: MONO }}>STRENGTHS</div>
-                    {data.composite.strengths.map((s, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
-                        <span style={{ color: "#22c55e", fontWeight: 700 }}>✓</span> {s.name}: {s.score}/100
-                      </div>
-                    ))}
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", marginBottom: 6, fontFamily: MONO }}>WEAKNESSES</div>
-                    {data.composite.weaknesses.map((w, i) => (
-                      <div key={i} style={{ fontSize: 12, color: "#f0f0f0", marginBottom: 4 }}>
-                        <span style={{ color: "#ef4444", fontWeight: 700 }}>✗</span> {w.name}: {w.score}/100
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {data.composite.catalysts?.toReachBuy && (
-                <div style={{ marginTop: 12, fontSize: 12, color: "#f0f0f0", padding: "8px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 6 }}>
-                  <span style={{ fontWeight: 700 }}>📈 CATALYST:</span> {data.composite.catalysts.toReachBuy}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </Box>
-
-      <ScoreSection title="Buffett Checklist" score={data.buffettChecklist?.total || 0} max={100} infoTip={EDUCATION.buffettChecklist}>
-        <div style={{ display: "grid", gap: 6 }}>
-          {data.buffettChecklist?.items?.map((item, i) => {
-            const eduKey = item.name.toLowerCase().replace(/\s+/g, '');
-            const edu = EDUCATION[eduKey] || {};
-            return (
-              <div key={i} style={{ display: "flex", gap: 12, padding: "10px 12px", background: "rgba(255,255,255,0.02)", borderRadius: 6, alignItems: "center" }}>
-                <div style={{ width: 22, height: 22, borderRadius: "50%", background: item.pass ? "#22c55e15" : "#ef444415", border: `1.5px solid ${item.pass ? "#22c55e" : "#ef4444"}45`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: item.pass ? "#22c55e" : "#ef4444", fontWeight: 700, flexShrink: 0 }}>
-                  {item.pass ? "✓" : "✗"}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#f0f0f0", display: "flex", alignItems: "center", gap: 4 }}>
-                      {item.name}
-                      {edu.content && <InfoTip title={edu.title}>{edu.content}</InfoTip>}
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: item.pass ? "#22c55e" : "#ef4444", fontFamily: MONO }}>{item.value}</span>
-                  </div>
-                  {item.detail && <div style={{ fontSize: 12, color: "#f0f0f0", marginTop: 2 }}>{item.detail}</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </ScoreSection>
-
-      <ScoreSection title="Earnings Quality" score={data.earningsQuality?.score || 0} max={100} grade={data.earningsQuality?.grade} infoTip={EDUCATION.earningsQuality}>
+      <div className="ma-analysis-grid">
+      <ScoreSection title="Earnings Quality" staggerMs={0} score={data.earningsQuality?.score || 0} max={100} grade={data.earningsQuality?.grade} infoTip={EDUCATION.earningsQuality}>
         {data.earningsQuality?.keyInsight && (
-          <div style={{ fontSize: 13, color: "#f0f0f0", marginBottom: 12, padding: "8px 10px", background: "rgba(255,255,255,0.02)", borderRadius: 6 }}>
+          <div style={{ fontSize: 13, color: "var(--text-primary)", marginBottom: 12, lineHeight: 1.5 }}>
             {data.earningsQuality.keyInsight}
           </div>
         )}
@@ -430,10 +592,14 @@ function OverviewTab({ data }) {
           })}
         </div>
         {data.earningsQuality?.flags?.length > 0 && (
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
             {data.earningsQuality.flags.map((flag, i) => (
-              <div key={i} style={{ fontSize: 12, color: flag.type === "positive" ? "#22c55e" : "#ef4444", padding: "4px 8px", background: flag.type === "positive" ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)", borderRadius: 4 }}>
-                {flag.type === "positive" ? "✓" : "⚠"} {flag.message}
+              <div
+                key={i}
+                className={flag.type === "positive" ? "ma-insight ma-insight--pos" : "ma-insight ma-insight--neg"}
+                style={{ fontSize: 12 }}
+              >
+                {flag.type === "positive" ? "✓" : "✗"} {flag.message}
               </div>
             ))}
           </div>
@@ -441,7 +607,7 @@ function OverviewTab({ data }) {
       </ScoreSection>
 
       {data.totalShareholderYield && (
-        <ScoreSection title="Total Shareholder Yield" score={data.totalShareholderYield.qualityScore || 0} max={100} infoTip={EDUCATION.totalShareholderYield}>
+        <ScoreSection title="Shareholder Yield" staggerMs={50} score={data.totalShareholderYield.qualityScore || 0} max={100} infoTip={EDUCATION.totalShareholderYield}>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <Pill 
@@ -604,9 +770,130 @@ function OverviewTab({ data }) {
         </ScoreSection>
       )}
 
-      <ScoreSection title="Entry Timing" score={data.entryTiming?.total || 0} max={17} infoTip={EDUCATION.entryTiming}>
+      <ScoreSection
+        title="Durable Advantage"
+        staggerMs={100}
+        score={moat.moat_score || 0}
+        max={100}
+        grade={moat.moat_type?.replace(/_/g, " ").toUpperCase()}
+        infoTip={EDUCATION.economicMoat}
+        color={moat.moat_type === "wide" ? "#22c55e" : moat.moat_type === "narrow" ? "#eab308" : "#ef4444"}
+      >
+        {moat.moat_narrative && (
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55, margin: "0 0 12px" }}>
+            {moat.moat_narrative}
+          </p>
+        )}
+        <div style={{ display: "grid", gap: 6 }}>
+          {moatCatKeys.map(({ key, label }, idx) => (
+            <SubBar
+              key={key}
+              label={label}
+              score={getMoatScore(key)}
+              max={getMoatMax(key)}
+              delayMs={idx * 28}
+            />
+          ))}
+        </div>
+      </ScoreSection>
+
+      <ScoreSection title="Valuation" staggerMs={150} score={Math.min(100, Math.max(0, Math.round(50 + uv)))} max={100} infoTip={EDUCATION.intrinsicValue}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {[
+            { label: "EPV", value: data.intrinsicValue?.epv, color: "#f0f0f0" },
+            { label: "FCF", value: data.intrinsicValue?.fcf, color: "#22c55e" },
+            { label: "Graham", value: data.intrinsicValue?.graham, color: "#f0f0f0" },
+            { label: "AVG", value: data.intrinsicValue?.avg, color: uv >= 0 ? "#22c55e" : "#ef4444" }
+          ].map((item) => (
+            <div key={item.label} style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "10px 14px", textAlign: "center", flex: "1 1 80px" }}>
+              <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{item.label}</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: item.color, fontFamily: MONO }}>
+                {item.value !== "N/A" ? "$" + item.value : "N/A"}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-primary)", textAlign: "center" }}>
+          Current: ${data.price?.toFixed(2)} → <strong style={{ color: uv >= 0 ? "#22c55e" : "#ef4444" }}>{uv.toFixed(1)}%</strong>{" "}
+          {uv >= 0 ? "undervalued" : "overvalued"}
+        </div>
+      </ScoreSection>
+      </div>
+
+      <ScoreSection title="Buffett Checklist" staggerMs={200} score={data.buffettChecklist?.total || 0} max={100} infoTip={EDUCATION.buffettChecklist}>
+        <div style={{ display: "grid", gap: 6 }}>
+          {data.buffettChecklist?.items?.map((item, i) => {
+            const eduKey = item.name.toLowerCase().replace(/\s+/g, "");
+            const edu = EDUCATION[eduKey] || {};
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  gap: 12,
+                  padding: "10px 12px",
+                  background: "rgba(255,255,255,0.02)",
+                  borderRadius: 6,
+                  alignItems: "center"
+                }}
+              >
+                <div
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: "50%",
+                    background: item.pass ? "#22c55e15" : "#ef444415",
+                    border: `1.5px solid ${item.pass ? "#22c55e" : "#ef4444"}45`,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 11,
+                    color: item.pass ? "#22c55e" : "#ef4444",
+                    fontWeight: 700,
+                    flexShrink: 0
+                  }}
+                >
+                  {item.pass ? "✓" : "✗"}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "var(--text-primary)",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4
+                      }}
+                    >
+                      {item.name}
+                      {edu.content && <InfoTip title={edu.title}>{edu.content}</InfoTip>}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: item.pass ? "#22c55e" : "#ef4444",
+                        fontFamily: MONO
+                      }}
+                    >
+                      {item.value}
+                    </span>
+                  </div>
+                  {item.detail && (
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{item.detail}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </ScoreSection>
+
+      <ScoreSection title="Entry Timing" staggerMs={250} score={data.entryTiming?.total || 0} max={17} infoTip={EDUCATION.entryTiming}>
         {data.entryTiming?.overextendedWarning && (
-          <div style={{ fontSize: 12, color: "#f87171", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 6, padding: "8px 12px", marginBottom: 12 }}>
+          <div className="ma-insight ma-insight--neg" style={{ marginBottom: 12 }}>
             ⚠️ {data.entryTiming.overextendedWarning}
           </div>
         )}
@@ -618,26 +905,7 @@ function OverviewTab({ data }) {
         </div>
       </ScoreSection>
 
-      <ScoreSection title="Intrinsic Value" score={Math.min(100, Math.max(0, Math.round(50 + uv)))} max={100} infoTip={EDUCATION.intrinsicValue}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {[
-            { label: "EPV", value: data.intrinsicValue?.epv, color: "#f0f0f0" },
-            { label: "FCF", value: data.intrinsicValue?.fcf, color: "#22c55e" },
-            { label: "Graham", value: data.intrinsicValue?.graham, color: "#f0f0f0" },
-            { label: "AVG", value: data.intrinsicValue?.avg, color: uv >= 0 ? "#22c55e" : "#ef4444" }
-          ].map(item => (
-            <div key={item.label} style={{ background: "rgba(255,255,255,0.03)", borderRadius: 6, padding: "10px 14px", textAlign: "center", flex: "1 1 80px" }}>
-              <div style={{ fontSize: 10, color: "#f0f0f0", fontWeight: 700, letterSpacing: 1, marginBottom: 4, fontFamily: MONO }}>{item.label}</div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: item.color, fontFamily: MONO }}>
-                {item.value !== "N/A" ? "$" + item.value : "N/A"}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div style={{ fontSize: 13, color: "#f0f0f0", textAlign: "center" }}>
-          Current: ${data.price?.toFixed(2)} → <strong style={{ color: uv >= 0 ? "#22c55e" : "#ef4444" }}>{uv.toFixed(1)}%</strong> {uv >= 0 ? "undervalued" : "overvalued"}
-        </div>
-      </ScoreSection>
+      <PortfolioStatusCard ticker={ticker} compositeScore={data.composite?.score} staggerMs={300} />
     </>
   );
 }
@@ -1123,7 +1391,7 @@ function ScaleTab({ data, ticker, refreshKey }) {
   );
 }
 
-export default function AnalysisDetail({ ticker, onBack }) {
+export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1208,7 +1476,7 @@ export default function AnalysisDetail({ ticker, onBack }) {
 
   if (loading && !data) {
     return (
-      <div style={{ padding: "48px 24px 40px", width: "100%", boxSizing: "border-box" }}>
+      <div className="ma-analysis-shell" style={{ padding: "48px 24px 40px", width: "100%", boxSizing: "border-box" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
           <LoadingSpinner size={40} />
           <div style={{ color: "#f0f0f0", fontFamily: MONO }}>Analyzing {ticker}...</div>
@@ -1244,8 +1512,10 @@ export default function AnalysisDetail({ ticker, onBack }) {
 
   if (error && !data) {
     return (
-      <div style={{ padding: 20 }}>
-        <button onClick={onBack} style={{ marginBottom: 16, padding: "6px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 5, color: "#f0f0f0", fontSize: 12, cursor: "pointer", fontFamily: MONO }}>← Back</button>
+      <div className="ma-analysis-shell" style={{ padding: 20 }}>
+        <button type="button" className="ma-analysis-toolbar__back" onClick={onBack}>
+          ← Back
+        </button>
         <div style={{ padding: 20, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Error</div>
           <div style={{ fontSize: 12 }}>{error}</div>
@@ -1261,9 +1531,13 @@ export default function AnalysisDetail({ ticker, onBack }) {
     { key: "comps", label: "Comps" }
   ];
 
+  const analyze = typeof onAnalyzeTicker === "function" ? onAnalyzeTicker : () => {};
+
   return (
-    <div>
-      <button onClick={onBack} style={{ marginBottom: 16, padding: "6px 12px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 5, color: "#f0f0f0", fontSize: 12, cursor: "pointer", fontFamily: MONO }}>← Back</button>
+    <div className="ma-analysis-shell">
+      <AnalysisToolbar ticker={ticker} onBack={onBack} onAnalyzeTicker={analyze} />
+
+      <StockResearchHeader data={data} />
 
       {loading && data && (
         <Box border="rgba(255,255,255,0.08)" style={{ marginBottom: 12, padding: "10px 14px", background: "rgba(255,255,255,0.02)" }}>
@@ -1285,7 +1559,7 @@ export default function AnalysisDetail({ ticker, onBack }) {
         ))}
       </div>
 
-      {activeTab === "overview" && <OverviewTab data={data} />}
+      {activeTab === "overview" && <OverviewTab data={data} ticker={ticker} />}
       {activeTab === "scale" && <ScaleTab data={data} ticker={ticker} refreshKey={handleRefresh} />}
       {activeTab === "dcf" && (dcfLoading ? (
         <div style={{ padding: "48px 24px 40px", width: "100%", boxSizing: "border-box" }}>

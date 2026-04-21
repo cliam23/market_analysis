@@ -106,29 +106,15 @@ export function Box({ border, children, style: sx = {} }) {
 
 export function Met({ label, value, color }) {
   return (
-    <div
-      style={{
-        background: "var(--color-surface-elevated)",
-        borderRadius: 6,
-        padding: "10px 12px",
-        textAlign: "center",
-        flex: "1 1 75px",
-        minWidth: 75,
-        border: "1px solid var(--color-border)"
-      }}
-    >
-      <div
-        className="ma-field-label"
-        style={{ marginBottom: 2 }}
-      >
+    <div className="ma-metric-cell" style={{ flex: "1 1 75px", minWidth: 75 }}>
+      <div className="stat-label" style={{ marginBottom: 2 }}>
         {label}
       </div>
       <div
-        className="ma-num ma-mono"
+        className="ma-num ma-mono ma-metric-value"
         style={{
           fontSize: 16,
-          fontWeight: 800,
-          color: color || "var(--color-text-primary)",
+          color: color || "var(--text-primary)",
           marginTop: 2
         }}
       >
@@ -187,21 +173,27 @@ export function Select({ value, onChange, options, label, style, compact }) {
   return (
     <div style={{ minWidth: 0, width: "100%", ...style }}>
       {label && (
-        <div style={{ fontSize: labelSize, color: "#f0f0f0", fontWeight: 700, letterSpacing: compact ? 0.6 : 1, marginBottom: labelMb, fontFamily: MONO }}>
+        <div
+          style={{
+            fontSize: labelSize,
+            color: "var(--text-secondary)",
+            fontWeight: 700,
+            letterSpacing: compact ? 0.6 : 1,
+            marginBottom: labelMb,
+            fontFamily: MONO,
+            textTransform: "uppercase"
+          }}
+        >
           {label}
         </div>
       )}
       <select
+        className="ma-select"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         style={{
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.1)",
-          borderRadius: compact ? 5 : 6,
           padding: pad,
-          color: "#f0f0f0",
           fontSize,
-          fontFamily: MONO,
           cursor: "pointer",
           width: "100%",
           minWidth: 0,

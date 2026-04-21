@@ -1,6 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from "react";
 import { apiFetch } from "./lib/api.js";
 import SearchView from "./components/SearchView.jsx";
+import DashboardTab from "./components/DashboardTab.jsx";
 import BacktestTab from "./components/BacktestTab.jsx";
 import RLTab from "./components/RLTab.jsx";
 import PaperTradeTab from "./components/PaperTradeTab.jsx";
@@ -9,6 +10,7 @@ import OptionsTab from "./components/OptionsTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
 import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
 import Sidebar, { SidebarStandalone } from "./components/Sidebar.jsx";
+import { pushRecentTicker } from "./lib/recentTickers.js";
 const AnalysisDetail = lazy(() => import("./components/AnalysisDetail.jsx"));
 
 function parsePaperReportFromSearch() {
@@ -50,6 +52,7 @@ export default function App() {
   };
 
   const handleSelectTicker = (ticker) => {
+    pushRecentTicker(ticker);
     setSelectedTicker(ticker);
     setTab("search");
   };
@@ -63,6 +66,7 @@ export default function App() {
     u.search = "";
     window.history.pushState({}, "", u);
     setPaperReport(null);
+    setTab("dashboard");
   };
 
   if (paperReport) {
@@ -88,13 +92,20 @@ export default function App() {
               Backend not connected — start with <strong>npm run dev:all</strong>
             </div>
           )}
+          <div style={{ display: tab === "dashboard" ? "block" : "none" }}>
+            <DashboardTab setTab={setTab} />
+          </div>
+
           <div style={{ display: tab === "search" ? "block" : "none" }}>
             <div style={{ display: selectedTicker ? "none" : "block" }}>
-              <SearchView onSelectTicker={handleSelectTicker} />
+              <SearchView
+                onSelectTicker={handleSelectTicker}
+                visible={tab === "search" && !selectedTicker}
+              />
             </div>
             {selectedTicker && (
               <Suspense fallback={<div className="ma-suspend-fallback">Loading analysis...</div>}>
-                <AnalysisDetail ticker={selectedTicker} onBack={handleBack} />
+                <AnalysisDetail ticker={selectedTicker} onBack={handleBack} onAnalyzeTicker={handleSelectTicker} />
               </Suspense>
             )}
           </div>
@@ -102,7 +113,7 @@ export default function App() {
           {tab === "backtest" && <BacktestTab />}
 
           <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
-            <PaperTradeTab visible={tab === "papertrade"} />
+            <PaperTradeTab visible={tab === "papertrade"} onOpenTicker={handleSelectTicker} />
           </div>
 
           <div style={{ display: tab === "alphalab" ? "block" : "none" }}>
@@ -115,13 +126,10 @@ export default function App() {
 
           {tab === "rl" && <RLTab />}
 
-          {tab === "about" && <AboutTab />}
+          {tab === "about" && <AboutTab setTab={setTab} backendConnected={backendConnected} />}
 
-          <div className="ma-footer">
-            <p>Educational tool · Not financial advice · Verify independently</p>
-            <p style={{ margin: 0 }}>
-              Powered by Yahoo Finance · Analysis algorithms from Buffett methodology
-            </p>
+          <div className="ma-footer-tiny">
+            Educational tool · Not financial advice. Market data from Yahoo Finance. Verify independently.
           </div>
         </div>
       </div>

@@ -22,6 +22,7 @@ const params = new URLSearchParams({
   strategy,
   initialCapital: '10000',
   optimize: 'false',
+  useResultCache: '1',
   _t: String(Date.now())
 });
 
