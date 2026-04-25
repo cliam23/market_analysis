@@ -20,6 +20,13 @@ export const ML_WORKER_SCRIPT = path.join(REPO_ROOT, 'ml', 'predict_worker.py');
 export const YAHOO_DISK_CACHE_DIR = path.join(REPO_ROOT, '.cache', 'yahoo');
 export const EARNINGS_DISK_CACHE_DIR = path.join(REPO_ROOT, '.cache', 'earnings');
 
+/** Local normalized daily bars (gitignored). See docs/DATA_CONTRACTS.md */
+export const DATA_GOLD_DIR = path.join(REPO_ROOT, 'data', 'gold');
+export const DATA_GOLD_BARS_DIR = path.join(DATA_GOLD_DIR, 'bars');
+
+/** Dashboard / UI API snapshots (gitignored). See server/README.md */
+export const LOCAL_UI_SNAPSHOTS_DIR = path.join(REPO_ROOT, 'data', 'local-snapshots');
+
 export const PAPER_PORTFOLIO_PATH = path.join(REPO_ROOT, 'paper-portfolio.json');
 export const PAPER_PORTFOLIO_TOP50_PATH = path.join(REPO_ROOT, 'paper-portfolio-top50.json');
 export const PAPER_PORTFOLIO_TOP150_PATH = path.join(REPO_ROOT, 'paper-portfolio-top150.json');

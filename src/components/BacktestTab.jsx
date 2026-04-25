@@ -992,6 +992,48 @@ export default function BacktestTab() {
               )}
             </div>
 
+            {results.dataQuality?.bars ? (
+              <div
+                className="ma-bt-data-quality"
+                style={{
+                  marginBottom: 12,
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  border: "1px solid rgba(88,166,255,0.25)",
+                  background: "rgba(88,166,255,0.06)",
+                  fontFamily: MONO,
+                  fontSize: 11,
+                  color: "#94a3b8",
+                  lineHeight: 1.45
+                }}
+                title={JSON.stringify(results.dataQuality.bars.validation?.warnings?.slice(0, 8) || [], null, 0)}
+              >
+                <span style={{ color: "#58a6ff" }}>Data</span> · bars{" "}
+                {(() => {
+                  const src = results.dataQuality.bars.sources || {};
+                  const bits = [];
+                  if (src.gold > 0) bits.push(`${src.gold} gold`);
+                  if (src.diskFresh > 0) bits.push(`${src.diskFresh} disk`);
+                  if (src.yahoo > 0) bits.push(`${src.yahoo} live`);
+                  if (src.stale > 0) bits.push(`${src.stale} stale`);
+                  return bits.length ? bits.join(" · ") : "—";
+                })()}
+                {results.dataQuality.bars.benchmarkStaleWarning ? (
+                  <span style={{ color: "#d29922", marginLeft: 8 }}>· bench: {results.dataQuality.bars.benchmarkStaleWarning}</span>
+                ) : null}
+                {results.dataQuality.bars.validation?.warnCount > 0 ? (
+                  <span style={{ color: "#d29922", marginLeft: 8 }}>
+                    · {results.dataQuality.bars.validation.warnCount} validation warnings
+                  </span>
+                ) : null}
+                {results.dataQuality.bars.validation?.errorCount > 0 ? (
+                  <span style={{ color: "#f85149", marginLeft: 8 }}>
+                    · {results.dataQuality.bars.validation.errorCount} errors
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="ma-bt-stat-grid">
               <StatHero
                 label="Return"

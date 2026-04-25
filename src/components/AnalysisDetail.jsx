@@ -1424,10 +1424,25 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
     (async () => {
       try {
         const res = await apiFetch(`/api/analysis/${ticker}`, { signal: ac.signal });
-        const json = await res.json();
+        let json;
+        try {
+          json = await res.json();
+        } catch {
+          throw new Error(
+            res.status === 429
+              ? "Yahoo Finance rate limited. Please wait a moment and try again."
+              : "Invalid response from server"
+          );
+        }
 
-        if (!json.success) {
-          throw new Error(json.error || "Failed to fetch analysis");
+        if (!res.ok || !json.success) {
+          const rateLimited = res.status === 429 || /rate limit/i.test(String(json.error || ""));
+          throw new Error(
+            json.error ||
+              (rateLimited
+                ? "Yahoo Finance rate limited. Please wait a moment and try again."
+                : `Failed to fetch analysis (${res.status})`)
+          );
         }
         if (analysisReqId.current !== id) return;
         setData(json);
@@ -1511,13 +1526,23 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
   }
 
   if (error && !data) {
+    const rateLimited = /rate limit/i.test(error);
     return (
       <div className="ma-analysis-shell" style={{ padding: 20 }}>
         <button type="button" className="ma-analysis-toolbar__back" onClick={onBack}>
           ← Back
         </button>
-        <div style={{ padding: 20, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, color: "#ef4444", textAlign: "center" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Error</div>
+        <div
+          style={{
+            padding: 20,
+            background: rateLimited ? "rgba(245,158,11,0.12)" : "rgba(239,68,68,0.1)",
+            border: rateLimited ? "1px solid rgba(245,158,11,0.35)" : "1px solid rgba(239,68,68,0.3)",
+            borderRadius: 8,
+            color: rateLimited ? "#fbbf24" : "#ef4444",
+            textAlign: "center"
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>{rateLimited ? "Temporarily unavailable" : "Error"}</div>
           <div style={{ fontSize: 12 }}>{error}</div>
         </div>
       </div>

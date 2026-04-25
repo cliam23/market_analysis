@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -10,7 +10,7 @@ import {
   YAxis
 } from "recharts";
 import { MONO } from "../lib/theme.js";
-import { apiFetch } from "../lib/api.js";
+import { apiFetchNoStore } from "../lib/api.js";
 
 const COLORS = {
   benchmark: "#6b7280",
@@ -81,13 +81,15 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
   const [off, setOff] = useState({});
+  const equityPrevVisibleRef = useRef(false);
+  const equityCurveKeyRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const q = new URLSearchParams({ period });
-      const res = await apiFetch(`/api/diagnostics/equity-curves/${encodeURIComponent(universeId)}?${q}`);
+      const q = new URLSearchParams({ period, fresh: "true" });
+      const res = await apiFetchNoStore(`/api/diagnostics/equity-curves/${encodeURIComponent(universeId)}?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setRaw(data);
@@ -100,9 +102,19 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
   }, [universeId, period]);
 
   useEffect(() => {
-    if (!visible) return;
-    load();
-  }, [visible, load]);
+    if (!visible) {
+      equityPrevVisibleRef.current = false;
+      return;
+    }
+    const k = `${universeId}|${period}`;
+    const becameVisible = !equityPrevVisibleRef.current;
+    equityPrevVisibleRef.current = true;
+    if (becameVisible && equityCurveKeyRef.current === k) {
+      return;
+    }
+    equityCurveKeyRef.current = k;
+    void load();
+  }, [visible, load, universeId, period]);
 
   const chartData = useMemo(() => mergeEquityRows(raw?.curves), [raw]);
   const hasRl = (raw?.curves?.rlEval?.length ?? 0) > 0;

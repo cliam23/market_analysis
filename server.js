@@ -6,6 +6,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import readline from 'readline';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
+import { createHash } from 'crypto';
 import {
   safeNum, billions, calcMoatAnalysis, calcAIDisruption,
   calcROICSensitivity, calcProfitabilityPath, calcGrowthConstraints,
@@ -52,8 +53,6 @@ import {
   QUOTE_CACHE_TTL,
   BACKTEST_CACHE_TTL,
   BACKTEST_CACHE_VERSION,
-  EQUITY_CURVES_DIAG_CACHE,
-  EQUITY_CURVES_DIAG_TTL_MS,
   FILING_LAG_DAYS,
   STALENESS_PENALTY_DAYS,
   TURNOVER_SCORE_IMPROVEMENT_THRESHOLD,
@@ -98,6 +97,7 @@ import {
   filterChartRowsToRange
 } from './server/data/yahoo-disk-cache.js';
 import { createEarningsFetchers } from './server/data/earnings-fetch.js';
+import { withYahooRetry, isYahooRateLimitError } from './server/utils/yahoo-retry.js';
 import { evaluateHedgeNeed, hedgePremiumForPeriod } from './server/backtest/hedge.js';
 import {
   rawAvgEarningsSurpriseRatio,
@@ -105,6 +105,63 @@ import {
   rawRevenueAcceleration,
   hasUsableEarningsRaw
 } from './server/scoring/earnings-signals.js';
+import { validateDailyChartRows, validationStrictEnabled } from './server/data/bar-validation.js';
+import {
+  readGoldBarsForRange,
+  goldLayerReadEnabled,
+  writeGoldBars,
+  goldLayerWriteEnabled
+} from './server/data/gold-bars-store.js';
+import {
+  resetBtChartFetchStats,
+  bumpChartSource,
+  pushValidationSlice,
+  getDataQualitySnapshot
+} from './server/data/bt-fetch-stats.js';
+import {
+  readLocalUiSnapshot,
+  writeLocalUiSnapshot,
+  isSnapshotFresh,
+  localUiSnapshotsReadEnabled,
+  localUiSnapshotWriteEnabled
+} from './server/data/local-ui-snapshots.js';
+
+/** In-memory TTL cache for expensive diagnostics / backtest responses (not paper trade / RL / options). */
+const API_RESPONSE_CACHE = new Map();
+const API_CACHE_TTL_5M = 5 * 60 * 1000;
+const API_CACHE_TTL_10M = 10 * 60 * 1000;
+
+function apiCacheUrlKey(req) {
+  try {
+    const host = req.get?.('host') || 'localhost';
+    const proto = req.protocol || 'http';
+    const u = new URL(req.originalUrl || '/', `${proto}://${host}`);
+    u.searchParams.delete('_t');
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return String(req.originalUrl || '').replace(/([?&])_t=[^&]*/g, '').replace(/\?&/, '?');
+  }
+}
+
+function apiCacheBodyDigest(body) {
+  return createHash('sha256').update(JSON.stringify(body ?? {})).digest('hex').slice(0, 40);
+}
+
+function getApiResponseCache(key, ttlMs) {
+  const entry = API_RESPONSE_CACHE.get(key);
+  if (entry && Date.now() - entry.ts < ttlMs) return entry.data;
+  API_RESPONSE_CACHE.delete(key);
+  return null;
+}
+
+function setApiResponseCache(key, data) {
+  API_RESPONSE_CACHE.set(key, { data, ts: Date.now() });
+}
+
+/** Skip read-through when `?_t=` is present; fresh run still writes cache. */
+function skipApiResponseCacheRead(req) {
+  return req.query && req.query._t !== undefined && String(req.query._t) !== '';
+}
 
 function normalizeOptionsPortfolio(obj) {
   const o = obj && typeof obj === 'object' ? obj : {};
@@ -382,7 +439,12 @@ async function fetchWithTimeout(fn, timeoutMs = 8000) {
   ]);
 }
 
-const { fetchEarningsHistory, fetchAllEarnings } = createEarningsFetchers({ yahooFinance, fetchWithTimeout });
+/** Yahoo quoteSummary/chart/quote with timeout + 429 exponential backoff. */
+async function fetchYahooOp(fn, timeoutMs = 8000) {
+  return withYahooRetry(() => fetchWithTimeout(fn, timeoutMs), { maxRetries: 4 });
+}
+
+const { fetchEarningsHistory, fetchAllEarnings } = createEarningsFetchers({ yahooFinance, fetchWithTimeout: fetchYahooOp });
 
 // Suppress all console output from yahoo-finance2 about deprecated APIs
 try {
@@ -631,7 +693,7 @@ async function fetchYahooQuotesBatch(symbols) {
   for (let i = 0; i < apiList.length; i += QUOTE_BATCH_CHUNK) {
     const chunk = apiList.slice(i, i + QUOTE_BATCH_CHUNK);
     try {
-      const rows = await fetchWithTimeout(() => yahooFinance.quote(chunk), 8000);
+      const rows = await fetchYahooOp(() => yahooFinance.quote(chunk), 8000);
       const arr = Array.isArray(rows) ? rows : (rows ? [rows] : []);
       for (const row of arr) {
         const sym = String(row?.symbol || '').toUpperCase();
@@ -1455,7 +1517,7 @@ async function fetchQuoteData(ticker, options = {}) {
 
   let data;
   try {
-    data = await fetchWithTimeout(
+    data = await fetchYahooOp(
       () => yahooFinance.quoteSummary(yahooApiSymbol(ticker), { modules }, YAHOO_QUOTE_SUMMARY_MODULE_OPTS),
       8000
     );
@@ -1627,7 +1689,7 @@ async function fetchHistoricalData(ticker, months = 18) {
   const period1 = Math.floor(startDate.getTime() / 1000);
   const period2 = Math.floor(endDate.getTime() / 1000);
   
-  const data = await fetchWithTimeout(
+  const data = await fetchYahooOp(
     () =>
       yahooFinance.chart(yahooApiSymbol(ticker), {
         period1,
@@ -2309,6 +2371,13 @@ app.get('/api/analysis/:ticker', async (req, res) => {
     });
   } catch (error) {
     console.error(`Error analyzing ${req.params.ticker}:`, error.message);
+    if (isYahooRateLimitError(error)) {
+      return res.status(429).json({
+        success: false,
+        error: 'Yahoo Finance rate limited. Please wait a moment and try again.',
+        retryAfter: 30
+      });
+    }
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -2740,7 +2809,7 @@ function calculateDCF(data) {
 // Extract comprehensive metrics from Yahoo Finance quoteSummary data
 async function fetchCompMetrics(ticker) {
   try {
-    const data = await fetchWithTimeout(
+    const data = await fetchYahooOp(
       () =>
         yahooFinance.quoteSummary(
           yahooApiSymbol(ticker),
@@ -3315,7 +3384,7 @@ async function fetchFundamentals(ticker) {
     return quoteMem.data.rankingFundamentals;
   }
   try {
-    const result = await fetchWithTimeout(
+    const result = await fetchYahooOp(
       () =>
         yahooFinance.quoteSummary(
           yahooApiSymbol(ticker),
@@ -3361,7 +3430,7 @@ async function prefetchPitYahooQuoteSummary(ticker) {
   if (YAHOO_RAW_PIT_CACHE.has(upper)) return;
   const apiSym = yahooApiSymbol(ticker);
   try {
-    const raw = await fetchWithTimeout(
+    const raw = await fetchYahooOp(
       () =>
         yahooFinance.quoteSummary(apiSym, { modules: YAHOO_QUOTE_SUMMARY_PIT_MODULES }, YAHOO_QUOTE_SUMMARY_MODULE_OPTS),
       8000
@@ -7141,17 +7210,45 @@ function bt_rankStocks(universe, priceHistory, asOfDate, strategy = 'momentum_va
   return scores;
 }
 
+const CHART_DISK_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/** Coalesce concurrent identical chart requests (same ticker + date range). */
+const btFetchChartInflight = new Map();
+
+function finalizeChartRows(rows, ticker, source) {
+  if (!rows?.length) return null;
+  const v = validateDailyChartRows(rows, { ticker: String(ticker).toUpperCase() });
+  pushValidationSlice(v);
+  if (validationStrictEnabled() && v.errors.length > 0) {
+    return null;
+  }
+  bumpChartSource(source);
+  return rows;
+}
+
 async function bt_fetchPriceHistory(ticker, startDate, endDate) {
-  const out = await bt_fetchPriceHistoryCore(ticker, startDate, endDate);
+  const k = `${String(ticker).toUpperCase()}|${startDate}|${endDate}`;
+  let p = btFetchChartInflight.get(k);
+  if (!p) {
+    p = bt_fetchPriceHistoryCore(ticker, startDate, endDate).finally(() => {
+      btFetchChartInflight.delete(k);
+    });
+    btFetchChartInflight.set(k, p);
+  }
+  const out = await p;
   if (YAHOO_CHART_DELAY_MS > 0) await sleep(YAHOO_CHART_DELAY_MS);
   return out;
 }
 
-const CHART_DISK_CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
-
 async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
   bt_fetchPriceHistory.lastStaleWarning = null;
   const upper = String(ticker).toUpperCase();
+
+  const goldPack = readGoldBarsForRange(upper, startDate, endDate);
+  if (goldPack?.rows?.length >= 5) {
+    const fin = finalizeChartRows(goldPack.rows, ticker, 'gold');
+    if (fin) return fin;
+  }
 
   // Serve from disk cache if data is fresh and covers the full requested range
   const cachePath = path.join(YAHOO_DISK_CACHE_DIR, `${upper}-chart.json`);
@@ -7159,10 +7256,12 @@ async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
     try {
       const raw = JSON.parse(readFileSync(cachePath, 'utf-8'));
       if (raw?.data?.length && raw.fetchedAt && Date.now() - raw.fetchedAt < CHART_DISK_CACHE_TTL_MS) {
-        // Only use cache if it covers back to startDate (not a narrower prior fetch)
         if (raw.data[0].date <= startDate) {
           const clipped = filterChartRowsToRange(raw.data, startDate, endDate);
-          if (clipped.length >= 5) return clipped;
+          if (clipped.length >= 5) {
+            const fin = finalizeChartRows(clipped, ticker, 'diskFresh');
+            if (fin) return fin;
+          }
         }
       }
     } catch { /* fall through to live fetch */ }
@@ -7189,7 +7288,7 @@ async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
   };
 
   const fetchOnce = async () => {
-    const result = await fetchWithTimeout(
+    const result = await fetchYahooOp(
       () =>
         yahooFinance.chart(yahooApiSymbol(ticker), {
           period1: startDate,
@@ -7214,22 +7313,52 @@ async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
 
   let got = await tryAttempt('attempt 1');
   if (got?.length) {
-    writeChartDiskCache(upper, got);
-    return got;
+    const fin = finalizeChartRows(got, ticker, 'yahoo');
+    if (fin) {
+      writeChartDiskCache(upper, got);
+      if (goldLayerWriteEnabled()) {
+        try {
+          writeGoldBars(upper, got);
+        } catch (e) {
+          console.warn('[gold] write failed', upper, e.message);
+        }
+      }
+      return fin;
+    }
   }
 
   await new Promise((r) => setTimeout(r, 3000));
   got = await tryAttempt('attempt 2');
   if (got?.length) {
-    writeChartDiskCache(upper, got);
-    return got;
+    const fin = finalizeChartRows(got, ticker, 'yahoo');
+    if (fin) {
+      writeChartDiskCache(upper, got);
+      if (goldLayerWriteEnabled()) {
+        try {
+          writeGoldBars(upper, got);
+        } catch (e) {
+          console.warn('[gold] write failed', upper, e.message);
+        }
+      }
+      return fin;
+    }
   }
 
   await new Promise((r) => setTimeout(r, 5000));
   got = await tryAttempt('attempt 3');
   if (got?.length) {
-    writeChartDiskCache(upper, got);
-    return got;
+    const fin = finalizeChartRows(got, ticker, 'yahoo');
+    if (fin) {
+      writeChartDiskCache(upper, got);
+      if (goldLayerWriteEnabled()) {
+        try {
+          writeGoldBars(upper, got);
+        } catch (e) {
+          console.warn('[gold] write failed', upper, e.message);
+        }
+      }
+      return fin;
+    }
   }
 
   const stale = readChartDiskCacheStale(ticker);
@@ -7238,7 +7367,8 @@ async function bt_fetchPriceHistoryCore(ticker, startDate, endDate) {
     if (clipped.length >= 5) {
       bt_fetchPriceHistory.lastStaleWarning = 'Using cached chart data (may be stale).';
       console.warn(`[Yahoo] ${upper}: using stale disk chart cache (${clipped.length} rows in range)`);
-      return clipped;
+      const fin = finalizeChartRows(clipped, ticker, 'stale');
+      if (fin) return fin;
     }
   }
 
@@ -7550,6 +7680,12 @@ app.get('/api/diagnostics/factors/:universeId', async (req, res) => {
     return res.status(400).json({ success: false, error: 'Unknown universe' });
   }
 
+  const factorsCacheKey = `diag/factors:${apiCacheUrlKey(req)}`;
+  if (!skipApiResponseCacheRead(req)) {
+    const hit = getApiResponseCache(factorsCacheKey, API_CACHE_TTL_10M);
+    if (hit) return res.json({ ...hit, cached: true });
+  }
+
   const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
   const mainDays = periodDays[period] || 1095;
   const chartSpanDays = subperiodsMode ? Math.max(mainDays, periodDays['3y']) : mainDays;
@@ -7770,7 +7906,7 @@ app.get('/api/diagnostics/factors/:universeId', async (req, res) => {
 
     const recommendation = buildFactorDiagnosticRecommendation(configs);
 
-    res.json({
+    const factorsPayload = {
       success: true,
       universe: universeId,
       period,
@@ -7780,7 +7916,9 @@ app.get('/api/diagnostics/factors/:universeId', async (req, res) => {
       ...(subperiodsMode ? { subperiods: true } : {}),
       configs,
       recommendation
-    });
+    };
+    setApiResponseCache(factorsCacheKey, factorsPayload);
+    res.json(factorsPayload);
   } catch (error) {
     console.error('[diagnostics/factors]', error);
     res.status(500).json({ success: false, error: error.message || String(error) });
@@ -7797,6 +7935,11 @@ const UNIVERSE_COMPARE_WEIGHTS = { ...DEFAULT_COMPOSITE_WEIGHTS };
  * Sequential 3y bimonthly full_composite runs: sp500_top50 vs sp500_top150 (M40/V40/Q20, no RL).
  */
 app.get('/api/diagnostics/universe-compare', async (req, res) => {
+  const uniCompareKey = `diag/universe-compare:${apiCacheUrlKey(req)}`;
+  if (!skipApiResponseCacheRead(req)) {
+    const hit = getApiResponseCache(uniCompareKey, API_CACHE_TTL_10M);
+    if (hit) return res.json({ ...hit, cached: true });
+  }
   req.setTimeout(1200000);
   res.setTimeout(1200000);
   const period = '3y';
@@ -7897,7 +8040,7 @@ app.get('/api/diagnostics/universe-compare', async (req, res) => {
   try {
     clearBacktestRuntimeCaches();
     const [row50, row150] = await Promise.all([runOne('sp500_top50'), runOne('sp500_top150')]);
-    res.json({
+    const uniComparePayload = {
       success: true,
       comparison: [row50, row150],
       improvement: {
@@ -7905,7 +8048,9 @@ app.get('/api/diagnostics/universe-compare', async (req, res) => {
         alphaDelta: row150.alpha - row50.alpha,
         sharpeDelta: row150.sharpe - row50.sharpe
       }
-    });
+    };
+    setApiResponseCache(uniCompareKey, uniComparePayload);
+    res.json(uniComparePayload);
   } catch (error) {
     console.error('[diagnostics/universe-compare]', error);
     res.status(500).json({ success: false, error: error.message || String(error) });
@@ -7936,6 +8081,12 @@ app.get('/api/diagnostics/hedge-impact', async (req, res) => {
   const days = periodDays[period];
   if (days == null) {
     return res.status(400).json({ success: false, error: `Unsupported period: ${period}` });
+  }
+
+  const hedgeImpactKey = `diag/hedge-impact:${apiCacheUrlKey(req)}`;
+  if (!skipApiResponseCacheRead(req)) {
+    const hit = getApiResponseCache(hedgeImpactKey, API_CACHE_TTL_10M);
+    if (hit) return res.json({ ...hit, cached: true });
   }
 
   const rebalanceFreq = 'bimonthly';
@@ -8036,12 +8187,15 @@ app.get('/api/diagnostics/hedge-impact', async (req, res) => {
       buildHedgeImpactConfigRow(`${rlDiagLabel} + Hedge`, true, true, sim4, capital)
     ];
 
-    res.json({
+    const hedgeImpactPayload = {
+      success: true,
       universeId,
       period,
       rlAgentKind: rlAgentTypeEffective(),
       configs
-    });
+    };
+    setApiResponseCache(hedgeImpactKey, hedgeImpactPayload);
+    res.json(hedgeImpactPayload);
   } catch (error) {
     console.error('[diagnostics/hedge-impact]', error);
     res.status(500).json({ success: false, error: error.message || String(error) });
@@ -8053,7 +8207,7 @@ app.get('/api/diagnostics/hedge-impact', async (req, res) => {
 /**
  * GET /api/diagnostics/equity-curves/:universeId
  * Normalized daily equity (start=100): benchmark, rules, rules+hedge, RL eval (Q-learning or DQN when trained).
- * Cached 10 minutes per (universeId, period).
+ * Cached 5 minutes per URL (universe + query); `fresh` or `_t` bypasses read.
  */
 app.get('/api/diagnostics/equity-curves/:universeId', async (req, res) => {
   req.setTimeout(1800000);
@@ -8071,10 +8225,17 @@ app.get('/api/diagnostics/equity-curves/:universeId', async (req, res) => {
     return res.status(400).json({ success: false, error: `Unsupported period: ${period}` });
   }
 
-  const cacheKey = `equity-curves:v2:${universeId}:${period}`;
-  const cached = EQUITY_CURVES_DIAG_CACHE.get(cacheKey);
-  if (cached && Date.now() - cached.ts < EQUITY_CURVES_DIAG_TTL_MS) {
-    return res.json(cached.payload);
+  const equityCurvesKey = `equity-curves:${apiCacheUrlKey(req)}`;
+  const skipEquityDiagCache =
+    req.query.fresh === 'true' ||
+    req.query.fresh === '1' ||
+    skipApiResponseCacheRead(req);
+  if (!skipEquityDiagCache) {
+    const hit = getApiResponseCache(equityCurvesKey, API_CACHE_TTL_5M);
+    if (hit) {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      return res.json({ ...hit, cached: true });
+    }
   }
 
   const rebalanceFreq = 'bimonthly';
@@ -8207,7 +8368,8 @@ app.get('/api/diagnostics/equity-curves/:universeId', async (req, res) => {
       }
     };
 
-    EQUITY_CURVES_DIAG_CACHE.set(cacheKey, { ts: Date.now(), payload });
+    setApiResponseCache(equityCurvesKey, payload);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json(payload);
   } catch (error) {
     console.error('[diagnostics/equity-curves]', error);
@@ -8263,6 +8425,12 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const allowedFreq = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
   if (!allowedFreq.includes(rebalanceFreq)) {
     return res.status(400).json({ success: false, error: `Invalid rebalanceFreq (use ${allowedFreq.join(', ')})` });
+  }
+
+  const backtestApiCacheKey = `backtest:${apiCacheUrlKey(req)}`;
+  if (!skipApiResponseCacheRead(req)) {
+    const apiHit = getApiResponseCache(backtestApiCacheKey, API_CACHE_TTL_5M);
+    if (apiHit) return res.json({ ...apiHit, cached: true });
   }
 
   const adaptiveRaw = String(adaptiveModeRaw ?? 'fixed').toLowerCase().trim();
@@ -8462,6 +8630,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   
   try {
     clearBacktestRuntimeCaches();
+    resetBtChartFetchStats();
     const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(t => t && t.trim() !== '');
     const priceHistory = {};
     let benchmarkDataWarning = null;
@@ -8863,13 +9032,19 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       currentHoldings,
       ...(adaptiveWeightLog && adaptiveWeightLog.length ? { adaptiveWeightLog } : {}),
 
+      dataQuality: getDataQualitySnapshot({
+        benchmarkStaleWarning: benchmarkDataWarning || null
+      }),
+
       /** ISO time when this simulation finished (stored with cache entry for traceability). */
       computedAt: new Date().toISOString()
     };
 
     BACKTEST_CACHE.set(cacheKey, { data: responseData, timestamp: Date.now() });
 
-    res.json({ success: true, ...responseData, cached: false });
+    const backtestPayload = { success: true, ...responseData, cached: false };
+    setApiResponseCache(backtestApiCacheKey, backtestPayload);
+    res.json(backtestPayload);
     
   } catch (error) {
     console.error('Backtest error:', error);
@@ -10988,16 +11163,45 @@ function computeDashboardPortfolioCard(portfolio) {
   if (!portfolio) return null;
   const uid = paperTradingUniverseId(portfolio);
   const sched = buildPaperTradeScheduleResponse(portfolio);
-  const nav = portfolio.navHistory?.length ? portfolio.navHistory[portfolio.navHistory.length - 1] : null;
-  let totalValue = nav?.portfolioValue;
-  if (totalValue == null || !Number.isFinite(Number(totalValue))) {
-    totalValue =
-      portfolio.cash +
-      (portfolio.holdings || []).reduce((s, h) => s + h.shares * (h.entryPrice || 0), 0);
+  const initialCap = Number(portfolio.initialCapital) || 0;
+  const sum = portfolio.summary;
+  const navSorted = [...(portfolio.navHistory || [])].sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || ''))
+  );
+  const nav = navSorted.length ? navSorted[navSorted.length - 1] : null;
+
+  let totalValue = null;
+  if (sum && Number.isFinite(Number(sum.totalValue))) {
+    totalValue = Number(sum.totalValue);
   }
-  totalValue = Number(totalValue);
-  const retPct =
-    portfolio.initialCapital > 0 ? (totalValue / portfolio.initialCapital - 1) * 100 : 0;
+  if (totalValue == null || !Number.isFinite(Number(totalValue))) {
+    let tv = nav?.portfolioValue;
+    if (tv == null || !Number.isFinite(Number(tv))) {
+      const holdings = portfolio.holdings || [];
+      tv =
+        Number(portfolio.cash || 0) +
+        holdings.reduce((s, h) => {
+          const px =
+            h.currentPrice != null && Number.isFinite(Number(h.currentPrice))
+              ? Number(h.currentPrice)
+              : Number(h.entryPrice) || 0;
+          return s + h.shares * px;
+        }, 0);
+    }
+    if (tv == null || !Number.isFinite(Number(tv))) {
+      tv =
+        Number(portfolio.cash || 0) +
+        (portfolio.holdings || []).reduce((s, h) => s + h.shares * (h.entryPrice || 0), 0);
+    }
+    totalValue = Number(tv);
+  }
+
+  let retPct = 0;
+  if (sum && Number.isFinite(Number(sum.totalReturn))) {
+    retPct = Number(sum.totalReturn);
+  } else if (initialCap > 0) {
+    retPct = ((totalValue / initialCap) - 1) * 100;
+  }
   const agent = getRlAgentForPaperPortfolio(portfolio);
   const rlActive =
     paperPortfolioRlEnabled(portfolio) && trainedRlAgentReadyForInference(agent) && rlEvalEnvEnabled();
@@ -11038,6 +11242,13 @@ function buildDashboardRecentSignals(portfolio, max = 3) {
   });
 }
 
+/** Blend weights are stored as decimals (0.35) or occasionally as percent-style (35). */
+function normalizeBlendWeightForPulse(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return 0;
+  return n > 1 ? n / 100 : n;
+}
+
 function factorPulseFromPortfolio(portfolio) {
   const anchor = portfolio?.config?.weights || null;
   const rb =
@@ -11049,10 +11260,10 @@ function factorPulseFromPortfolio(portfolio) {
   const prev = wc.previous || {};
   const neu = wc.new;
   const factors = FACTOR_NAMES.map((f) => {
-    const w = neu[f] ?? 0;
-    const a = anchor?.[f] ?? 1 / FACTOR_NAMES.length;
+    const w = normalizeBlendWeightForPulse(neu[f] ?? 0);
+    const a = normalizeBlendWeightForPulse(anchor?.[f] ?? 1 / FACTOR_NAMES.length);
     const delta = w - a;
-    const prevW = prev[f] ?? w;
+    const prevW = normalizeBlendWeightForPulse(prev[f] ?? w);
     const trend = w > prevW + 0.002 ? 'up' : w < prevW - 0.002 ? 'down' : 'flat';
     let label = 'STEADY';
     if (delta > 0.02) label = 'HOT';
@@ -11254,6 +11465,18 @@ function assembleDashboardSummary() {
 
 app.get('/api/market/indices', async (req, res) => {
   try {
+    const bypassSnap =
+      (req.query._t !== undefined && String(req.query._t) !== '') || req.query.fresh === 'true';
+    if (!bypassSnap && localUiSnapshotsReadEnabled()) {
+      const snap = readLocalUiSnapshot('market-indices');
+      if (snap && isSnapshotFresh(snap.ts)) {
+        return res.json({
+          ...snap.data,
+          localSnapshot: true,
+          snapshotAgeMs: Date.now() - snap.ts
+        });
+      }
+    }
     const ttl = 90000;
     const now = Date.now();
     if (marketIndicesCache.data && now - marketIndicesCache.ts < ttl) {
@@ -11261,6 +11484,9 @@ app.get('/api/market/indices', async (req, res) => {
     }
     const payload = await buildMarketIndicesPayload();
     marketIndicesCache = { ts: now, data: payload };
+    if (!bypassSnap && localUiSnapshotWriteEnabled()) {
+      writeLocalUiSnapshot('market-indices', payload);
+    }
     res.json(payload);
   } catch (e) {
     console.error('[dashboard] market indices error:', e);
@@ -11270,7 +11496,22 @@ app.get('/api/market/indices', async (req, res) => {
 
 app.get('/api/dashboard/summary', (req, res) => {
   try {
+    const bypassSnap =
+      (req.query._t !== undefined && String(req.query._t) !== '') || req.query.fresh === 'true';
+    if (!bypassSnap && localUiSnapshotsReadEnabled()) {
+      const snap = readLocalUiSnapshot('dashboard-summary');
+      if (snap && isSnapshotFresh(snap.ts)) {
+        return res.json({
+          ...snap.data,
+          localSnapshot: true,
+          snapshotAgeMs: Date.now() - snap.ts
+        });
+      }
+    }
     const summary = assembleDashboardSummary();
+    if (!bypassSnap && localUiSnapshotWriteEnabled()) {
+      writeLocalUiSnapshot('dashboard-summary', summary);
+    }
     res.json(summary);
   } catch (e) {
     console.error('[dashboard] summary error:', e);
@@ -11625,7 +11866,7 @@ async function takeNavSnapshot(portfolio, opts = {}) {
   const prices = {};
   for (const ticker of tickers) {
     try {
-      const quote = await fetchWithTimeout(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
+      const quote = await fetchYahooOp(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
       prices[ticker] = quote?.regularMarketPrice || null;
     } catch (e) {
       console.warn(`[Yahoo] quote failed ${ticker}:`, e.message);
@@ -11747,7 +11988,7 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
     const currentPrices = {};
     for (const ticker of tickers) {
       try {
-        const quote = await fetchWithTimeout(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
+        const quote = await fetchYahooOp(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
         currentPrices[ticker] = quote?.regularMarketPrice || null;
       } catch (e) {
         console.warn(`[Yahoo] quote failed ${ticker}:`, e.message);
@@ -13736,6 +13977,11 @@ function weightSweepShortLabel(w) {
 app.post('/api/diagnostics/forward-confidence', async (req, res) => {
   req.setTimeout(600000);
   res.setTimeout(600000);
+  const fwdConfKey = `diag/forward-confidence:${apiCacheBodyDigest(req.body)}:${apiCacheUrlKey(req)}`;
+  if (!skipApiResponseCacheRead(req)) {
+    const hit = getApiResponseCache(fwdConfKey, API_CACHE_TTL_5M);
+    if (hit) return res.json({ ...hit, cached: true });
+  }
   try {
     clearBacktestRuntimeCaches();
     const body = req.body || {};
@@ -13864,7 +14110,7 @@ app.post('/api/diagnostics/forward-confidence', async (req, res) => {
         recencyWarning: deep.scores.recencyDiscount < 0.45
       }
     );
-    res.json({
+    const fwdPayload = {
       success: true,
       universeId,
       period,
@@ -13875,7 +14121,9 @@ app.post('/api/diagnostics/forward-confidence', async (req, res) => {
       scores: deep.scores,
       forwardEstimate: deep.forwardEstimate,
       interpretation
-    });
+    };
+    setApiResponseCache(fwdConfKey, fwdPayload);
+    res.json(fwdPayload);
   } catch (error) {
     console.error('[diagnostics/forward-confidence]', error);
     res.status(500).json({ success: false, error: error.message || String(error) });

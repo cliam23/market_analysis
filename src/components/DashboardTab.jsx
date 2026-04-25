@@ -5,6 +5,8 @@ import { fmtDate } from "../lib/formatters.js";
 /** Must match PaperTradeTab (`PAPER_TRADE_NAV_UNIVERSE_KEY`). */
 const PAPER_TRADE_NAV_UNIVERSE_KEY = "ma-paper-trade-nav-universe";
 
+const DASH_PAPER_UNIVERSES = ["sp500_top50", "sp500_top150"];
+
 function clamp(n, a, b) {
   return Math.min(b, Math.max(a, n));
 }
@@ -115,60 +117,102 @@ function trendArrow(trend) {
   return "→";
 }
 
+/** Factor pulse: API sends decimal weights (0.353); legacy payloads may double-scale weightPct. */
+function factorPulseBarPct(f) {
+  const w = Number(f?.weight);
+  const p = Number(f?.weightPct);
+  if (Number.isFinite(w) && w >= 0 && w <= 1) return w * 100;
+  if (Number.isFinite(p) && p > 100 && Number.isFinite(w) && w > 1) return Math.min(100, w);
+  if (Number.isFinite(p) && p > 100) return Math.min(100, p / 100);
+  if (Number.isFinite(p)) return Math.min(100, p);
+  return 0;
+}
+
 export default function DashboardTab({ setTab }) {
   const [indices, setIndices] = useState(null);
   const [summary, setSummary] = useState(null);
-  const [paperPos, setPaperPos] = useState(null);
+  const [paperByUniverse, setPaperByUniverse] = useState({});
   const [posUniverse, setPosUniverse] = useState("sp500_top150");
   const [err, setErr] = useState(null);
   const [boot, setBoot] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    const loadIndices = async () => {
+      try {
+        const iRes = await apiFetch("/api/market/indices");
+        const iData = await safeJson(iRes);
+        if (!cancelled) setIndices(iData);
+      } catch {
+        /* keep last good indices */
+      }
+    };
+    const loadSummary = async () => {
       setErr(null);
       try {
-        const [iRes, sRes] = await Promise.all([
-          apiFetch("/api/market/indices"),
-          apiFetch("/api/dashboard/summary")
-        ]);
-        const iData = await safeJson(iRes);
+        const sRes = await apiFetch("/api/dashboard/summary");
         const sData = await safeJson(sRes);
-        if (!cancelled) {
-          setIndices(iData);
-          setSummary(sData);
-        }
+        if (!cancelled) setSummary(sData);
       } catch (e) {
         if (!cancelled) setErr(e.message);
       } finally {
         if (!cancelled) setBoot(false);
       }
-    })();
+    };
+    loadIndices();
+    loadSummary();
+    const id = setInterval(loadIndices, 60000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const res = await apiFetch(
-          `/api/paper-trade/portfolio?universe=${encodeURIComponent(posUniverse)}`
-        );
-        const data = await safeJson(res);
-        if (!cancelled) setPaperPos(data);
-      } catch {
-        if (!cancelled) setPaperPos(null);
-      }
+      const next = {};
+      await Promise.all(
+        DASH_PAPER_UNIVERSES.map(async (universe) => {
+          try {
+            const res = await apiFetch(
+              `/api/paper-trade/portfolio?universe=${encodeURIComponent(universe)}`,
+              { headers: { "Cache-Control": "no-cache", Pragma: "no-cache" } }
+            );
+            let data;
+            try {
+              data = await res.json();
+            } catch {
+              next[universe] = null;
+              return;
+            }
+            if (!res.ok || data.success === false) {
+              next[universe] = null;
+              return;
+            }
+            const port = data.portfolio ?? data;
+            const holdingsRaw = port?.holdings ?? port?.positions;
+            const holdings = Array.isArray(holdingsRaw) ? holdingsRaw : [];
+            next[universe] = {
+              success: true,
+              portfolio: port && typeof port === "object" ? { ...port, holdings } : { holdings }
+            };
+          } catch {
+            next[universe] = null;
+          }
+        })
+      );
+      if (!cancelled) setPaperByUniverse(next);
     })();
     return () => {
       cancelled = true;
     };
-  }, [posUniverse]);
+  }, []);
+
+  const paperPos = paperByUniverse[posUniverse];
 
   const holdingsSorted = useMemo(() => {
-    const h = paperPos?.portfolio?.holdings;
+    const h = paperPos?.portfolio?.holdings ?? paperPos?.portfolio?.positions;
     if (!Array.isArray(h)) return { winners: [], losers: [] };
     const sorted = [...h].sort((a, b) => (b.pnlPct ?? 0) - (a.pnlPct ?? 0));
     return {
@@ -204,6 +248,22 @@ export default function DashboardTab({ setTab }) {
         </div>
       )}
 
+      {(summary?.localSnapshot || indices?.localSnapshot) && (
+        <div
+          className="ma-dash-banner"
+          style={{
+            background: "rgba(88,166,255,0.06)",
+            borderColor: "rgba(88,166,255,0.28)"
+          }}
+          role="status"
+        >
+          <span className="ma-dash-muted">
+            Saved UI snapshot (fast local read). Age ~{Math.round((summary?.snapshotAgeMs ?? indices?.snapshotAgeMs ?? 0) / 1000)}s — refresh data with{" "}
+            <span className="ma-mono">LOCAL_UI_SNAPSHOTS=0</span> or update files via <span className="ma-mono">npm run snapshot:ui</span>.
+          </span>
+        </div>
+      )}
+
       <header className="ma-dash-indices">
         <div className="ma-dash-indices__grid">
           {(indices?.indices ?? []).map((ix) => {
@@ -212,8 +272,10 @@ export default function DashboardTab({ setTab }) {
             return (
               <div key={ix.symbol} className="ma-dash-index-cell">
                 <div className="ma-dash-index-cell__top">
-                  <span className="ma-dash-index-name">{ix.name}</span>
-                  <Sparkline values={ix.sparkline} positive={pos} />
+                  <div className="ma-dash-index-name">{ix.name}</div>
+                  <div className="ma-dash-index-cell__spark" aria-hidden>
+                    <Sparkline values={ix.sparkline} positive={pos} />
+                  </div>
                 </div>
                 <div className="ma-dash-index-cell__mid ma-mono">
                   {ix.price != null ? ix.price.toLocaleString() : "—"}
@@ -348,21 +410,26 @@ export default function DashboardTab({ setTab }) {
               <p className="ma-dash-muted">No adaptive weight history yet (run a rebalance).</p>
             )}
             <ul className="ma-dash-factor-list">
-              {(summary?.factorPulse?.factors ?? []).map((f) => (
-                <li key={f.key} className="ma-dash-factor-row">
-                  <div className="ma-dash-factor-name">{f.label}</div>
-                  <div className="ma-dash-factor-bar-wrap">
-                    <div
-                      className="ma-dash-factor-bar"
-                      style={{ width: `${clamp(f.weightPct, 0, 100)}%` }}
-                    />
-                  </div>
-                  <div className="ma-dash-factor-pct ma-mono">{f.weightPct.toFixed(1)}%</div>
-                  <div className="ma-dash-factor-trend ma-mono">
-                    {trendArrow(f.trend)} {f.pulseLabel}
-                  </div>
-                </li>
-              ))}
+              {(summary?.factorPulse?.factors ?? []).map((f) => {
+                const barPct = clamp(factorPulseBarPct(f), 0, 100);
+                const labelPct = (() => {
+                  const w = Number(f?.weight);
+                  if (Number.isFinite(w) && w >= 0 && w <= 1) return w * 100;
+                  return barPct;
+                })();
+                return (
+                  <li key={f.key} className="ma-dash-factor-row">
+                    <div className="ma-dash-factor-name">{f.label}</div>
+                    <div className="ma-dash-factor-bar-wrap">
+                      <div className="ma-dash-factor-bar" style={{ width: `${barPct}%` }} />
+                    </div>
+                    <div className="ma-dash-factor-pct ma-mono">{labelPct.toFixed(1)}%</div>
+                    <div className="ma-dash-factor-trend ma-mono">
+                      {trendArrow(f.trend)} {f.pulseLabel}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         </div>
@@ -410,7 +477,7 @@ export default function DashboardTab({ setTab }) {
                   </span>
                 </div>
               ))}
-              {!paperPos?.portfolio?.holdings?.length && (
+              {!holdingsSorted.winners.length && !holdingsSorted.losers.length && (
                 <div className="ma-dash-muted">No open positions.</div>
               )}
             </div>

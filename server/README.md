@@ -40,3 +40,40 @@ The Vite app calls `/api/...` on the **dev server origin** (e.g. `localhost:5173
 ### Backtest freshness
 
 In-memory backtest **result** reuse requires `useResultCache=1` on the query string. Normal UI runs send `fresh=true` and always run a new simulation. Responses include **`computedAt`** (ISO) when the run finishes.
+
+### Data quality and golden parity
+
+- Responses include **`dataQuality`** (bar fetch sources, validation warnings) when running a full backtest.
+- **Local gold bars** (optional, faster repeat runs): set `DATA_GOLD_LAYER=1`, populate with `npm run warm:gold` (see [docs/DATA_CONTRACTS.md](../docs/DATA_CONTRACTS.md)).
+- **Golden check** (after capturing a baseline once with the API server running):
+
+```bash
+node scripts/verify-golden.mjs --capture   # writes scripts/golden-baseline.json
+npm run verify:golden                     # fails if KPIs drift beyond tolerance
+```
+
+See [docs/DATA_CONTRACTS.md](../docs/DATA_CONTRACTS.md) for schemas, env flags, and the deferred “second free source” note.
+
+### Dashboard / Alpha Lab — local snapshots (fast repeat loads)
+
+**Dashboard** (`GET /api/market/indices`, `GET /api/dashboard/summary`) can serve last-written JSON from `data/local-snapshots/` when:
+
+- `LOCAL_UI_SNAPSHOTS=1`
+- Snapshot file exists and is newer than `LOCAL_UI_SNAPSHOT_MAX_AGE_MS` (default 5 minutes)
+
+Populate or refresh snapshots (API must be up):
+
+```bash
+npm run snapshot:ui
+# or: BACKTEST_GOLDEN_BASE=http://127.0.0.1:3001 npm run snapshot:ui
+```
+
+Auto-save snapshots after each live response (optional):
+
+```bash
+export LOCAL_UI_SNAPSHOT_WRITE=1
+```
+
+Bypass snapshot reads (force live Yahoo + paper files): `GET /api/market/indices?_t=1` or `?fresh=true`.
+
+**Alpha Lab** heavy diagnostics (`/api/diagnostics/*`) already use **in-memory TTL caching** on the server; they are not written to `data/local-snapshots/` by default. Use the same **`DATA_GOLD_LAYER=1`** + `npm run warm:gold` so chart-heavy paths hit local gold bars faster when diagnostics run simulations.
