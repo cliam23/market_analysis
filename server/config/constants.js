@@ -17,10 +17,6 @@ export const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 /** Bump when backtest sim inputs/outputs change (cache invalidation). */
 export const BACKTEST_CACHE_VERSION = 'v59';
 
-/** Short-lived cache for GET /api/diagnostics/equity-curves (heavy 3–4 sequential sims). */
-export const EQUITY_CURVES_DIAG_CACHE = new Map();
-export const EQUITY_CURVES_DIAG_TTL_MS = 10 * 60 * 1000;
-
 /** Only treat financials as knowable this many days after quarter-end (SEC filing lag heuristic). */
 export const FILING_LAG_DAYS = 45;
 /** PIT fallback: if snapshot older than this vs rebalance date, halve fundamental pillar weights. */

@@ -22,6 +22,29 @@ export function apiFetch(path, init) {
   return fetch(apiUrl(path), init);
 }
 
+/** Append cache-bust query param (for diagnostics / backtest-style freshness). */
+export function withCacheBust(path) {
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}_t=${Date.now()}`;
+}
+
+const NO_CACHE_CLIENT_HEADERS = {
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache"
+};
+
+/**
+ * Browser cache–safe fetch: unique URL each call + no-cache headers.
+ * Pair with server-side opt-out of in-memory caches where applicable (`_t` or `fresh=true`).
+ */
+export function apiFetchNoStore(path, init = {}) {
+  const busted = withCacheBust(path);
+  const h = new Headers(init.headers || {});
+  if (!h.has("Cache-Control")) h.set("Cache-Control", NO_CACHE_CLIENT_HEADERS["Cache-Control"]);
+  if (!h.has("Pragma")) h.set("Pragma", NO_CACHE_CLIENT_HEADERS.Pragma);
+  return apiFetch(busted, { ...init, headers: h });
+}
+
 export async function safeJson(res) {
   const text = await res.text();
   if (!res.ok) {

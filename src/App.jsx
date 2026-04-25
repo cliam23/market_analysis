@@ -110,7 +110,9 @@ export default function App() {
             )}
           </div>
 
-          {tab === "backtest" && <BacktestTab />}
+          <div style={{ display: tab === "backtest" ? "block" : "none" }}>
+            <BacktestTab />
+          </div>
 
           <div style={{ display: tab === "papertrade" ? "block" : "none" }}>
             <PaperTradeTab visible={tab === "papertrade"} onOpenTicker={handleSelectTicker} />
@@ -124,9 +126,13 @@ export default function App() {
             <OptionsTab visible={tab === "options"} />
           </div>
 
-          {tab === "rl" && <RLTab />}
+          <div style={{ display: tab === "rl" ? "block" : "none" }}>
+            <RLTab />
+          </div>
 
-          {tab === "about" && <AboutTab setTab={setTab} backendConnected={backendConnected} />}
+          <div style={{ display: tab === "about" ? "block" : "none" }}>
+            <AboutTab setTab={setTab} backendConnected={backendConnected} />
+          </div>
 
           <div className="ma-footer-tiny">
             Educational tool · Not financial advice. Market data from Yahoo Finance. Verify independently.

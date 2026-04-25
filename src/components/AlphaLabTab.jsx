@@ -12,7 +12,7 @@ function longDiagSignal() {
 }
 import { FlaskConical } from "lucide-react";
 import { SANS, TEXT, GREEN_LIGHT, RED_LIGHT, AMBER, AMBER_LIGHT } from "../lib/theme.js";
-import { apiFetch } from "../lib/api.js";
+import { apiFetch, apiFetchNoStore } from "../lib/api.js";
 import { fmtMoney as _fmtMoney, fmtPctSigned } from "../lib/formatters.js";
 import weightSweepCached from "../assets/weight-sweep-result.json";
 import AlphaLabEquityCurves from "./AlphaLabEquityCurves.jsx";
@@ -207,6 +207,11 @@ export default function AlphaLabTab({ visible }) {
   const [weightSweepResult, setWeightSweepResult] = useState(null);
   const [weightSweepErr, setWeightSweepErr] = useState(null);
   const sweepTimerRef = useRef(null);
+  /** Avoid re-running heavy bulk loads when tab becomes visible again with same universe + period. */
+  const alphaLabPrevVisibleRef = useRef(false);
+  const alphaLabBulkKeyRef = useRef(null);
+  const forwardConfPrevVisibleRef = useRef(false);
+  const forwardConfKeyRef = useRef(null);
 
   const [fcData, setFcData] = useState(null);
   const [fcLoading, setFcLoading] = useState(false);
@@ -224,7 +229,7 @@ export default function AlphaLabTab({ visible }) {
     setFcErr(null);
     try {
       const w = paperPf?.portfolio?.config?.weights || DEFAULT_V2_WEIGHTS;
-      const res = await apiFetch("/api/diagnostics/forward-confidence", {
+      const res = await apiFetchNoStore("/api/diagnostics/forward-confidence", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ universeId, period, weights: w })
@@ -243,7 +248,7 @@ export default function AlphaLabTab({ visible }) {
   const loadForwardWeightRec = useCallback(async () => {
     setFwLoading(true);
     try {
-      const res = await apiFetch("/api/diagnostics/forward-weight-recommendation", {
+      const res = await apiFetchNoStore("/api/diagnostics/forward-weight-recommendation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ universeId, period })
@@ -262,7 +267,7 @@ export default function AlphaLabTab({ visible }) {
     setUcLoading(true);
     setUcErr(null);
     try {
-      const res = await apiFetch("/api/diagnostics/universe-compare", { signal: longDiagSignal() });
+      const res = await apiFetchNoStore("/api/diagnostics/universe-compare", { signal: longDiagSignal() });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setUcData(data);
@@ -279,7 +284,7 @@ export default function AlphaLabTab({ visible }) {
     setFacErr(null);
     try {
       const q = new URLSearchParams({ period, subperiods: "true" });
-      const res = await apiFetch(`/api/diagnostics/factors/${encodeURIComponent(universeId)}?${q}`);
+      const res = await apiFetchNoStore(`/api/diagnostics/factors/${encodeURIComponent(universeId)}?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setFacData(data);
@@ -295,7 +300,7 @@ export default function AlphaLabTab({ visible }) {
     setRlInitLoading(true);
     setRlErr(null);
     try {
-      const sRes = await apiFetch("/api/rl/status");
+      const sRes = await apiFetchNoStore("/api/rl/status");
       const sData = await sRes.json();
       if (!sRes.ok) throw new Error(sData.error || "RL status failed");
       setRlStatus(sData);
@@ -316,9 +321,10 @@ export default function AlphaLabTab({ visible }) {
         period,
         topN: "15",
         strategy: "full_composite",
-        rebalanceFreq: "bimonthly"
+        rebalanceFreq: "bimonthly",
+        fresh: "true"
       });
-      const cRes = await apiFetch(`/api/rl/compare?${params}`);
+      const cRes = await apiFetchNoStore(`/api/rl/compare?${params}`);
       const cData = await cRes.json();
       if (!cRes.ok) throw new Error(cData.error || "RL compare failed");
       setRlCompare(cData);
@@ -335,7 +341,7 @@ export default function AlphaLabTab({ visible }) {
     setHedgeErr(null);
     try {
       const q = new URLSearchParams({ universeId, period });
-      const res = await apiFetch(`/api/diagnostics/hedge-impact?${q}`);
+      const res = await apiFetchNoStore(`/api/diagnostics/hedge-impact?${q}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
       setHedgeData(data);
@@ -351,7 +357,7 @@ export default function AlphaLabTab({ visible }) {
     setPaperLoading(true);
     setPaperErr(null);
     try {
-      const res = await apiFetch(`/api/paper-trade/portfolio?universe=${encodeURIComponent(universeId)}`);
+      const res = await apiFetchNoStore(`/api/paper-trade/portfolio?universe=${encodeURIComponent(universeId)}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Portfolio failed");
       setPaperPf(data);
@@ -385,7 +391,17 @@ export default function AlphaLabTab({ visible }) {
   }, [universeId, period]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      alphaLabPrevVisibleRef.current = false;
+      return;
+    }
+    const bulkKey = `${universeId}|${period}`;
+    const becameVisible = !alphaLabPrevVisibleRef.current;
+    alphaLabPrevVisibleRef.current = true;
+    if (becameVisible && alphaLabBulkKeyRef.current === bulkKey) {
+      return;
+    }
+    alphaLabBulkKeyRef.current = bulkKey;
     void Promise.all([
       loadRlStatus(),
       loadPaperWeights(),
@@ -409,7 +425,18 @@ export default function AlphaLabTab({ visible }) {
   ]);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible) {
+      forwardConfPrevVisibleRef.current = false;
+      return;
+    }
+    const w = paperPf?.portfolio?.config?.weights;
+    const fcKey = `${universeId}|${period}|${w ? JSON.stringify(w) : "na"}`;
+    const becameVisible = !forwardConfPrevVisibleRef.current;
+    forwardConfPrevVisibleRef.current = true;
+    if (becameVisible && forwardConfKeyRef.current === fcKey) {
+      return;
+    }
+    forwardConfKeyRef.current = fcKey;
     loadForwardConfidence();
   }, [visible, universeId, period, paperPf, loadForwardConfidence]);
 
@@ -511,7 +538,7 @@ export default function AlphaLabTab({ visible }) {
         agentType: "qlearning",
         ...(anchorWeightsDisplay && typeof anchorWeightsDisplay === "object" ? { weights: anchorWeightsDisplay } : {})
       };
-      const res = await apiFetch("/api/rl/train", {
+      const res = await apiFetchNoStore("/api/rl/train", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -537,7 +564,7 @@ export default function AlphaLabTab({ visible }) {
     if (sweepTimerRef.current) clearInterval(sweepTimerRef.current);
     sweepTimerRef.current = setInterval(() => setWeightSweepElapsed((t) => t + 1), 1000);
     try {
-      const res = await apiFetch("/api/diagnostics/weight-sweep", {
+      const res = await apiFetchNoStore("/api/diagnostics/weight-sweep", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

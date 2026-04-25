@@ -119,6 +119,16 @@ function PtToggle({ on, onChange, disabled, label }) {
   );
 }
 
+function PaperSlotLoadingBanner({ show }) {
+  if (!show) return null;
+  return (
+    <div className="ma-pt-slot-loading" role="status" aria-live="polite">
+      <span className="ma-pt-spin" aria-hidden />
+      <span className="ma-mono">Loading portfolio slot…</span>
+    </div>
+  );
+}
+
 function PaperSlotSegmented({ activeId, disabled, onPick }) {
   return (
     <div className="ma-pt-segmented" style={{ width: "100%", maxWidth: 440 }}>
@@ -303,6 +313,8 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
     rlOnlineLearning: false
   });
   const [paperConfigSaving, setPaperConfigSaving] = useState(false);
+  /** True while a fetch keyed by an explicit universe (slot picker / nav) is in flight. */
+  const [paperSlotFetchPending, setPaperSlotFetchPending] = useState(false);
 
   const [autoRebalanced, setAutoRebalanced] = useState(false);
   const [loadBtnHover, setLoadBtnHover] = useState(false);
@@ -311,6 +323,8 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   const [showPositionDetails, setShowPositionDetails] = useState(false);
   const [holdingsSort, setHoldingsSort] = useState("weight");
   const paperApi = useAbortableApi();
+  /** Monotonic id so an older in-flight paper fetch cannot apply after a newer one. */
+  const paperFetchGenRef = useRef(0);
   /** Skip one "tab became visible" refresh when Trading is the initial tab (bootstrap already loads). */
   const skipVisibleRefreshOnce = useRef(visible);
 
@@ -368,8 +382,10 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
     [summary, portfolio?.config]
   );
 
+  /** Tie count-up resets to loaded portfolio slot, not the tab selection (avoids 0→flash while a slot fetch is in flight). */
+  const loadedSlotIdForAnim = portfolio?.config?.universeId ?? portfolio?.config?.universe;
   const animNavKey = portfolio
-    ? `${paperUniverseView}-${portfolio.createdAt}-${portfolio.rebalanceCount ?? 0}-${summary?.totalValue ?? 0}`
+    ? `${loadedSlotIdForAnim ?? "na"}-${portfolio.createdAt}-${portfolio.rebalanceCount ?? 0}-${summary?.totalValue ?? 0}`
     : "idle";
   const animatedNavTotal = useCountUpDollars(summary?.totalValue ?? 0, 750, animNavKey);
 
@@ -394,9 +410,12 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   }, [portfolio?.holdings]);
 
   const fetchPortfolio = async (showLoader = true, universeOverride = null) => {
+    const thisFetchGen = ++paperFetchGenRef.current;
     const ac = paperApi.beginRequest();
     const uid = universeOverride ?? paperUniverseView;
     const qs = `?universe=${encodeURIComponent(uid)}`;
+    const slotKeyedFetch = universeOverride != null;
+    if (slotKeyedFetch) setPaperSlotFetchPending(true);
     // Full-page skeleton only when nothing is on screen; slot switches keep prior data until swap.
     const useFullPageLoader = Boolean(showLoader && !portfolio);
     if (useFullPageLoader) setLoading(true);
@@ -408,15 +427,19 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
       ]);
       const pData = await safeJson(pRes);
       const hData = await safeJson(hRes);
+      if (thisFetchGen !== paperFetchGenRef.current) return;
       setPortfolio(pData.portfolio);
       setHistory(hData.history);
       const cfgU = pData.portfolio?.config?.universeId ?? pData.portfolio?.config?.universe;
-      if (cfgU === "sp500_top50" || cfgU === "sp500_top150") setPaperUniverseView(cfgU);
+      if ((cfgU === "sp500_top50" || cfgU === "sp500_top150") && cfgU === uid) {
+        setPaperUniverseView(cfgU);
+      }
       if (pData.portfolio) writePaperTradeSessionCache(pData.portfolio, hData.history);
       else clearPaperTradeSessionCache();
     } catch (e) {
       if (!isAbortError(e)) setError(e.message);
     } finally {
+      if (slotKeyedFetch) setPaperSlotFetchPending(false);
       paperApi.clearIfCurrent(ac);
       if (useFullPageLoader) setLoading(false);
     }
@@ -576,7 +599,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
       <div className="ma-pt-page">
         <PaperSlotSegmented
           activeId={paperUniverseView}
-          disabled={loading}
+          disabled={loading || paperSlotFetchPending}
           onPick={(id) => {
             if (id === paperUniverseView) return;
             setPaperUniverseView(id);
@@ -584,6 +607,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             fetchPortfolio(true, id);
           }}
         />
+        <PaperSlotLoadingBanner show={paperSlotFetchPending} />
         {showResetConfirm && (
           <ConfirmModal
             message={`Reset portfolio to $${Number(initForm.initialCapital || 100000).toLocaleString()}? This cannot be undone.`}
@@ -591,10 +615,17 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             onCancel={() => setShowResetConfirm(false)}
           />
         )}
-        <Box>
-          <div className="ma-section-title" style={{ marginBottom: 12 }}>
-            Initialize paper portfolio
-          </div>
+        <div
+          style={{
+            opacity: paperSlotFetchPending ? 0.55 : 1,
+            transition: "opacity 0.2s ease",
+            pointerEvents: paperSlotFetchPending ? "none" : undefined
+          }}
+        >
+          <Box>
+            <div className="ma-section-title" style={{ marginBottom: 12 }}>
+              Initialize paper portfolio
+            </div>
           <p
             style={{
               fontSize: 13,
@@ -671,14 +702,15 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
               )}
             </div>
           )}
-        </Box>
+          </Box>
 
-        <Box>
-          <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.8 }}>
-            <strong style={{ color: "var(--color-text-primary)" }}>Why paper trade?</strong> The biggest risk isn&apos;t the model — it&apos;s overfitting. A backtest always looks better than reality.
-            Forward paper trading is the ultimate test: live picks, tracked daily against S&amp;P 500, with zero look-ahead bias.
-          </div>
-        </Box>
+          <Box>
+            <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-dim)", lineHeight: 1.8 }}>
+              <strong style={{ color: "var(--color-text-primary)" }}>Why paper trade?</strong> The biggest risk isn&apos;t the model — it&apos;s overfitting. A backtest always looks better than reality.
+              Forward paper trading is the ultimate test: live picks, tracked daily against S&amp;P 500, with zero look-ahead bias.
+            </div>
+          </Box>
+        </div>
       </div>
     );
   }
@@ -704,7 +736,13 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   }));
 
   const stratLabel = STRATEGY_OPTIONS.find(s => s.id === config.strategy)?.label || config.strategy;
-  const uniLabel = UNIVERSE_OPTIONS.find(u => u.id === config.universe)?.label || config.universe;
+  const configSlotId = config.universeId ?? config.universe;
+  const uniLabel =
+    UNIVERSE_OPTIONS.find((u) => u.id === configSlotId)?.label || configSlotId;
+  const slotDataStale = Boolean(configSlotId && configSlotId !== paperUniverseView);
+  const displayUniLabel = slotDataStale
+    ? UNIVERSE_OPTIONS.find((u) => u.id === paperUniverseView)?.label || paperUniverseView
+    : uniLabel;
 
   const weightBarParts =
     isCompositeStrategy(config.strategy) && activeWeights
@@ -716,16 +754,17 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
       : [];
   const weightBarTotal = weightBarParts.reduce((s, x) => s + x.pct, 0) || 1;
 
-  const chartSubtitle = `Since ${fmtDate(createdAt)} · ${stratLabel} · ${uniLabel} · Top ${config.topN}`;
+  const chartSubtitle = `Since ${fmtDate(createdAt)} · ${stratLabel} · ${displayUniLabel} · Top ${config.topN}`;
   const cashPctOfNav = summary && summary.totalValue > 0 ? ((cash / summary.totalValue) * 100).toFixed(1) : "0";
   const captureRatiosMeaningful = (summary?.daysActive ?? 0) >= 30;
   const rlConfigOn = paperRlConfigOn(config);
+  const slotUiPending = paperSlotFetchPending || slotDataStale;
 
   return (
     <div className="ma-pt-page" style={{ position: "relative" }}>
       <PaperSlotSegmented
         activeId={paperUniverseView}
-        disabled={loading}
+        disabled={loading || slotUiPending}
         onPick={(id) => {
           if (id === paperUniverseView) return;
           setPaperUniverseView(id);
@@ -733,8 +772,10 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           fetchPortfolio(true, id);
         }}
       />
+      <PaperSlotLoadingBanner show={slotUiPending} />
       <div className="ma-pt-slot-summary">
-        {uniLabel} · {holdings.length} positions · ${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Since {fmtDate(createdAt)}
+        {displayUniLabel} · {holdings.length} positions · ${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Since{" "}
+        {fmtDate(createdAt)}
       </div>
       {showResetConfirm && (
         <ConfirmModal
@@ -760,7 +801,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
         </Box>
       )}
 
-      <div className="ma-pt-hero">
+      <div
+        style={{
+          opacity: slotUiPending ? 0.55 : 1,
+          transition: "opacity 0.2s ease",
+          pointerEvents: slotUiPending ? "none" : undefined
+        }}
+      >
+        <div className="ma-pt-hero">
         <div className="ma-pt-hero__grid">
           <div>
             <div className="ma-pt-hero__label">Total value</div>
@@ -1009,6 +1057,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             </button>
           </div>
         </div>
+      </div>
       </div>
 
       {(summary.weightSpread != null || summary.largestPosition || summary.smallestPosition) && (

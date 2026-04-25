@@ -154,17 +154,19 @@ export default function OptionsTab({ visible = true }) {
     }
   }, []);
 
-  const fetchPortfolio = useCallback(async () => {
-    setPfLoading(true);
+  const fetchPortfolio = useCallback(async (opts) => {
+    const quiet = opts?.quiet === true;
+    if (!quiet) setPfLoading(true);
     try {
       const res = await apiFetch("/api/options/paper/portfolio");
       const j = await safeJson(res);
       if (!j.success) throw new Error(j.error || "Portfolio failed");
       setPortfolioWrap(j.portfolio);
-    } catch {
-      setPortfolioWrap(null);
+    } catch (e) {
+      console.error("[OPTIONS] portfolio GET failed:", e);
+      // Do not clear portfolio on refresh failure — would hide open positions after a successful POST.
     } finally {
-      setPfLoading(false);
+      if (!quiet) setPfLoading(false);
     }
   }, []);
 
@@ -232,14 +234,25 @@ export default function OptionsTab({ visible = true }) {
     setOpenSubmitting(true);
     setOpeningKey(oppKey(opp));
     try {
+      const premRaw = opp.premium ?? opp.mid ?? opp.bid ?? opp.ask;
+      const premium = premRaw != null && Number.isFinite(Number(premRaw)) ? Number(premRaw) : null;
+      if (premium == null) {
+        throw new Error("Missing premium — refresh the scan and try again.");
+      }
       const body = {
         strategy: opp.strategy,
         ticker: opp.ticker,
         strike: opp.strike,
-        expiration: opp.expiration,
+        expiration:
+          opp.expiration != null
+            ? String(opp.expiration).includes("T")
+              ? String(opp.expiration).split("T")[0]
+              : String(opp.expiration).trim()
+            : "",
         optionType: opp.strategy === "COVERED_CALL" ? "call" : "put",
         quantity: openQty,
-        premium: opp.premium,
+        contracts: openQty,
+        premium,
         currentPrice: opp.currentPrice,
         rationale: opp.rationale,
         osiSymbol: opp.osiSymbol,
@@ -249,18 +262,39 @@ export default function OptionsTab({ visible = true }) {
         iv: opp.iv,
         ivRank: opp.ivRank
       };
+      console.log("[OPTIONS] Confirm clicked, sending:", body);
       const res = await apiFetch("/api/options/paper/open", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
       const j = await safeJson(res);
+      console.log("[OPTIONS] Response:", res.status, j);
       if (!j.success) throw new Error(j.error || "Open failed");
       setFlash("Position opened");
       setTimeout(() => setFlash(null), 4000);
       setOpenModal(null);
-      await fetchPortfolio();
+      if (j.position) {
+        setPortfolioWrap((prev) => {
+          const positions = [...(prev?.positions ?? [])];
+          if (!positions.some((p) => p.id === j.position.id)) positions.push(j.position);
+          return {
+            positions,
+            closedPositions: prev?.closedPositions ?? [],
+            history: prev?.history ?? [],
+            cashReserved: prev?.cashReserved ?? 0,
+            createdAt: prev?.createdAt,
+            summary: {
+              ...(prev?.summary ?? {}),
+              openPositions: positions.length,
+              mockMode: prev?.summary?.mockMode ?? mockMode
+            }
+          };
+        });
+      }
+      await fetchPortfolio({ quiet: true });
     } catch (e) {
+      console.error("[OPTIONS] Open error:", e);
       setFlash(e.message || String(e));
       setTimeout(() => setFlash(null), 5000);
     } finally {
@@ -287,7 +321,7 @@ export default function OptionsTab({ visible = true }) {
       setFlash("Position closed");
       setTimeout(() => setFlash(null), 4000);
       setCloseModal(null);
-      await fetchPortfolio();
+      await fetchPortfolio({ quiet: true });
     } catch (e) {
       setFlash(e.message || String(e));
       setTimeout(() => setFlash(null), 5000);
@@ -315,7 +349,7 @@ export default function OptionsTab({ visible = true }) {
       if (!j.success) throw new Error(j.error || "Delete failed");
       setFlash("Position removed");
       setTimeout(() => setFlash(null), 3500);
-      await fetchPortfolio();
+      await fetchPortfolio({ quiet: true });
     } catch (e) {
       setFlash(e.message || String(e));
       setTimeout(() => setFlash(null), 5000);
