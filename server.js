@@ -4559,6 +4559,15 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
 
       let effectiveSizing = positionSizing;
       if (rlCompositeActive && rlAgentInstance) {
+        const fcRaw = simOptions.forceConstantAction;
+        const forceActionIdx =
+          fcRaw !== undefined &&
+          fcRaw !== null &&
+          fcRaw !== '' &&
+          Number.isFinite(Number(fcRaw))
+            ? Math.max(0, Math.min(TOTAL_ACTIONS - 1, Math.floor(Number(fcRaw))))
+            : null;
+
         const avgTop = avgTopNAvgComposite(rankings, 15);
         const breadthRatio =
           typeof regimeMeta.breadthRatio === 'number' && Number.isFinite(regimeMeta.breadthRatio)
@@ -4582,90 +4591,136 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           const benchRet = lastRlPostBench > 0 ? benchPre / lastRlPostBench - 1 : 0;
           const volWindow =
             rlDailyReturns.length > 1 ? standardDeviation(rlDailyReturns) * Math.sqrt(252) : 0.15;
-          rlLastReward = computeDqnReward(portRet, benchRet, volWindow, rlMaxDdSinceRebal);
+          rlLastReward = computeDqnReward(
+            portRet,
+            benchRet,
+            volWindow,
+            rlMaxDdSinceRebal,
+            simOptions?.rlGamma ?? 3
+          );
           if (rlMode === 'train' && prevRlActionIdx != null) {
             rlAgentInstance.update(prevRlStateIdx, prevRlActionIdx, rlLastReward, stateIdx, rlRebalanceIsLastInWindow);
           }
         }
 
-        const forceExploit = rlMode === 'eval';
-        let sel = rlAgentInstance.selectAction(stateIdx, forceExploit, { randomAction: rlRandomAgent });
-        let actionIdxUse = sel.actionIdx;
-        let exploredUse = sel.explored;
-        let trainForcedRandom = false;
-        if (rlMode === 'train' && !rlRandomAgent) {
-          if (sel.fallback && Math.random() < 0.72) {
-            actionIdxUse = Math.floor(Math.random() * TOTAL_ACTIONS);
-            exploredUse = true;
-            trainForcedRandom = true;
-            sel = { ...sel, actionIdx: actionIdxUse, explored: true, epsilon: 1, fallback: false };
-          } else if (
-            !exploredUse &&
-            Math.random() < (rlAgentInstance.totalUpdates < 40000 ? 0.58 : 0.32)
-          ) {
-            actionIdxUse = Math.floor(Math.random() * TOTAL_ACTIONS);
-            exploredUse = true;
-            trainForcedRandom = true;
-            sel = { ...sel, actionIdx: actionIdxUse, explored: true, epsilon: 1 };
-          }
-        }
-        const dec = decodeAction(actionIdxUse);
-        let bullFloorApplied = false;
-        if (rlCompositeActive && regimeMeta.regime === 'strong_bull' && dec.exposure < 0.8) {
-          const bullActionIdxs = [];
-          for (let eIdx = 2; eIdx <= 3; eIdx++) {
-            for (let pIdx = 0; pIdx <= 3; pIdx++) {
-              for (let sIdx = 0; sIdx <= 2; sIdx++) {
-                bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
-              }
+        if (forceActionIdx !== null) {
+          const actionIdxUse = forceActionIdx;
+          const exploredUse = false;
+          const trainForcedRandom = false;
+          const sel = { actionIdx: forceActionIdx, explored: false, epsilon: 0, fallback: false };
+          const decFinal = decodeAction(actionIdxUse);
+          exposure = decFinal.exposure;
+          adjustedTopN = Math.max(3, Math.min(decFinal.positionCount, rankings.length));
+          effectiveSizing = decFinal.sizingMethod;
+          prevRlStateIdx = stateIdx;
+          prevRlActionIdx = actionIdxUse;
+          rlSkipThisRebalance = (decFinal.rebalanceWait ?? 'standard') === 'skip';
+          rlRebalMeta = {
+            exposure: decFinal.exposure,
+            positionCount: decFinal.positionCount,
+            sizingMethod: decFinal.sizingMethod,
+            rebalanceWait: decFinal.rebalanceWait,
+            stateIdx,
+            actionIdx: actionIdxUse,
+            explored: exploredUse,
+            fallback: false,
+            reward: rlLastReward,
+            oracleConstantAction: true
+          };
+          rlLog.push({
+            date,
+            stateIdx,
+            actionIdx: actionIdxUse,
+            explored: exploredUse,
+            fallback: false,
+            epsilon: sel.epsilon,
+            trainForcedRandom,
+            exposure: decFinal.exposure,
+            positionCount: decFinal.positionCount,
+            sizingMethod: decFinal.sizingMethod,
+            rebalanceWait: decFinal.rebalanceWait,
+            reward: rlLastReward
+          });
+        } else {
+          const forceExploit = rlMode === 'eval';
+          let sel = rlAgentInstance.selectAction(stateIdx, forceExploit, { randomAction: rlRandomAgent });
+          let actionIdxUse = sel.actionIdx;
+          let exploredUse = sel.explored;
+          let trainForcedRandom = false;
+          if (rlMode === 'train' && !rlRandomAgent) {
+            if (sel.fallback && Math.random() < 0.72) {
+              actionIdxUse = Math.floor(Math.random() * TOTAL_ACTIONS);
+              exploredUse = true;
+              trainForcedRandom = true;
+              sel = { ...sel, actionIdx: actionIdxUse, explored: true, epsilon: 1, fallback: false };
+            } else if (
+              !exploredUse &&
+              Math.random() < (rlAgentInstance.totalUpdates < 40000 ? 0.58 : 0.32)
+            ) {
+              actionIdxUse = Math.floor(Math.random() * TOTAL_ACTIONS);
+              exploredUse = true;
+              trainForcedRandom = true;
+              sel = { ...sel, actionIdx: actionIdxUse, explored: true, epsilon: 1 };
             }
           }
-          const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
-            rlAgentInstance.getQ(stateIdx, aIdx) > rlAgentInstance.getQ(stateIdx, best) ? aIdx : best,
-            bullActionIdxs[0]
-          );
-          actionIdxUse = bestBullAction;
-          const decBull = decodeAction(bestBullAction);
-          exposure = decBull.exposure;
-          adjustedTopN = Math.max(3, Math.min(decBull.positionCount, rankings.length));
-          effectiveSizing = decBull.sizingMethod;
-          bullFloorApplied = true;
-          console.log(`[RL] strong_bull floor applied: ${date} overrode exp=${dec.exposure} → ${decBull.exposure}`);
-        } else {
-          exposure = dec.exposure;
-          adjustedTopN = Math.max(3, Math.min(dec.positionCount, rankings.length));
-          effectiveSizing = dec.sizingMethod;
+          const dec = decodeAction(actionIdxUse);
+          let bullFloorApplied = false;
+          if (rlCompositeActive && regimeMeta.regime === 'strong_bull' && dec.exposure < 0.8) {
+            const bullActionIdxs = [];
+            for (let eIdx = 2; eIdx <= 3; eIdx++) {
+              for (let pIdx = 0; pIdx <= 3; pIdx++) {
+                for (let sIdx = 0; sIdx <= 2; sIdx++) {
+                  bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
+                }
+              }
+            }
+            const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
+              rlAgentInstance.getQ(stateIdx, aIdx) > rlAgentInstance.getQ(stateIdx, best) ? aIdx : best,
+              bullActionIdxs[0]
+            );
+            actionIdxUse = bestBullAction;
+            const decBull = decodeAction(bestBullAction);
+            exposure = decBull.exposure;
+            adjustedTopN = Math.max(3, Math.min(decBull.positionCount, rankings.length));
+            effectiveSizing = decBull.sizingMethod;
+            bullFloorApplied = true;
+            console.log(`[RL] strong_bull floor applied: ${date} overrode exp=${dec.exposure} → ${decBull.exposure}`);
+          } else {
+            exposure = dec.exposure;
+            adjustedTopN = Math.max(3, Math.min(dec.positionCount, rankings.length));
+            effectiveSizing = dec.sizingMethod;
+          }
+          prevRlStateIdx = stateIdx;
+          prevRlActionIdx = actionIdxUse;
+          const decFinal = decodeAction(actionIdxUse);
+          rlSkipThisRebalance = (decFinal.rebalanceWait ?? 'standard') === 'skip';
+          rlRebalMeta = {
+            exposure: decFinal.exposure,
+            positionCount: decFinal.positionCount,
+            sizingMethod: decFinal.sizingMethod,
+            rebalanceWait: decFinal.rebalanceWait,
+            stateIdx,
+            actionIdx: actionIdxUse,
+            explored: exploredUse,
+            fallback: sel.fallback && !trainForcedRandom,
+            reward: rlLastReward,
+            ...(bullFloorApplied ? { bullFloorApplied: true } : {})
+          };
+          rlLog.push({
+            date,
+            stateIdx,
+            actionIdx: actionIdxUse,
+            explored: exploredUse,
+            fallback: sel.fallback && !trainForcedRandom,
+            epsilon: sel.epsilon,
+            trainForcedRandom,
+            exposure: decFinal.exposure,
+            positionCount: decFinal.positionCount,
+            sizingMethod: decFinal.sizingMethod,
+            rebalanceWait: decFinal.rebalanceWait,
+            reward: rlLastReward
+          });
         }
-        prevRlStateIdx = stateIdx;
-        prevRlActionIdx = actionIdxUse;
-        const decFinal = decodeAction(actionIdxUse);
-        rlSkipThisRebalance = (decFinal.rebalanceWait ?? 'standard') === 'skip';
-        rlRebalMeta = {
-          exposure: decFinal.exposure,
-          positionCount: decFinal.positionCount,
-          sizingMethod: decFinal.sizingMethod,
-          rebalanceWait: decFinal.rebalanceWait,
-          stateIdx,
-          actionIdx: actionIdxUse,
-          explored: exploredUse,
-          fallback: sel.fallback && !trainForcedRandom,
-          reward: rlLastReward,
-          ...(bullFloorApplied ? { bullFloorApplied: true } : {})
-        };
-        rlLog.push({
-          date,
-          stateIdx,
-          actionIdx: actionIdxUse,
-          explored: exploredUse,
-          fallback: sel.fallback && !trainForcedRandom,
-          epsilon: sel.epsilon,
-          trainForcedRandom,
-          exposure: decFinal.exposure,
-          positionCount: decFinal.positionCount,
-          sizingMethod: decFinal.sizingMethod,
-          rebalanceWait: decFinal.rebalanceWait,
-          reward: rlLastReward
-        });
       }
 
       {
@@ -9077,9 +9132,22 @@ function rlSweepPerfTriple(sim, capital) {
   return { totalReturn: b.totalReturn, alpha: b.alpha, sharpe: b.sharpe };
 }
 
+/** ε used for a completed training episode (tabular: linear schedule; DQN: episode schedule). */
+function rlTrainEpsilonAtEpisode(agent, episodeOneBased) {
+  if (!agent || episodeOneBased == null || !Number.isFinite(Number(episodeOneBased))) return null;
+  const ep = Math.max(1, Number(episodeOneBased));
+  if (typeof agent.getEpsilonForTrainingEpisode === 'function') {
+    return agent.getEpsilonForTrainingEpisode(ep);
+  }
+  if (typeof agent.getEpsilonForEpisode === 'function') {
+    return agent.getEpsilonForEpisode(ep);
+  }
+  return null;
+}
+
 /**
  * RL training episode loop (Q-learning or DQN). Caller applies agent hyperparams before calling.
- * @returns {{ episodesRun: number, episodeLog: Array|null, episodeRlRewards: number[], trainingStopReason: string }}
+ * @returns {{ episodesRun: number, episodeLog: Array|null, episodeRlRewards: number[], trainingStopReason: string, loopElapsedMs: number, convergenceDiagnostics: object }}
  */
 async function rlRunTrainEpisodesCore({
   agent,
@@ -9116,6 +9184,14 @@ async function rlRunTrainEpisodesCore({
   const episodeRlRewards = [];
   let trainingStopReason = trainUntilThresholds ? 'max_episodes' : 'episodes_completed';
   const trainEpisodeLoopStart = performance.now();
+
+  const qSpreadHistory = [];
+  let epsilonThresholdEpisode = null;
+  let policyConvergenceEpisode = null;
+  const CONVERGENCE_WINDOW = 3;
+  const POLICY_STABILITY_THRESHOLD = 0.005;
+  let stableCheckpointCount = 0;
+  let lastPolicy = null;
 
   const skipEarnTrain =
     sharedTrainSimOptions?.rlTrainSkipEarningsFetch === true ||
@@ -9173,6 +9249,15 @@ async function rlRunTrainEpisodesCore({
       );
 
       epCount++;
+      const epsForCompletedEp = rlTrainEpsilonAtEpisode(agent, epCount);
+      if (
+        epsilonThresholdEpisode === null &&
+        epsForCompletedEp != null &&
+        Number.isFinite(epsForCompletedEp) &&
+        epsForCompletedEp < 0.01
+      ) {
+        epsilonThresholdEpisode = epCount;
+      }
       const du = agent.totalUpdates - updatesBefore;
       let epRlRewardSum = 0;
       for (const row of sim.rlLog || []) {
@@ -9225,12 +9310,37 @@ async function rlRunTrainEpisodesCore({
       }
 
       const ck = checkpointEvery | 0;
-      if (epCount > 0 && ck > 0 && epCount % ck === 0 && isDqnAgentInstance(agent)) {
-        writeRlAgentFileOnly(agent);
-        console.log(`${tag} DQN checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
-      } else if (epCount > 0 && ck > 0 && epCount % ck === 0 && !isDqnAgentInstance(agent)) {
-        writeRlAgentFileOnly(agent, universeId);
-        console.log(`${tag} checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
+      if (epCount > 0 && ck > 0 && epCount % ck === 0) {
+        if (isDqnAgentInstance(agent)) {
+          writeRlAgentFileOnly(agent);
+          console.log(`${tag} DQN checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
+        } else {
+          writeRlAgentFileOnly(agent, universeId);
+          console.log(`${tag} checkpoint ep=${epCount}, states=${agent.statesVisited}, updates=${agent.totalUpdates}`);
+        }
+
+        if (typeof agent.getQSpread === 'function' && typeof agent.getGreedyPolicy === 'function') {
+          const currentSpread = agent.getQSpread();
+          qSpreadHistory.push({
+            episode: epCount,
+            spread: parseFloat(Number(currentSpread).toFixed(4))
+          });
+          const currentPolicy = agent.getGreedyPolicy();
+          if (lastPolicy !== null && typeof agent.policyDistance === 'function') {
+            const dist = agent.policyDistance(lastPolicy);
+            if (dist < POLICY_STABILITY_THRESHOLD) {
+              stableCheckpointCount++;
+              if (stableCheckpointCount >= CONVERGENCE_WINDOW && policyConvergenceEpisode === null) {
+                policyConvergenceEpisode = epCount;
+              }
+            } else {
+              stableCheckpointCount = 0;
+            }
+          } else {
+            stableCheckpointCount = 0;
+          }
+          lastPolicy = currentPolicy;
+        }
       }
 
       if (trainUntilThresholds) {
@@ -9253,7 +9363,18 @@ async function rlRunTrainEpisodesCore({
 
   const episodesRun = episodeRlRewards.length;
   const loopElapsedMs = performance.now() - trainEpisodeLoopStart;
-  return { episodesRun, episodeLog, episodeRlRewards, trainingStopReason, loopElapsedMs };
+  return {
+    episodesRun,
+    episodeLog,
+    episodeRlRewards,
+    trainingStopReason,
+    loopElapsedMs,
+    convergenceDiagnostics: {
+      qSpreadHistory,
+      epsilonThresholdEpisode,
+      policyConvergenceEpisode
+    }
+  };
 }
 
 app.get('/api/rl/test', async (req, res) => {
@@ -9398,6 +9519,294 @@ app.get('/api/rl/policy', (req, res) => {
   } catch (e) {
     console.error('RL policy error:', e);
     res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/rl/oracle
+ *
+ * Exhaustively evaluates all 48 constant policies (one fixed action every rebalance)
+ * on the full backtest window, ranks by alpha, and compares the trained agent's greedy
+ * tabular/DQN policy to the best single-action oracle.
+ *
+ * Query: period (default 3y), universeId (default sp500_top50), rebalanceFreq (default bimonthly), topN (default 15), initialCapital (default 10000).
+ */
+app.get('/api/rl/oracle', async (req, res) => {
+  const universeIdResolved =
+    req.query.universeId != null ? String(req.query.universeId).trim() : 'sp500_top50';
+  try {
+    clearBacktestRuntimeCaches();
+    const period = req.query.period || '3y';
+    const rebalanceFreq = String(req.query.rebalanceFreq || 'bimonthly').toLowerCase().trim();
+    const allowedFreq = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
+    if (!allowedFreq.includes(rebalanceFreq)) {
+      return res.status(400).json({ success: false, error: 'Invalid rebalanceFreq' });
+    }
+    const topN = parseInt(String(req.query.topN ?? '15'), 10) || 15;
+    const capital = parseFloat(String(req.query.initialCapital ?? '10000')) || 10000;
+    const strategyClean = 'full_composite';
+
+    const universe = UNIVERSE_TICKERS[universeIdResolved];
+    if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
+
+    /** Oracle sweep: fixed M40/V40/Q20 pillar mix (no earnings pillar). */
+    const tradingWeights = {
+      momentum: 0.4,
+      value: 0.4,
+      fundamental: 0.2,
+      dcf: 0,
+      valuation: 0,
+      earningsMomentum: 0
+    };
+
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+    const days = periodDays[period] || 1095;
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const lookbackStart = new Date(startDate.getTime() - 400 * 24 * 60 * 60 * 1000);
+    const startDateStr = lookbackStart.toISOString().split('T')[0];
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const backtestStartDate = startDate.toISOString().split('T')[0];
+
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(Boolean);
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+
+    const fundamentals = {};
+    const fundRows = await mapWithConcurrency(
+      tickersToFetch.filter((t) => t !== 'SPY'),
+      FUNDAMENTALS_FETCH_CONCURRENCY,
+      async (ticker) => {
+        const fund = await fetchFundamentals(ticker);
+        return { ticker, fund };
+      }
+    );
+    for (const row of fundRows) {
+      if (row?.fund && !row.__error) fundamentals[row.ticker] = row.fund;
+    }
+
+    const rebalanceDates = getRebalanceDates(backtestStartDate, endDateStr, rebalanceFreq);
+    if (rebalanceDates.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({
+        success: false,
+        error:
+          'Missing SPY data — Yahoo chart returned no usable daily bars for SPY. Retry after a short wait if rate-limited.'
+      });
+    }
+
+    const simStart = rebalanceDates[0];
+    const simEnd = rebalanceDates[rebalanceDates.length - 1];
+    const cpiObsStart = subtractMonths(simStart, 60);
+    const cpiObservations = await fetchFredCpiObservations(cpiObsStart, simEnd, process.env.FRED_API_KEY);
+    const { multiplierFn: cashInflationMult } = buildCashInflationMultiplierFn(
+      cpiObservations,
+      simStart,
+      INFLATION_BASELINE_ANNUAL
+    );
+
+    const sharedOracleSimOptions = {
+      adaptiveMode: 'fixed',
+      positionSizing: 'invVol',
+      regimeEnabled: true,
+      skipMlRankingAdjustments: true
+    };
+
+    const N_ACTIONS = TOTAL_ACTIONS;
+    const actionResults = [];
+
+    for (let actionIdx = 0; actionIdx < N_ACTIONS; actionIdx++) {
+      const decoded = decodeAction(actionIdx);
+      const sim = await runBacktestSimulation(
+        universe,
+        priceHistory,
+        fundamentals,
+        spyPrices,
+        rebalanceDates,
+        topN,
+        capital,
+        strategyClean,
+        tradingWeights,
+        cashInflationMult,
+        universeIdResolved,
+        {
+          ...sharedOracleSimOptions,
+          rlAgent: true,
+          rlMode: 'eval',
+          forceConstantAction: actionIdx,
+          rlQLearningAgent: new QLearningTradingAgent(),
+          rlRandomAgent: false
+        }
+      );
+      const perf = extractDiagnosticPerformance(sim, capital);
+      actionResults.push({
+        actionIdx,
+        exposure: decoded.exposure,
+        positionCount: decoded.positionCount,
+        sizingMethod: decoded.sizingMethod,
+        rebalanceWait: decoded.rebalanceWait,
+        totalReturn: parseFloat(perf?.totalReturn ?? '0'),
+        alpha: parseFloat(perf?.alpha ?? '0'),
+        sharpe: parseFloat(perf?.sharpe ?? '0')
+      });
+    }
+
+    const sorted = [...actionResults].sort((a, b) => b.alpha - a.alpha);
+    const oracleAction = sorted[0];
+    const oracleActionIdx = oracleAction.actionIdx;
+
+    let rlAgentData = null;
+    let agentPolicyDistance = null;
+    let agentVsOracleAlphaGap = null;
+
+    try {
+      const agent =
+        rlAgentTypeEffective() === 'dqn'
+          ? loadRlAgentFromDisk('dqn')
+          : loadRlAgentFromDisk(undefined, universeIdResolved);
+      const nStates = agent.nStates ?? TOTAL_STATES;
+      const nActions = agent.nActions ?? TOTAL_ACTIONS;
+      if (nActions !== N_ACTIONS) {
+        rlAgentData = {
+          error: `Agent action count (${nActions}) does not match oracle sweep (${N_ACTIONS})`,
+          agentKind: rlAgentTypeEffective()
+        };
+      } else {
+        const agentGreedyActions = [];
+        for (let s = 0; s < nStates; s++) {
+          let best = 0;
+          let bestQ = agent.getQ(s, 0);
+          for (let a = 1; a < nActions; a++) {
+            const q = agent.getQ(s, a);
+            if (q > bestQ) {
+              bestQ = q;
+              best = a;
+            }
+          }
+          agentGreedyActions.push(best);
+        }
+
+        const statesDivergent = agentGreedyActions.filter((a) => a !== oracleActionIdx).length;
+        agentPolicyDistance = statesDivergent / nStates;
+
+        const counts = Object.create(null);
+        for (const a of agentGreedyActions) counts[a] = (counts[a] || 0) + 1;
+        let agentModalActionIdx = 0;
+        let maxCt = -1;
+        for (const [aStr, ct] of Object.entries(counts)) {
+          if (ct > maxCt) {
+            maxCt = ct;
+            agentModalActionIdx = parseInt(aStr, 10);
+          }
+        }
+        const agentModalResult = actionResults.find((r) => r.actionIdx === agentModalActionIdx) ?? actionResults[0];
+        agentVsOracleAlphaGap = oracleAction.alpha - agentModalResult.alpha;
+
+        /** Same window/weights as oracle sweep; matches GET backtest `rlAgent=true` eval (state-dependent greedy policy). Alpha as annualized fraction (e.g. -0.0026). */
+        let fullPolicyAlpha = null;
+        try {
+          const simRlFull = await runBacktestSimulation(
+            universe,
+            priceHistory,
+            fundamentals,
+            spyPrices,
+            rebalanceDates,
+            topN,
+            capital,
+            strategyClean,
+            tradingWeights,
+            cashInflationMult,
+            universeIdResolved,
+            {
+              ...sharedOracleSimOptions,
+              rlAgent: true,
+              rlMode: 'eval',
+              rlQLearningAgent: agent,
+              rlRandomAgent: false
+            }
+          );
+          const perfRlFull = extractDiagnosticPerformance(simRlFull, capital);
+          const alphaPp = parseFloat(String(perfRlFull?.alpha ?? ''));
+          fullPolicyAlpha = Number.isFinite(alphaPp) ? alphaPp / 100 : null;
+        } catch {
+          fullPolicyAlpha = null;
+        }
+
+        rlAgentData = {
+          modalAction: agentModalActionIdx,
+          modalActionDecoded: decodeAction(agentModalActionIdx),
+          modalActionAlpha: agentModalResult.alpha,
+          policyDistanceFromOracle: parseFloat(agentPolicyDistance.toFixed(4)),
+          alphaGapFromOracle: parseFloat(agentVsOracleAlphaGap.toFixed(4)),
+          statesMatchingOracle: nStates - statesDivergent,
+          statesDivergingFromOracle: statesDivergent,
+          agentKind: rlAgentTypeEffective(),
+          nStates,
+          nActions,
+          fullPolicyAlpha
+        };
+      }
+    } catch (e) {
+      rlAgentData = { error: 'Could not load or evaluate trained agent', detail: e.message };
+    }
+
+    const alphasSorted = actionResults.map((r) => r.alpha).sort((a, b) => a - b);
+    const alphaDiffs = [];
+    for (let i = 1; i < alphasSorted.length; i++) {
+      const d = alphasSorted[i] - alphasSorted[i - 1];
+      if (d > 0) alphaDiffs.push(d);
+    }
+    const noiseFloor =
+      alphaDiffs.length > 0 ? parseFloat(Math.min(...alphaDiffs).toFixed(4)) : null;
+
+    const top5 = sorted.slice(0, 5);
+    const bottom5 = sorted.slice(-5).reverse();
+
+    const oracleAlphaFrac = oracleAction.alpha / 100;
+    const rlFullAlpha = rlAgentData?.fullPolicyAlpha ?? null;
+    const interpretation =
+      rlFullAlpha !== null
+        ? rlFullAlpha > oracleAlphaFrac
+          ? `RL agent (+${(rlFullAlpha * 100).toFixed(2)}% alpha) beats best constant policy (${(oracleAlphaFrac * 100).toFixed(2)}% alpha) by ${((rlFullAlpha - oracleAlphaFrac) * 100).toFixed(2)}pp — regime adaptation is the source of alpha.`
+          : `RL agent (${(rlFullAlpha * 100).toFixed(2)}% alpha) trails best constant policy by ${((oracleAlphaFrac - rlFullAlpha) * 100).toFixed(2)}pp — agent underperforming.`
+        : 'No trained agent to compare.';
+
+    res.json({
+      success: true,
+      universeId: universeIdResolved,
+      period,
+      rebalanceFreq,
+      topN,
+      initialCapital: capital,
+      oracle: {
+        actionIdx: oracleActionIdx,
+        decoded: decodeAction(oracleActionIdx),
+        alpha: oracleAction.alpha,
+        totalReturn: oracleAction.totalReturn,
+        sharpe: oracleAction.sharpe
+      },
+      noiseFloor,
+      rlAgent: rlAgentData,
+      interpretation,
+      top5Actions: top5,
+      bottom5Actions: bottom5,
+      allActions: actionResults
+    });
+  } catch (err) {
+    console.error('Oracle error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  } finally {
+    clearBacktestRuntimeCaches();
   }
 });
 
@@ -9623,6 +10032,8 @@ app.post('/api/rl/train', async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const universeId = body.universeId || 'sp500_top50';
     const period = body.period || '3y';
+    const gammaParsed = body.gamma != null ? Number(body.gamma) : NaN;
+    const gamma = Number.isFinite(gammaParsed) ? gammaParsed : 3;
     const rebalanceFreq = String(body.rebalanceFreq || 'monthly').toLowerCase().trim();
     const allowedFreq = ['monthly', 'quarterly', 'weekly', 'biweekly', 'bimonthly'];
     if (!allowedFreq.includes(rebalanceFreq)) {
@@ -9824,7 +10235,8 @@ app.post('/api/rl/train', async (req, res) => {
       regimeEnabled: regimeEnabledTrain,
       skipMlRankingAdjustments: skipMlTrain,
       correlationFilter: correlationFilterTrain,
-      rlTrainSkipEarningsFetch
+      rlTrainSkipEarningsFetch,
+      rlGamma: gamma
     };
 
     if (userEpisodes >= 50 && !skipPostTrainEval) {
@@ -9876,7 +10288,8 @@ app.post('/api/rl/train', async (req, res) => {
       episodeLog,
       episodeRlRewards,
       trainingStopReason,
-      loopElapsedMs: trainingDurationMs
+      loopElapsedMs: trainingDurationMs,
+      convergenceDiagnostics
     } = await rlRunTrainEpisodesCore({
       agent,
       universe,
@@ -10081,9 +10494,20 @@ app.post('/api/rl/train', async (req, res) => {
           })
     };
 
+    const cd = convergenceDiagnostics || {
+      qSpreadHistory: [],
+      epsilonThresholdEpisode: null,
+      policyConvergenceEpisode: null
+    };
+    const epsTh = cd.epsilonThresholdEpisode ?? null;
+    const polCv = cd.policyConvergenceEpisode ?? null;
+    const finalQSpreadNum =
+      typeof agent.getQSpread === 'function' ? Number(agent.getQSpread()) : 0;
+
     res.json({
       success: true,
       episodes: episodesRun,
+      rlGamma: gamma,
       training: trainingBlock,
       evaluation: evaluationBlock,
       skipPostTrainEval,
@@ -10094,6 +10518,12 @@ app.post('/api/rl/train', async (req, res) => {
       avgEpisodeMs: avgEpisodeMs != null ? parseFloat(avgEpisodeMs.toFixed(1)) : null,
       trainUntilThresholds,
       trainingStopReason,
+      epsilonThresholdEpisode: epsTh,
+      policyConvergenceEpisode: polCv,
+      finalQSpread: parseFloat(finalQSpreadNum.toFixed(4)),
+      qSpreadHistory: cd.qSpreadHistory ?? [],
+      convergenceGapEpisodes:
+        epsTh !== null && polCv !== null ? polCv - epsTh : null,
       thresholdsTarget: {
         coveragePercentMin: RL_TRAIN_COVERAGE_TARGET_PCT,
         totalQUpdatesMin: RL_TRAIN_MIN_Q_UPDATES,
@@ -12137,7 +12567,7 @@ function paperRlOnlineReward(portfolio, spySeries, asOfDate) {
   const volRaw = spySeries?.length ? spyRealizedVolAnnualized(spySeries, asOfDate) : 0.15;
   const vol = Number.isFinite(volRaw) && volRaw > 0 ? volRaw : 0.15;
   if (!nav || nav.length < 2) {
-    return computeDqnReward(0, 0, vol, 0);
+    return computeDqnReward(0, 0, vol, 0, portfolio?.config?.rlGamma ?? 3);
   }
   const prev = nav[nav.length - 2];
   const last = nav[nav.length - 1];
@@ -12150,7 +12580,7 @@ function paperRlOnlineReward(portfolio, spySeries, asOfDate) {
     const dd = peak > 0 ? row.portfolioValue / peak - 1 : 0;
     if (dd < maxDd) maxDd = dd;
   }
-  return computeDqnReward(portRet, benchRet, vol, maxDd);
+  return computeDqnReward(portRet, benchRet, vol, maxDd, portfolio?.config?.rlGamma ?? 3);
 }
 
 /**

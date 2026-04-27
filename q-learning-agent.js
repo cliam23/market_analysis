@@ -117,12 +117,28 @@ export const DEFAULT_ACTION = {
   rebalanceWait: 'standard'
 };
 
-export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown) {
+/**
+ * MV-inspired reward with explicit risk aversion parameter γ (gamma).
+ *
+ * Combines Sharpe-alpha signal with a mean-variance penalty term:
+ *   base = sharpeAlpha * 0.7 + ddPenalty
+ *   varPenalty = (gamma / 2) * portfolioVol²
+ *
+ * At gamma=0 the function is identical to the original.
+ * Higher gamma shifts the agent toward lower-variance actions in
+ * volatile regimes, directly analogous to MV utility R = r_p - (γ/2)·r_p².
+ *
+ * Recommended sweep: gamma = 0, 1, 3, 5, 10.
+ * Default gamma = 3 — meaningful penalty without dominating Sharpe signal.
+ */
+export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown, gamma = 3) {
   const alpha = portfolioReturn - benchmarkReturn;
   const vol = portfolioVol > 0 ? portfolioVol : 0.15;
   const sharpeAlpha = alpha / vol;
   const ddPenalty = maxDrawdown < -0.15 ? (maxDrawdown + 0.15) * 1.0 : 0;
-  return (sharpeAlpha * 0.7 + ddPenalty) * 3.0;
+  // Explicit variance penalty — annualized vol², scaled by γ/2
+  const varPenalty = (gamma / 2) * (vol * vol);
+  return (sharpeAlpha * 0.7 - varPenalty + ddPenalty) * 3.0;
 }
 
 export class QLearningTradingAgent {
@@ -357,6 +373,55 @@ export class QLearningTradingAgent {
       policy.set(s, { actionIdx: bestA, qValue: bestQ });
     }
     return policy;
+  }
+
+  /**
+   * Greedy action index per discrete state (argmax_a Q(s,a)).
+   * @returns {Int16Array} length nStates
+   */
+  getGreedyPolicy() {
+    const policy = new Int16Array(this.nStates);
+    for (let s = 0; s < this.nStates; s++) {
+      let best = 0;
+      let bestQ = this.getQ(s, 0);
+      for (let a = 1; a < this.nActions; a++) {
+        const q = this.getQ(s, a);
+        if (q > bestQ) {
+          bestQ = q;
+          best = a;
+        }
+      }
+      policy[s] = best;
+    }
+    return policy;
+  }
+
+  /** Global max − min over the flat Q table (training diagnostics). */
+  getQSpread() {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = 0; i < this.Q.length; i++) {
+      const v = this.Q[i];
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+    return max - min;
+  }
+
+  /**
+   * Fraction of states where greedy action differs from refPolicy (same length as nStates).
+   * @param {Int16Array} refPolicy
+   */
+  policyDistance(refPolicy) {
+    const nStates = this.nStates;
+    if (!refPolicy || refPolicy.length !== nStates) return 1;
+    const current = this.getGreedyPolicy();
+    let diffs = 0;
+    for (let s = 0; s < nStates; s++) {
+      if (current[s] !== refPolicy[s]) diffs++;
+    }
+    return diffs / nStates;
   }
 
   /** Unique state indices with at least one Q entry !== 0 (used after load from disk). */

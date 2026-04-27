@@ -145,12 +145,28 @@ export function encodeAction(exposureIdx, posCountIdx, sizingIdx, waitIdx = 0) {
   return (sizingIdx + 3 * (posCountIdx + 4 * (exposureIdx + 4 * w))) | 0;
 }
 
-export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown) {
+/**
+ * MV-inspired reward with explicit risk aversion parameter γ (gamma).
+ *
+ * Combines Sharpe-alpha signal with a mean-variance penalty term:
+ *   base = sharpeAlpha * 0.7 + ddPenalty
+ *   varPenalty = (gamma / 2) * portfolioVol²
+ *
+ * At gamma=0 the function is identical to the original.
+ * Higher gamma shifts the agent toward lower-variance actions in
+ * volatile regimes, directly analogous to MV utility R = r_p - (γ/2)·r_p².
+ *
+ * Recommended sweep: gamma = 0, 1, 3, 5, 10.
+ * Default gamma = 3 — meaningful penalty without dominating Sharpe signal.
+ */
+export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown, gamma = 3) {
   const alpha = portfolioReturn - benchmarkReturn;
   const vol = portfolioVol > 0 ? portfolioVol : 0.15;
   const sharpeAlpha = alpha / vol;
   const ddPenalty = maxDrawdown < -0.15 ? (maxDrawdown + 0.15) * 1.0 : 0;
-  return (sharpeAlpha * 0.7 + ddPenalty) * 3.0;
+  // Explicit variance penalty — annualized vol², scaled by γ/2
+  const varPenalty = (gamma / 2) * (vol * vol);
+  return (sharpeAlpha * 0.7 - varPenalty + ddPenalty) * 3.0;
 }
 
 /** Continuous 5-vector in [0,1] for the DQN (not the legacy discrete index). */
@@ -516,6 +532,55 @@ export class DQNAgent {
       policy.set(s, { actionIdx: bestA, qValue: bestQ });
     }
     return policy;
+  }
+
+  /** Greedy discrete action per legacy state index (online network). */
+  getGreedyPolicy() {
+    const policy = new Int16Array(TOTAL_STATES);
+    for (let s = 0; s < TOTAL_STATES; s++) {
+      const qv = this._predictQVec(discreteIdxToVec(s));
+      let best = 0;
+      let bestQ = qv[0];
+      for (let a = 1; a < TOTAL_ACTIONS; a++) {
+        if (qv[a] > bestQ) {
+          bestQ = qv[a];
+          best = a;
+        }
+      }
+      policy[s] = best;
+    }
+    this._qCacheState = -1;
+    this._qCacheVec = null;
+    return policy;
+  }
+
+  /** max Q − min Q over all discrete (s,a) under the online head. */
+  getQSpread() {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let s = 0; s < TOTAL_STATES; s++) {
+      const qv = this._predictQVec(discreteIdxToVec(s));
+      for (let a = 0; a < TOTAL_ACTIONS; a++) {
+        const q = qv[a];
+        if (q < min) min = q;
+        if (q > max) max = q;
+      }
+    }
+    this._qCacheState = -1;
+    this._qCacheVec = null;
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return 0;
+    return max - min;
+  }
+
+  /** Greedy-policy Hamming distance rate vs a prior greedy snapshot. */
+  policyDistance(refPolicy) {
+    if (!refPolicy || refPolicy.length !== TOTAL_STATES) return 1;
+    const current = this.getGreedyPolicy();
+    let diffs = 0;
+    for (let s = 0; s < TOTAL_STATES; s++) {
+      if (current[s] !== refPolicy[s]) diffs++;
+    }
+    return diffs / TOTAL_STATES;
   }
 
   coupledUpdate() {
