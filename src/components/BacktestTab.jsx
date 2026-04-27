@@ -329,6 +329,65 @@ function buildBacktestQuery(settings, rlAgentOn) {
   return params;
 }
 
+function parseBacktestPerfTriplet(data) {
+  const tr = parseFloat(data?.performance?.totalReturn);
+  const alpha = parseFloat(data?.performance?.alpha);
+  const sharpe = parseFloat(data?.performance?.sharpe);
+  return {
+    tr: Number.isFinite(tr) ? tr : -Infinity,
+    alpha: Number.isFinite(alpha) ? alpha : -Infinity,
+    sharpe: Number.isFinite(sharpe) ? sharpe : -Infinity
+  };
+}
+
+/**
+ * After parallel rules vs RL runs, pick the stronger path for this search.
+ * Order: total return → alpha → Sharpe; full tie → rules-only (RL off).
+ */
+function pickBetterRlVariant(dataRules, dataRl) {
+  const a = parseBacktestPerfTriplet(dataRules);
+  const b = parseBacktestPerfTriplet(dataRl);
+  if (b.tr > a.tr) return { data: dataRl, rlAgentOn: true };
+  if (a.tr > b.tr) return { data: dataRules, rlAgentOn: false };
+  if (b.alpha > a.alpha) return { data: dataRl, rlAgentOn: true };
+  if (a.alpha > b.alpha) return { data: dataRules, rlAgentOn: false };
+  if (b.sharpe > a.sharpe) return { data: dataRl, rlAgentOn: true };
+  if (a.sharpe > b.sharpe) return { data: dataRules, rlAgentOn: false };
+  return { data: dataRules, rlAgentOn: false };
+}
+
+async function fetchBacktestJson(settings, rlAgentOn, signal) {
+  const params = buildBacktestQuery(settings, rlAgentOn);
+  const relativeUrl = `/api/backtest/${settings.universe}?${params.toString()}`;
+  const response = await apiFetch(relativeUrl, {
+    signal,
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-cache",
+      Pragma: "no-cache"
+    }
+  });
+  const rawText = await response.text();
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    throw new Error(rawText.slice(0, 200) || `Bad response (HTTP ${response.status})`);
+  }
+  if (!response.ok) {
+    throw new Error(data.error || data.message || `HTTP ${response.status}`);
+  }
+  if (!data.success) {
+    throw new Error(data.error || "Backtest failed");
+  }
+  if (data.cached === true) {
+    console.error(
+      "[backtest] Unexpected cached response: UI sent fresh=true — restart the API (node server.js), check VITE_API_BASE, or verify the proxy is not stripping query params."
+    );
+  }
+  return data;
+}
+
 /** Green = beating benchmark, red = trailing benchmark (for headline metrics). */
 const C_VS_SPY_WIN = "var(--green)";
 const C_VS_SPY_LOSE = "var(--red)";
@@ -473,7 +532,10 @@ export default function BacktestTab() {
     adaptiveMode: "adaptive",
     positionSizing: "invVol"
   });
-  /** Composite-only: must match explicit curl baseline (`rlAgent=false` rules-only unless user enables RL). */
+  /**
+   * Composite family: each Run compares rules vs RL in parallel and syncs this to the winner.
+   * User can still toggle after a run to re-fetch a single variant.
+   */
   const [rlAgentOn, setRlAgentOn] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedWrapRef = useRef(null);
@@ -569,49 +631,70 @@ export default function BacktestTab() {
     setError(null);
     
     try {
-      const params = buildBacktestQuery(settings, rlAgentOn);
-      const relativeUrl = `/api/backtest/${settings.universe}?${params.toString()}`;
-      console.log("[BACKTEST] Fetching:", apiUrl(relativeUrl));
-
-      const response = await apiFetch(relativeUrl, {
-        signal,
-        cache: "no-store",
-        headers: {
-          "Cache-Control": "no-cache",
-          Pragma: "no-cache"
-        }
-      });
-      const rawText = await response.text();
+      const strat = (settings.strategy || "").toLowerCase().trim();
       let data;
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        throw new Error(rawText.slice(0, 200) || `Bad response (HTTP ${response.status})`);
-      }
-      if (!response.ok) {
-        throw new Error(data.error || data.message || `HTTP ${response.status}`);
-      }
 
-      if (!data.success) {
-        throw new Error(data.error || "Backtest failed");
-      }
+      if (isCompositeStrategy(strat)) {
+        const relativeOff = `/api/backtest/${settings.universe}?${buildBacktestQuery(settings, false).toString()}`;
+        const relativeOn = `/api/backtest/${settings.universe}?${buildBacktestQuery(settings, true).toString()}`;
+        console.log("[BACKTEST] RL compare (parallel):", apiUrl(relativeOff), "|", apiUrl(relativeOn));
 
-      if (data.cached === true) {
-        console.error(
-          "[backtest] Unexpected cached response: UI sent fresh=true — restart the API (node server.js), check VITE_API_BASE, or verify the proxy is not stripping query params."
-        );
-      }
+        const [settledOff, settledOn] = await Promise.allSettled([
+          fetchBacktestJson(settings, false, signal),
+          fetchBacktestJson(settings, true, signal)
+        ]);
 
-      console.log("[BACKTEST] URL:", apiUrl(relativeUrl), "| Response return:", data.performance?.totalReturn);
+        if (signal.aborted) return;
+
+        const off = settledOff.status === "fulfilled" ? settledOff.value : null;
+        const on = settledOn.status === "fulfilled" ? settledOn.value : null;
+
+        if (!off && !on) {
+          const msg =
+            settledOff.status === "rejected"
+              ? settledOff.reason?.message
+              : settledOn.status === "rejected"
+                ? settledOn.reason?.message
+                : "Backtest failed";
+          throw new Error(msg || "Backtest failed");
+        }
+        if (off && !on) {
+          data = off;
+          setRlAgentOn(false);
+          console.warn("[BACKTEST] RL path failed, showing rules-only:", settledOn.reason?.message);
+        } else if (!off && on) {
+          data = on;
+          setRlAgentOn(true);
+          console.warn("[BACKTEST] Rules path failed, showing RL request:", settledOff.reason?.message);
+        } else {
+          const pick = pickBetterRlVariant(off, on);
+          data = pick.data;
+          setRlAgentOn(pick.rlAgentOn);
+          console.log(
+            "[BACKTEST] Auto-pick RL:",
+            pick.rlAgentOn,
+            "| returns % rules=",
+            off.performance?.totalReturn,
+            "rl=",
+            on.performance?.totalReturn
+          );
+        }
+      } else {
+        const params = buildBacktestQuery(settings, rlAgentOn);
+        const relativeUrl = `/api/backtest/${settings.universe}?${params.toString()}`;
+        console.log("[BACKTEST] Fetching:", apiUrl(relativeUrl));
+        data = await fetchBacktestJson(settings, rlAgentOn, signal);
+        console.log("[BACKTEST] URL:", apiUrl(relativeUrl), "| Response return:", data.performance?.totalReturn);
+      }
 
       setResults(data);
-      const strat = (data.strategy || "").toLowerCase().trim();
-      if (strat === "full_composite" || strat === "full_composite_aggressive") {
+      const stratOut = (data.strategy || "").toLowerCase().trim();
+      if (stratOut === "full_composite" || stratOut === "full_composite_aggressive") {
         setCompareSnaps((prev) => ({
           ...prev,
-          [strat]: {
+          [stratOut]: {
             performance: data.performance,
-            strategy: strat,
+            strategy: stratOut,
             universe: data.universe,
             period: data.period
           }
