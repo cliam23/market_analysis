@@ -1,48 +1,37 @@
-# fly.toml — Fly.io deployment config for Market Analysis
-#
-# Notes:
-# - Fly routes traffic to `internal_port`. We set it to 8080 (Fly default).
-# - The server reads PORT from env and binds to 0.0.0.0 (already in server.js).
-# - Persist portfolios/agents under /data via DATA_DIR (already implemented).
-#
-# After creating the app, set secrets:
-#   fly secrets set TRADIER_SANDBOX_TOKEN=... FRONTEND_URL=https://...vercel.app
-# And create a volume:
-#   fly volumes create market_data --size 1 --region ord
-
-app = "market-analysis"
+app = "market-analysis-liam"
 primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
   DATA_DIR = "/data"
-  PORT = "8080"
 
-[http_service]
-  internal_port = 8080
-  force_https = true
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
+[[services]]
+  internal_port = 3001
+  protocol = "tcp"
 
-  [http_service.concurrency]
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "30s"
+    path = "/health"
+    method = "GET"
+
+  [services.concurrency]
     type = "connections"
-    hard_limit = 25
-    soft_limit = 20
-
-[[vm]]
-  memory = "512mb"
-  cpu_kind = "shared"
-  cpus = 1
+    hard_limit = 50
+    soft_limit = 40
 
 [mounts]
   source = "market_data"
   destination = "/data"
-
-[[services.http_checks]]
-  interval = "15s"
-  timeout = "10s"
-  grace_period = "30s"
-  path = "/health"
-  method = "GET"
-
