@@ -484,6 +484,125 @@ function AutoTraderPanel({ scanRegime }) {
   );
 }
 
+function OptionsBacktest() {
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [period, setPeriod] = useState("3y");
+  const [error, setError] = useState(null);
+
+  const run = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/api/options/backtest?period=${encodeURIComponent(period)}&universe=sp500_top50&topN=5`);
+      const j = await safeJson(res);
+      if (!j.success) throw new Error(j.error || "Backtest failed");
+      setResult(j);
+    } catch (e) {
+      setError(e.message || String(e));
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  return (
+    <div style={{ background: "#1E293B", borderRadius: 10, padding: 16, marginTop: 14, border: "1px solid #334155" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 14, color: "#E2E8F0" }}>Options Strategy Backtest</div>
+          <div style={{ color: "#64748B", fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
+            Simplified simulation of selling covered calls + cash-secured puts on top-scored names.
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {["1y", "2y", "3y"].map((p) => (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPeriod(p)}
+              style={{
+                background: period === p ? "#0EA5E9" : "#334155",
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                padding: "4px 12px",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 700
+              }}
+            >
+              {p}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={run}
+            disabled={loading}
+            style={{
+              background: loading ? "#334155" : "#22C55E",
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 16px",
+              cursor: loading ? "not-allowed" : "pointer",
+              fontWeight: 800,
+              fontSize: 12
+            }}
+          >
+            {loading ? "Running..." : "Run Backtest"}
+          </button>
+        </div>
+      </div>
+
+      {error && <div style={{ marginTop: 10, color: RED, fontSize: 12 }}>{error}</div>}
+
+      {result && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
+            {[
+              { label: "Equity only", value: `${result.performance.equityOnlyReturnPct.toFixed(2)}%`, color: "#94A3B8" },
+              { label: "Premium collected", value: fmtMoney(result.performance.totalPremiumCollected), color: "#22C55E" },
+              { label: "Premium yield/yr", value: `${result.performance.annualizedPremiumYieldPct.toFixed(2)}%`, color: "#0EA5E9" },
+              { label: "Enhanced return", value: `${result.performance.enhancedReturnPct.toFixed(2)}%`, color: "#22C55E" },
+              { label: "Options lift", value: `${result.performance.liftFromOptionsPct.toFixed(2)}%`, color: "#F59E0B" }
+            ].map((x) => (
+              <div key={x.label} style={{ background: "#162033", border: "1px solid #1E3A5F", borderRadius: 10, padding: "10px 12px" }}>
+                <div style={{ color: "#64748B", fontSize: 10 }}>{x.label}</div>
+                <div style={{ color: x.color, fontWeight: 800, fontSize: 16, fontFamily: "monospace" }}>{x.value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 10, background: "#0D1B2A", borderRadius: 8, padding: "10px 12px", color: "#94A3B8", fontSize: 11, lineHeight: 1.5 }}>
+            {result.interpretation?.whatThisMeans ?? "—"}
+          </div>
+
+          <div style={{ overflowX: "auto", marginTop: 10 }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 64, minWidth: 640 }}>
+              {result.monthlyPnl.map((m, i) => {
+                const maxVal = Math.max(1, ...result.monthlyPnl.map((x) => Number(x.totalPnl) || 0));
+                const h = Math.max(4, ((Number(m.totalPnl) || 0) / maxVal) * 60);
+                const color = m.regime === "bear" ? "#334155" : Number(m.totalPnl) >= 0 ? "#22C55E" : "#EF4444";
+                return (
+                  <div
+                    key={i}
+                    title={`${m.date}: $${Number(m.totalPnl).toFixed(0)} (${m.regime})`}
+                    style={{ flex: 1, background: color, height: h, borderRadius: "2px 2px 0 0", minWidth: 4 }}
+                  />
+                );
+              })}
+            </div>
+            <div style={{ color: "#64748B", fontSize: 10, marginTop: 6 }}>
+              Monthly premium estimate (green=positive, gray=bear/no trades).
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function OptionsTab({ visible = true }) {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -872,6 +991,8 @@ export default function OptionsTab({ visible = true }) {
           </div>
         )}
       </section>
+
+      <OptionsBacktest />
 
       <AutoTraderPanel scanRegime={regime} />
 

@@ -22,7 +22,8 @@ const TOKEN = process.env.TRADIER_SANDBOX_TOKEN != null && String(process.env.TR
   ? String(process.env.TRADIER_SANDBOX_TOKEN).trim()
   : null;
 
-const PORTFOLIO_FILE = 'options-auto-portfolio.json';
+const DATA_DIR_AUTO = process.env.DATA_DIR ? String(process.env.DATA_DIR).replace(/\/?$/, '/') : '';
+const PORTFOLIO_FILE = `${DATA_DIR_AUTO}options-auto-portfolio.json`;
 
 const AUTO_CONFIG = {
   maxOpenPositions: 5,
@@ -31,7 +32,17 @@ const AUTO_CONFIG = {
   targetContracts: 1,
   profitTarget: 0.5,
   dteCloseThreshold: 21,
-  bearRegimeClose: true
+  bearRegimeClose: true,
+  // Which regimes allow opening NEW positions per strategy
+  regimeAllowOpen: {
+    COVERED_CALL: ['strong_bull', 'normal', 'pullback'],
+    CASH_SECURED_PUT: ['strong_bull', 'normal'],
+    REGIME_HEDGE: ['caution', 'bear']
+  },
+  // In caution: close any short-premium position down > this %
+  cautionStopPct: 0.3,
+  // In pullback: take profits faster
+  pullbackProfitTarget: 0.35
 };
 
 function portfolioPath() {
@@ -45,6 +56,7 @@ function loadPortfolio() {
       positions: [],
       closedTrades: [],
       orders: [],
+      pendingRolls: [],
       stats: { totalPnl: 0, wins: 0, losses: 0, totalTrades: 0 },
       lastRun: null
     };
@@ -55,6 +67,7 @@ function loadPortfolio() {
       positions: Array.isArray(raw.positions) ? raw.positions : [],
       closedTrades: Array.isArray(raw.closedTrades) ? raw.closedTrades : [],
       orders: Array.isArray(raw.orders) ? raw.orders : [],
+      pendingRolls: Array.isArray(raw.pendingRolls) ? raw.pendingRolls : [],
       stats: raw.stats && typeof raw.stats === 'object'
         ? {
             totalPnl: Number(raw.stats.totalPnl) || 0,
@@ -70,6 +83,7 @@ function loadPortfolio() {
       positions: [],
       closedTrades: [],
       orders: [],
+      pendingRolls: [],
       stats: { totalPnl: 0, wins: 0, losses: 0, totalTrades: 0 },
       lastRun: null
     };
@@ -78,6 +92,22 @@ function loadPortfolio() {
 
 function savePortfolio(p) {
   writeFileSync(portfolioPath(), JSON.stringify(p, null, 2));
+}
+
+function buildOCCSymbol(ticker, expiration, optionType, strike) {
+  if (!ticker || !expiration || !optionType || strike == null) return null;
+  try {
+    const root = String(ticker).replace(/-/g, '').toUpperCase();
+    const d = new Date(expiration);
+    const yy = String(d.getUTCFullYear()).slice(2);
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const cp = String(optionType).toLowerCase().startsWith('c') ? 'C' : 'P';
+    const stk = String(Math.round(Number(strike) * 1000)).padStart(8, '0');
+    return `${root}${yy}${mm}${dd}${cp}${stk}`;
+  } catch {
+    return null;
+  }
 }
 
 async function tradierGet(p) {
@@ -175,6 +205,91 @@ async function submitBuyToClose(accountId, underlying, optionSymbol, quantity, l
   });
 }
 
+export async function openShortOptionLeg({ ticker, optionSymbol, quantity = 1, limitPrice }) {
+  const t = String(ticker || '').toUpperCase();
+  const sym = String(optionSymbol || '').trim();
+  const qty = Math.max(1, parseInt(String(quantity), 10) || 1);
+  const px = Number(limitPrice);
+  if (!t || !sym || !Number.isFinite(px)) throw new Error('Invalid openShortOptionLeg args');
+
+  if (!TOKEN) {
+    return { mode: 'mock', order: { id: 'DRY_RUN', status: 'dry_run' }, limitPrice: px };
+  }
+  const accountId = await getSandboxAccountId();
+  const order = await submitSellToOpen(accountId, t, sym, qty, px);
+  return { mode: 'sandbox', accountId, order, limitPrice: px };
+}
+
+export async function manageOptionLegsOnce(openLegs, currentRegime) {
+  const legs = Array.isArray(openLegs) ? openLegs : [];
+  const nowIso = new Date().toISOString();
+  const actions = { closed: [], errors: [], kept: [] };
+
+  if (!TOKEN) {
+    // In dry-run, just compute what would close based on existing mark/currentPremium if present.
+    for (const pos of legs) actions.kept.push(pos);
+    return { mode: 'mock', actions, positions: legs };
+  }
+
+  const accountId = await getSandboxAccountId();
+  const remaining = [];
+
+  for (const pos of legs) {
+    try {
+      const q = await getOptionQuote(pos.optionSymbol);
+      const mark = quoteMid(q);
+      const dte = computeDte(pos.expiration) ?? pos.dte ?? null;
+
+      const entry = Number(pos.entryCredit) || 0;
+      const qty = Number(pos.quantity) || 1;
+      const isSeller = pos.strategy !== 'REGIME_HEDGE';
+      const pnl = isSeller ? (entry - mark) * 100 * qty : (mark - entry) * 100 * qty;
+      const pnlPct = entry > 0 ? pnl / (entry * 100 * qty) : 0;
+
+      const activeTarget =
+        currentRegime === 'pullback' ? AUTO_CONFIG.pullbackProfitTarget : AUTO_CONFIG.profitTarget;
+      const closeAtProfit = isSeller && mark <= entry * (1 - activeTarget);
+      const closeAtDte = dte != null && dte <= AUTO_CONFIG.dteCloseThreshold;
+      const closeAtBear =
+        AUTO_CONFIG.bearRegimeClose === true && currentRegime === 'bear' && pos.strategy !== 'REGIME_HEDGE';
+      const closeAtCautionStop =
+        currentRegime === 'caution' && isSeller && pnlPct < -AUTO_CONFIG.cautionStopPct;
+
+      const shouldClose = closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop;
+      if (!shouldClose) {
+        remaining.push({ ...pos, currentMark: mark, currentDTE: dte, currentPnL: pnl, currentPnLPct: pnlPct });
+        actions.kept.push(pos);
+        continue;
+      }
+
+      const reason = closeAtBear
+        ? 'bear regime override'
+        : closeAtCautionStop
+          ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
+          : closeAtProfit
+            ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
+            : '21 DTE threshold';
+
+      const limit = Math.max(0.01, mark + 0.05);
+      const order = await submitBuyToClose(accountId, pos.ticker, pos.optionSymbol, qty, limit);
+
+      actions.closed.push({
+        symbol: pos.optionSymbol,
+        ticker: pos.ticker,
+        orderId: order.id,
+        reason,
+        pnl,
+        closedAt: nowIso
+      });
+    } catch (e) {
+      remaining.push(pos);
+      actions.errors.push({ symbol: pos?.optionSymbol ?? 'unknown', error: e.message || String(e) });
+    }
+  }
+
+  return { mode: 'sandbox', accountId, actions, positions: remaining };
+}
+
 function computeDte(expirationIso) {
   if (!expirationIso) return null;
   const exp = new Date(String(expirationIso).slice(0, 10));
@@ -187,6 +302,11 @@ function dryRun(opportunities, currentRegime, portfolio) {
     .filter((o) => (Number(o.ev) || 0) >= AUTO_CONFIG.minEV)
     .filter((o) => (Number(o.ivRank) || 0) >= AUTO_CONFIG.minIVRank)
     .filter((o) => o.strategy !== 'REGIME_HEDGE')
+    .filter((o) => {
+      const allowedRegimes = AUTO_CONFIG.regimeAllowOpen?.[o.strategy];
+      if (Array.isArray(allowedRegimes) && !allowedRegimes.includes(currentRegime)) return false;
+      return true;
+    })
     .filter((o) => !!(o.optionSymbol || o.osiSymbol))
     .sort((a, b) => (Number(b.ev) || 0) - (Number(a.ev) || 0))
     .slice(0, Math.max(0, AUTO_CONFIG.maxOpenPositions - (portfolio.positions?.length ?? 0)))
@@ -245,12 +365,17 @@ export async function runAutoTrader(opportunities, currentRegime) {
       const pnl = isSeller ? (entry - mark) * 100 * qty : (mark - entry) * 100 * qty;
       const pnlPct = entry > 0 ? pnl / (entry * 100 * qty) : 0;
 
-      const closeAtProfit = isSeller && mark <= entry * (1 - AUTO_CONFIG.profitTarget);
+      // Tighten profit target in pullback regime — take money faster
+      const activeTarget =
+        currentRegime === 'pullback' ? AUTO_CONFIG.pullbackProfitTarget : AUTO_CONFIG.profitTarget;
+      const closeAtProfit = isSeller && mark <= entry * (1 - activeTarget);
       const closeAtDte = dte != null && dte <= AUTO_CONFIG.dteCloseThreshold;
       const closeAtBear =
         AUTO_CONFIG.bearRegimeClose === true && currentRegime === 'bear' && pos.strategy !== 'REGIME_HEDGE';
+      const closeAtCautionStop =
+        currentRegime === 'caution' && isSeller && pnlPct < -AUTO_CONFIG.cautionStopPct;
 
-      const shouldClose = closeAtProfit || closeAtDte || closeAtBear;
+      const shouldClose = closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop;
       if (!shouldClose) {
         remaining.push({ ...pos, currentMark: mark, currentDTE: dte, currentPnL: pnl, currentPnLPct: pnlPct });
         continue;
@@ -258,9 +383,13 @@ export async function runAutoTrader(opportunities, currentRegime) {
 
       const reason = closeAtBear
         ? 'bear regime override'
-        : closeAtProfit
-          ? '50% profit target'
-          : '21 DTE threshold';
+        : closeAtCautionStop
+          ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
+          : closeAtProfit
+            ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
+            : closeAtDte
+              ? `${dte} DTE — rolling to next expiry`
+              : '21 DTE threshold';
 
       // buy-to-close: slightly above mid to increase fill probability
       const limit = Math.max(0.01, mark + 0.05);
@@ -294,6 +423,30 @@ export async function runAutoTrader(opportunities, currentRegime) {
       else portfolio.stats.losses += 1;
 
       actions.closed.push({ symbol: pos.optionSymbol, orderId: order.id, pnl, reason });
+
+      // Roll queue: after closing near 21 DTE, queue a new STO at ~30 DTE
+      if (closeAtDte && order?.id) {
+        const nextExpiry = (() => {
+          const d = new Date();
+          d.setUTCDate(d.getUTCDate() + 30);
+          return d.toISOString().split('T')[0];
+        })();
+        const optType = pos.strategy === 'COVERED_CALL' ? 'call' : 'put';
+        const nextSymbol = buildOCCSymbol(pos.ticker, nextExpiry, optType, pos.strike);
+        if (nextSymbol) {
+          portfolio.pendingRolls = Array.isArray(portfolio.pendingRolls) ? portfolio.pendingRolls : [];
+          portfolio.pendingRolls.push({
+            ticker: pos.ticker,
+            strategy: pos.strategy,
+            strike: pos.strike,
+            expiration: nextExpiry,
+            optionSymbol: nextSymbol,
+            rolledFrom: pos.optionSymbol,
+            queuedAt: nowIso
+          });
+          actions.closed[actions.closed.length - 1].rollQueued = nextSymbol;
+        }
+      }
     } catch (e) {
       remaining.push(pos);
       actions.errors.push({ phase: 'manage', symbol: pos.optionSymbol, error: e.message || String(e) });
@@ -304,13 +457,75 @@ export async function runAutoTrader(opportunities, currentRegime) {
   // ── Open new positions ─────────────────────────────────────────────────────
   const slotsAvail = Math.max(0, AUTO_CONFIG.maxOpenPositions - portfolio.positions.length);
   if (slotsAvail > 0) {
+    // Process pending rolls first (priority over new opens)
+    if (Array.isArray(portfolio.pendingRolls) && portfolio.pendingRolls.length > 0) {
+      const toRoll = portfolio.pendingRolls.splice(0);
+      for (const roll of toRoll) {
+        try {
+          const rq = await getOptionQuote(roll.optionSymbol).catch(() => null);
+          const bid = Number(rq?.bid) || 0;
+          const ask = Number(rq?.ask) || 0;
+          const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : Number(rq?.last) || bid || ask || 0;
+          const limit = Math.max(0.01, parseFloat((mid - 0.02).toFixed(2)));
+          if (!Number.isFinite(limit) || limit < 0.1) {
+            actions.skipped.push({ symbol: roll.optionSymbol, reason: 'roll_premium_too_low' });
+            continue;
+          }
+
+          const order = await submitSellToOpen(accountId, String(roll.ticker).toUpperCase(), roll.optionSymbol, AUTO_CONFIG.targetContracts, limit);
+          portfolio.orders.push({
+            type: 'roll_open',
+            orderId: order.id,
+            status: order.status,
+            optionSymbol: roll.optionSymbol,
+            ticker: String(roll.ticker).toUpperCase(),
+            quantity: AUTO_CONFIG.targetContracts,
+            limitPrice: Number(limit.toFixed(2)),
+            placedAt: nowIso,
+            rolledFrom: roll.rolledFrom
+          });
+
+          portfolio.positions.push({
+            ticker: String(roll.ticker).toUpperCase(),
+            optionSymbol: roll.optionSymbol,
+            strategy: roll.strategy,
+            strike: roll.strike,
+            expiration: roll.expiration,
+            quantity: AUTO_CONFIG.targetContracts,
+            entryCredit: Number(limit.toFixed(2)),
+            entryDate: nowIso,
+            entryOrderId: order.id,
+            isRoll: true,
+            rolledFrom: roll.rolledFrom
+          });
+          actions.opened.push({ symbol: roll.optionSymbol, orderId: order.id, credit: Number(limit.toFixed(2)), isRoll: true, rolledFrom: roll.rolledFrom });
+        } catch (e) {
+          actions.errors.push({ phase: 'roll', symbol: roll?.optionSymbol ?? 'unknown', error: e.message || String(e) });
+        }
+      }
+    }
+
     const eligible = opportunities
-      .filter((o) => o && typeof o === 'object')
-      .filter((o) => o.strategy === 'COVERED_CALL' || o.strategy === 'CASH_SECURED_PUT')
-      .filter((o) => (Number(o.ev) || 0) >= AUTO_CONFIG.minEV)
-      .filter((o) => (Number(o.ivRank) || 0) >= AUTO_CONFIG.minIVRank)
-      .filter((o) => !!(o.optionSymbol || o.osiSymbol) && !!o.ticker)
-      .filter((o) => !portfolio.positions.some((p) => p.ticker === String(o.ticker).toUpperCase()))
+      .filter((opp) => {
+        if (!opp || typeof opp !== 'object') return false;
+        if (opp.strategy !== 'COVERED_CALL' && opp.strategy !== 'CASH_SECURED_PUT') return false;
+        // Basic quality filters
+        if ((Number(opp.ev) || 0) < AUTO_CONFIG.minEV) return false;
+        if ((Number(opp.ivRank) || 0) < AUTO_CONFIG.minIVRank) return false;
+        if (!(opp.optionSymbol || opp.osiSymbol) || !opp.ticker) return false;
+        if (portfolio.positions.some((p) => p.ticker === String(opp.ticker).toUpperCase())) return false;
+
+        // ── Regime gate: check if this strategy is allowed right now ──
+        const allowedRegimes = AUTO_CONFIG.regimeAllowOpen?.[opp.strategy];
+        if (Array.isArray(allowedRegimes) && !allowedRegimes.includes(currentRegime)) return false;
+
+        // ── VRP gate: only sell when implied vol > realized vol (edge) ──
+        // Scanner enriches opp.vrpEdge/vrpRatio; fall back to ivRank>50 if missing.
+        const vrpEdge = opp.vrpEdge != null ? !!opp.vrpEdge : (Number(opp.ivRank) || 0) > 50;
+        if (!vrpEdge) return false;
+
+        return true;
+      })
       .sort((a, b) => (Number(b.ev) || 0) - (Number(a.ev) || 0))
       .slice(0, slotsAvail);
 

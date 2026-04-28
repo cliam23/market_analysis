@@ -5,7 +5,8 @@ import {
   Wallet,
   FlaskConical,
   Settings,
-  LayoutDashboard
+  LayoutDashboard,
+  RefreshCw
 } from "lucide-react";
 
 function OptionsNavIcon(props) {
@@ -34,6 +35,7 @@ const NAV = [
   { id: "papertrade", label: "Trading", Icon: Wallet },
   { id: "alphalab", label: "Alpha Lab", Icon: FlaskConical },
   { id: "options", label: "Options", Icon: OptionsNavIcon },
+  { id: "wheel", label: "Wheel", Icon: RefreshCw },
   { id: "rl", label: "RL Agent", Icon: Bot }
 ];
 
