@@ -14,6 +14,34 @@ if (USE_MOCK) {
   console.log('[Options] Tradier sandbox API enabled (chains/expirations use live sandbox)');
 }
 
+/**
+ * buildOCCSymbol — builds the OCC option symbol required by Tradier.
+ *
+ * Format: {TICKER}{YY}{MM}{DD}{C/P}{8-digit strike × 1000, zero-padded}
+ * Example: AAPL240119C00150000 = AAPL, Jan 19 2024, Call, $150.00 strike
+ *
+ * @param {string} ticker      e.g. "COST"
+ * @param {string} expiration  e.g. "2026-05-29"  (YYYY-MM-DD)
+ * @param {string} optionType  "call" or "put"
+ * @param {number} strike      e.g. 1025
+ * @returns {string|null}
+ */
+function buildOCCSymbol(ticker, expiration, optionType, strike) {
+  if (!ticker || !expiration || !optionType || strike == null) return null;
+  try {
+    const root = String(ticker).replace(/-/g, '').toUpperCase();
+    const d = new Date(expiration);
+    const yy = String(d.getUTCFullYear()).slice(2);
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const cp = optionType.toLowerCase().startsWith('c') ? 'C' : 'P';
+    const stk = String(Math.round(Number(strike) * 1000)).padStart(8, '0');
+    return `${root}${yy}${mm}${dd}${cp}${stk}`;
+  } catch {
+    return null;
+  }
+}
+
 function addDays(date, days) {
   const d = new Date(date);
   d.setUTCDate(d.getUTCDate() + days);
@@ -100,7 +128,8 @@ export function mockOptionsChain(ticker, currentPrice, iv = 0.3) {
         type: 'call',
         bid: Math.max(0.01, callPrice - spreadC),
         ask: callPrice + spreadC,
-        mid: callPrice,
+        mid: parseFloat(callPrice.toFixed(4)),
+        optionSymbol: buildOCCSymbol(ticker, expIso, 'call', strike),
         iv: rndIvC,
         delta: callDelta,
         gamma,
@@ -118,7 +147,8 @@ export function mockOptionsChain(ticker, currentPrice, iv = 0.3) {
         type: 'put',
         bid: Math.max(0.01, putPrice - spreadP),
         ask: putPrice + spreadP,
-        mid: putPrice,
+        mid: parseFloat(putPrice.toFixed(4)),
+        optionSymbol: buildOCCSymbol(ticker, expIso, 'put', strike),
         iv: rndIvP,
         delta: putDelta,
         gamma,
@@ -167,17 +197,36 @@ function normalizeOptionRow(ticker, o) {
   const typ = String(o.option_type || o.type || 'call').toLowerCase();
   const bid = Number(o.bid) || 0;
   const ask = Number(o.ask) || 0;
-  const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : Number(o.last) || bid || ask || 0;
+  const strike = Number(o.strike);
+  const lastNum = Number(o.last);
+  const midFromQuote =
+    bid > 0 && ask > 0
+      ? (bid + ask) / 2
+      : Number.isFinite(lastNum) && lastNum > 0
+        ? lastNum
+        : bid > 0
+          ? bid
+          : ask > 0
+            ? ask
+            : null;
+  const optType = typ === 'put' ? 'put' : 'call';
   const g = o.greeks || {};
   return {
     ticker,
     expiration: exp,
-    strike: Number(o.strike),
+    strike,
     dte: daysBetween(new Date(), new Date(exp)),
-    type: typ === 'put' ? 'put' : 'call',
+    type: optType,
     bid,
     ask,
-    mid: mid || 0,
+    mid: (() => {
+      if (midFromQuote != null && midFromQuote > 0) return parseFloat(midFromQuote.toFixed(2));
+      if (bid > 0 && ask > 0) return parseFloat(((bid + ask) / 2).toFixed(2));
+      if (ask > 0) return parseFloat(ask.toFixed(2));
+      if (bid > 0) return parseFloat(bid.toFixed(2));
+      return null;
+    })(),
+    optionSymbol: buildOCCSymbol(ticker, exp, optType, strike),
     iv: g.smv_vol != null ? Number(g.smv_vol) : Number(o.implied_volatility) || 0,
     delta: g.delta != null ? Number(g.delta) : 0,
     gamma: g.gamma != null ? Number(g.gamma) : 0,
@@ -264,13 +313,12 @@ export async function getIvRank(ticker) {
 }
 
 export function buildOsiSymbol({ ticker, expiration, optionType, strike }) {
-  const root = String(ticker || '')
-    .replace(/-/g, '')
-    .toUpperCase();
-  const date = String(expiration || '').replace(/-/g, '').slice(2, 8);
-  const type = optionType === 'call' ? 'C' : 'P';
-  const strikeStr = String(Math.round(Number(strike) * 1000)).padStart(8, '0');
-  return `${root}${date}${type}${strikeStr}`;
+  return buildOCCSymbol(
+    String(ticker || '').replace(/-/g, '').toUpperCase(),
+    expiration,
+    optionType === 'call' ? 'call' : 'put',
+    strike
+  );
 }
 
 const TRADIER_ACCOUNT_ID =
