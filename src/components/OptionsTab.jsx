@@ -6,11 +6,256 @@ import { fmtMoney as _fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters
 
 const fmtMoney = (n) => _fmtMoney(n, 2);
 
+const PLAIN_ENGLISH = {
+  COVERED_CALL: "Covered Call",
+  CASH_SECURED_PUT: "Cash-Secured Put",
+  REGIME_HEDGE: "Hedge (Protective Put)",
+
+  COVERED_CALL_desc:
+    "You own the stock and sell someone the right to buy it from you at the strike price. " +
+    "You collect the premium upfront. Best when the stock stays flat or rises slightly.",
+  CASH_SECURED_PUT_desc:
+    "You sell someone the right to sell you the stock at the strike price. " +
+    "You collect premium and agree to buy the shares if they fall that far. " +
+    "Good way to get paid to wait to buy a stock you want anyway.",
+  REGIME_HEDGE_desc:
+    "You buy the right to sell the market at the strike price. " +
+    "Acts as insurance — costs a small premium, pays out if the market drops hard.",
+
+  delta: "Price sensitivity",
+  theta: "Daily time decay ($ lost per day from time)",
+  iv: "Implied volatility (option market's expected move)",
+  ivRank: "IV Rank — how expensive the option is vs its own history (0–100)",
+  dte: "Days until expiration",
+  premium: "Premium collected (per share)",
+  strike: "Strike price",
+  bid: "Buyer's price",
+  ask: "Seller's price",
+  mid: "Fair value (midpoint between bid and ask)",
+  volume: "Contracts traded today",
+  openInt: "Open interest (total active contracts)",
+
+  delta_explain:
+    "How much the option price moves for every $1 move in the stock. " +
+    "0.25 means the option gains $0.25 when the stock rises $1.",
+  theta_explain:
+    "Options lose value every day just from the passage of time. " +
+    "This is the daily dollar cost of holding the option.",
+  ivRank_explain:
+    "If IV Rank is 80, the option is more expensive than 80% of the time over the past year. " +
+    "High IV Rank = good time to SELL options (collect more premium).",
+  ev_explain:
+    "Expected Value: the average dollar outcome if you made this exact trade 1,000 times. " +
+    "Positive EV = edge in your favor over time. This is a rough estimate based on delta."
+};
+
 const STRATEGY = {
   COVERED_CALL: { label: "COVERED CALL", shortLabel: "COVERED CALL" },
   CASH_SECURED_PUT: { label: "CASH-SECURED PUT", shortLabel: "CASH-SECURED PUT" },
   REGIME_HEDGE: { label: "REGIME HEDGE", shortLabel: "REGIME HEDGE" }
 };
+
+function OpportunityCard({ opp, onOpen }) {
+  const stratColor =
+    {
+      COVERED_CALL: "#0EA5E9",
+      CASH_SECURED_PUT: "#8B5CF6",
+      REGIME_HEDGE: "#EF4444"
+    }[opp.strategy] ?? "#64748B";
+
+  const cp = opp.currentPrice != null ? Number(opp.currentPrice) : null;
+  const strike = opp.strike != null ? Number(opp.strike) : null;
+  const premPerShare = Number(opp.premium ?? opp.mid ?? 0);
+
+  const evNum = Number(opp.ev);
+  const evOk = Number.isFinite(evNum);
+  const evColor = evOk && evNum > 0 ? "#22C55E" : "#EF4444";
+  const evSign = evOk && evNum > 0 ? "+" : "";
+
+  return (
+    <div
+      style={{
+        background: "#1E293B",
+        borderRadius: 10,
+        border: "1px solid #334155",
+        marginBottom: 12,
+        overflow: "hidden"
+      }}
+    >
+      <div
+        style={{
+          background: stratColor,
+          padding: "8px 14px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center"
+        }}
+      >
+        <div>
+          <span style={{ color: "#fff", fontWeight: 700, fontSize: 15 }}>{opp.ticker}</span>
+          <span
+            style={{
+              marginLeft: 10,
+              background: "rgba(255,255,255,0.2)",
+              padding: "2px 8px",
+              borderRadius: 99,
+              color: "#fff",
+              fontSize: 11
+            }}
+          >
+            {PLAIN_ENGLISH[opp.strategy] ?? opp.strategy}
+          </span>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>
+            ${cp != null && Number.isFinite(cp) ? cp.toFixed(2) : "—"}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10 }}>Current price</div>
+        </div>
+      </div>
+
+      <div
+        style={{
+          padding: "10px 14px 6px",
+          color: "#94A3B8",
+          fontSize: 11,
+          lineHeight: 1.5,
+          borderBottom: "1px solid #334155"
+        }}
+      >
+        {PLAIN_ENGLISH[opp.strategy + "_desc"] ?? ""}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 1, background: "#334155" }}>
+        {[
+          {
+            label: "Strike price",
+            value: strike != null && Number.isFinite(strike) ? `$${strike.toFixed(2)}` : "—",
+            sub:
+              strike != null && cp != null && Number.isFinite(strike) && Number.isFinite(cp) && cp > 0
+                ? `${((strike / cp - 1) * 100).toFixed(1)}% from current`
+                : null
+          },
+          {
+            label: `${PLAIN_ENGLISH.premium} (per share)`,
+            value: `$${Number.isFinite(premPerShare) ? premPerShare.toFixed(2) : "0.00"}`,
+            sub: `$${(Number.isFinite(premPerShare) ? premPerShare * 100 : 0).toFixed(0)} per contract`
+          },
+          {
+            label: PLAIN_ENGLISH.dte,
+            value: opp.dte != null ? `${opp.dte} days` : "—",
+            sub: opp.expiration ?? null
+          },
+          {
+            label: `${PLAIN_ENGLISH.delta} (Δ)`,
+            value: opp.delta != null ? Number(opp.delta).toFixed(2) : "—",
+            sub: PLAIN_ENGLISH.delta_explain,
+            subSmall: true
+          },
+          {
+            label: `${PLAIN_ENGLISH.ivRank} (IVR)`,
+            value: opp.ivRank != null ? `${Number(opp.ivRank).toFixed(0)}%` : "—",
+            sub: Number(opp.ivRank) > 50 ? "✓ Good time to sell (high IV)" : "IV below average — lower premium",
+            subColor: Number(opp.ivRank) > 50 ? "#22C55E" : "#F59E0B"
+          },
+          {
+            label: "Expected Value (EV)",
+            value: evOk ? `${evSign}$${Math.abs(evNum).toFixed(0)}` : "—",
+            valueColor: evOk ? evColor : "#E2E8F0",
+            sub: PLAIN_ENGLISH.ev_explain,
+            subSmall: true
+          }
+        ].map(({ label, value, valueColor, sub, subColor, subSmall }, i) => (
+          <div key={i} style={{ background: "#1E293B", padding: "10px 12px" }}>
+            <div style={{ color: "#64748B", fontSize: 10, marginBottom: 3 }}>{label}</div>
+            <div
+              style={{
+                color: valueColor ?? "#E2E8F0",
+                fontWeight: 700,
+                fontSize: 15,
+                fontFamily: "monospace"
+              }}
+            >
+              {value}
+            </div>
+            {sub && (
+              <div
+                style={{
+                  color: subColor ?? "#64748B",
+                  fontSize: subSmall ? 9 : 10,
+                  marginTop: 2,
+                  lineHeight: 1.3
+                }}
+              >
+                {sub}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 0, borderTop: "1px solid #334155" }}>
+        {[
+          { label: "Bid (buyer's price)", value: opp.bid, color: "#EF4444" },
+          { label: "Mid (fair value)", value: opp.mid ?? opp.premium, color: "#E2E8F0" },
+          { label: "Ask (seller's price)", value: opp.ask, color: "#22C55E" }
+        ].map(({ label, value, color }, i) => (
+          <div
+            key={i}
+            style={{
+              flex: 1,
+              padding: "8px 12px",
+              textAlign: "center",
+              borderRight: i < 2 ? "1px solid #334155" : "none"
+            }}
+          >
+            <div style={{ color: "#64748B", fontSize: 9 }}>{label}</div>
+            <div style={{ color, fontWeight: 600, fontSize: 13, fontFamily: "monospace" }}>
+              ${value != null && Number.isFinite(Number(value)) ? Number(value).toFixed(2) : "—"}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        style={{
+          padding: "10px 14px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          borderTop: "1px solid #334155"
+        }}
+      >
+        <div style={{ color: "#64748B", fontSize: 10 }}>
+          Score:{" "}
+          <span style={{ color: "#E2E8F0", fontWeight: 600 }}>
+            {opp.compositeScore?.toFixed?.(0) ?? (opp.compositeScore != null ? String(opp.compositeScore) : "—")}
+          </span>
+          {opp.regime && (
+            <span style={{ marginLeft: 10 }}>
+              Regime: <span style={{ color: "#F59E0B" }}>{opp.regime}</span>
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => onOpen(opp)}
+          style={{
+            background: stratColor,
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            padding: "6px 16px",
+            cursor: "pointer",
+            fontWeight: 600,
+            fontSize: 12
+          }}
+        >
+          Open Trade →
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function oppKey(o) {
   if (!o) return "";
@@ -113,6 +358,132 @@ function computeStreak(closed) {
   return { wins: firstWin, count: n };
 }
 
+function AutoTraderPanel({ scanRegime }) {
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState(null);
+  const [status, setStatus] = useState(null);
+  const [portfolio, setPortfolio] = useState(null);
+
+  const fetchPortfolio = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/options/auto-trader/portfolio");
+      const j = await safeJson(res);
+      if (!j.success) throw new Error(j.error || "Auto portfolio failed");
+      setPortfolio(j.portfolio);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPortfolio();
+  }, [fetchPortfolio]);
+
+  const handleRun = useCallback(async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await apiFetch("/api/options/auto-trader/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ regime: scanRegime, includeManual: true })
+      });
+      const j = await safeJson(res);
+      if (!j.success && j.mode !== "mock") throw new Error(j.error || "Auto trader run failed");
+      setStatus(j);
+      await fetchPortfolio();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setRunning(false);
+    }
+  }, [fetchPortfolio, scanRegime]);
+
+  const panelStyle = {
+    background: "#0D1B2A",
+    border: "1px solid #1E3A5F",
+    borderRadius: 12,
+    padding: 18,
+    marginTop: 28
+  };
+
+  const pf = portfolio || {};
+  const stats = pf.stats || {};
+  const positions = Array.isArray(pf.positions) ? pf.positions : [];
+  const closed = Array.isArray(pf.closedTrades) ? pf.closedTrades : [];
+  const autoOpenPnl = useMemo(() => {
+    if (!positions.length) return 0;
+    return positions.reduce((s, p) => s + (Number(p.currentPnL) || 0), 0);
+  }, [positions]);
+
+  return (
+    <div style={panelStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <div style={{ color: "#E2E8F0", fontWeight: 800, fontSize: 15 }}>Auto Trader</div>
+            <span style={{ fontSize: 10, background: "#0EA5E9", color: "#fff", padding: "2px 8px", borderRadius: 999 }}>
+              SANDBOX
+            </span>
+          </div>
+          <div style={{ color: "#64748B", fontSize: 11, lineHeight: 1.5, maxWidth: 760 }}>
+            Uses Tradier sandbox when <span className="ma-mono">TRADIER_SANDBOX_TOKEN</span> is set. Opens the highest
+            positive-EV short-premium trades and auto-manages: 50% profit close + 21-DTE close. Dry-run if token is missing.
+          </div>
+          <div className="ma-mono" style={{ marginTop: 10, fontSize: 11, color: "#94A3B8", lineHeight: 1.7 }}>
+            Open {positions.length} · Open P&amp;L {fmtMoney(autoOpenPnl)} · Realized P&amp;L {fmtMoney(Number(stats.totalPnl) || 0)} ·
+            Closed {closed.length}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleRun}
+          disabled={running}
+          style={{
+            background: running ? "#334155" : "#0EA5E9",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            padding: "10px 18px",
+            cursor: running ? "not-allowed" : "pointer",
+            fontWeight: 800,
+            fontSize: 12,
+            whiteSpace: "nowrap"
+          }}
+        >
+          {running ? "Running…" : "Run Auto Trader"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 12, background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#FCA5A5", padding: "10px 12px", borderRadius: 10, fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {status && (
+        <div style={{ marginTop: 14, background: "#162033", border: "1px solid #1E3A5F", borderRadius: 10, padding: "12px 12px" }}>
+          <div style={{ color: "#94A3B8", fontSize: 11, marginBottom: 10 }}>
+            Last run: {status.mode === "mock" ? "DRY RUN (no token)" : "SANDBOX"} · Regime: {status.regime ?? "—"}
+          </div>
+          {status.mode === "mock" && status.dryRun && (
+            <div style={{ color: "#E2E8F0", fontSize: 12 }}>
+              Would open {status.dryRun.wouldOpen?.length ?? 0} trade(s).
+            </div>
+          )}
+          {status.actions && (
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
+              <div style={{ color: "#22C55E" }}>Opened: {status.actions.opened?.length ?? 0}</div>
+              <div style={{ color: "#F59E0B" }}>Closed: {status.actions.closed?.length ?? 0}</div>
+              <div style={{ color: "#EF4444" }}>Errors: {status.actions.errors?.length ?? 0}</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function OptionsTab({ visible = true }) {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState(null);
@@ -121,6 +492,8 @@ export default function OptionsTab({ visible = true }) {
 
   const [pfLoading, setPfLoading] = useState(false);
   const [portfolioWrap, setPortfolioWrap] = useState(null);
+  const [autoPf, setAutoPf] = useState(null);
+  const [autoPfError, setAutoPfError] = useState(null);
   const hasFetchedRef = useRef(false);
 
   const [flash, setFlash] = useState(null);
@@ -136,6 +509,7 @@ export default function OptionsTab({ visible = true }) {
   const [deletingId, setDeletingId] = useState(null);
 
   const [strategyFilter, setStrategyFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("ev");
 
   const fetchScan = useCallback(async () => {
     setScanLoading(true);
@@ -170,19 +544,33 @@ export default function OptionsTab({ visible = true }) {
     }
   }, []);
 
+  const fetchAutoPortfolio = useCallback(async () => {
+    try {
+      setAutoPfError(null);
+      const res = await apiFetch("/api/options/auto-trader/portfolio");
+      const j = await safeJson(res);
+      if (!j.success) throw new Error(j.error || "Auto portfolio failed");
+      setAutoPf(j.portfolio);
+    } catch (e) {
+      setAutoPfError(e.message || String(e));
+    }
+  }, []);
+
   useEffect(() => {
     if (!visible) return;
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     fetchScan();
     fetchPortfolio();
-  }, [visible, fetchScan, fetchPortfolio]);
+    fetchAutoPortfolio();
+  }, [visible, fetchScan, fetchPortfolio, fetchAutoPortfolio]);
 
   const handleRefresh = useCallback(() => {
     hasFetchedRef.current = false;
     fetchScan();
     fetchPortfolio();
-  }, [fetchScan, fetchPortfolio]);
+    fetchAutoPortfolio();
+  }, [fetchScan, fetchPortfolio, fetchAutoPortfolio]);
 
   const mockMode = scan?.mockMode ?? portfolioWrap?.summary?.mockMode ?? true;
   const regime = scan?.regime ?? "normal";
@@ -193,6 +581,17 @@ export default function OptionsTab({ visible = true }) {
     if (strategyFilter === "all") return opportunities;
     return opportunities.filter((o) => o.strategy === strategyFilter);
   }, [opportunities, strategyFilter]);
+
+  const sortedOpportunities = useMemo(() => {
+    const sorted = [...filteredOpportunities];
+    sorted.sort((a, b) => {
+      if (sortBy === "ev") return (Number(b.ev) || -Infinity) - (Number(a.ev) || -Infinity);
+      if (sortBy === "ivRank") return (Number(b.ivRank) || 0) - (Number(a.ivRank) || 0);
+      if (sortBy === "dte") return (Number(a.dte) || 999) - (Number(b.dte) || 999);
+      return 0;
+    });
+    return sorted;
+  }, [filteredOpportunities, sortBy]);
 
   const closedSorted = useMemo(() => {
     const c = portfolioWrap?.closedPositions ?? [];
@@ -360,6 +759,37 @@ export default function OptionsTab({ visible = true }) {
 
   const openPositions = portfolioWrap?.positions ?? [];
   const summary = portfolioWrap?.summary;
+  const autoPositions = Array.isArray(autoPf?.positions) ? autoPf.positions : [];
+  const autoStats = autoPf?.stats || {};
+  const autoOpenPnl = useMemo(() => {
+    if (!autoPositions.length) return 0;
+    return autoPositions.reduce((s, p) => s + (Number(p.currentPnL) || 0), 0);
+  }, [autoPositions]);
+  const overall = useMemo(() => {
+    const manualOpen = Number(summary?.openPnl ?? 0) || 0;
+    const manualRealized = Number(historyStats.totalRealized) || 0;
+    const autoRealized = Number(autoStats.totalPnl) || 0;
+    const realized = manualRealized + autoRealized;
+    const openPnl = manualOpen + autoOpenPnl;
+    const manualClosedCount = (portfolioWrap?.closedPositions ?? []).length;
+    const autoClosedCount = Array.isArray(autoPf?.closedTrades) ? autoPf.closedTrades.length : 0;
+    const closedCount = manualClosedCount + autoClosedCount;
+    const manualWins = (portfolioWrap?.closedPositions ?? []).filter((p) => Number(p.pnl) > 0).length;
+    const manualLosses = (portfolioWrap?.closedPositions ?? []).filter((p) => Number(p.pnl) <= 0).length;
+    const autoWins = Number(autoStats.wins) || 0;
+    const autoLosses = Number(autoStats.losses) || 0;
+    const wins = manualWins + autoWins;
+    const losses = manualLosses + autoLosses;
+    const totalTrades = wins + losses;
+    const winRate = totalTrades > 0 ? (wins / totalTrades) * 100 : null;
+    return {
+      openPositions: openPositions.length + autoPositions.length,
+      openPnl,
+      realizedPnl: realized,
+      winRate,
+      closedCount
+    };
+  }, [summary, historyStats, autoStats, autoOpenPnl, openPositions.length, autoPositions.length, portfolioWrap, autoPf]);
 
   const closePnlPreview = useMemo(() => {
     if (!closeModal) return { pnl: 0, pnlPct: 0 };
@@ -397,211 +827,56 @@ export default function OptionsTab({ visible = true }) {
 
       <header>
         <p className="ma-opt-header-kicker">OPTIONS</p>
-        <h1 className="ma-opt-header-title">Opportunity scanner</h1>
-        <p className="ma-opt-header-sub">Covered calls · Cash-secured puts · Regime hedges</p>
+        <h1 className="ma-opt-header-title">Portfolio dashboard</h1>
+        <p className="ma-opt-header-sub">P&amp;L · Open positions · Scanner</p>
       </header>
 
-      <section className="ma-opt-status" aria-label="Scanner status">
-        <div className="ma-opt-status__row">
-          <div className="ma-opt-status__mid">
-            <span className={`ma-opt-regime-pill ${regimeInfo.pillClass}`}>{regimeInfo.pill}</span>
-            <span className="ma-opt-regime-desc">{regimeInfo.desc}</span>
+      <section style={{ marginTop: 14 }}>
+        <div className="ma-opt-stats-grid">
+          <div className="ma-bt-stat" style={{ "--bt-accent": "var(--blue)" }}>
+            <div className="ma-bt-stat__label">Open positions</div>
+            <div className="ma-bt-stat__val" style={{ fontSize: 22 }}>
+              {overall.openPositions}
+            </div>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-            {mockMode ? (
-              <span className="ma-opt-mock">Mock mode</span>
-            ) : (
-              <span className="ma-opt-live">
-                <span className="ma-opt-live__dot" aria-hidden />
-                Live
-              </span>
-            )}
-            <button type="button" className="ma-opt-refresh" onClick={handleRefresh} disabled={scanLoading || pfLoading}>
-              {scanLoading ? "Scanning…" : "Refresh"}
-            </button>
-          </div>
-        </div>
-        <div className="ma-opt-meta">
-          {scan?.count != null ? `${scan.count} opportunities found` : "—"}
-          {lastScanAt != null ? ` · Last scan: ${formatScanAgo(lastScanAt)}` : ""}
-        </div>
-        <div className="ma-opt-filters" role="tablist" aria-label="Filter by strategy">
-          {[
-            { id: "all", label: "All" },
-            { id: "COVERED_CALL", label: "Covered calls" },
-            { id: "CASH_SECURED_PUT", label: "Cash-secured puts" },
-            { id: "REGIME_HEDGE", label: "Hedges" }
-          ].map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              role="tab"
-              aria-selected={strategyFilter === f.id}
-              className={"ma-opt-filter" + (strategyFilter === f.id ? " ma-opt-filter--on" : "")}
-              onClick={() => setStrategyFilter(f.id)}
+          <div className="ma-bt-stat" style={{ "--bt-accent": "var(--amber)" }}>
+            <div className="ma-bt-stat__label">Open P&amp;L</div>
+            <div
+              className="ma-bt-stat__val"
+              style={{ color: Number(overall.openPnl ?? 0) >= 0 ? GREEN : RED, fontSize: 22 }}
             >
-              {f.label}
-            </button>
-          ))}
+              {fmtMoney(overall.openPnl ?? 0)}
+            </div>
+          </div>
+          <div className="ma-bt-stat" style={{ "--bt-accent": plTone === "positive" ? "var(--green)" : "var(--red)" }}>
+            <div className="ma-bt-stat__label">Realized P&amp;L</div>
+            <div className="ma-bt-stat__val" style={{ color: plTone === "positive" ? GREEN : RED, fontSize: 22 }}>
+              {fmtMoney(overall.realizedPnl)}
+            </div>
+          </div>
+          <div className="ma-bt-stat">
+            <div className="ma-bt-stat__label">Win rate</div>
+            <div className="ma-bt-stat__val" style={{ fontSize: 22 }}>
+              {overall.winRate != null ? `${overall.winRate.toFixed(1)}%` : "—"}
+            </div>
+          </div>
         </div>
-      </section>
-
-      <section style={{ marginTop: 28 }}>
-        <h2 className="ma-opt-section-title">Opportunities</h2>
-        {scanError && <div style={{ color: RED, fontSize: 13, marginBottom: 8 }}>{scanError}</div>}
-        {scanLoading && (
-          <div className="ma-options-grid">
-            {[1, 2, 3, 4, 5, 6].map((k) => (
-              <div key={k} className="ma-skeleton ma-options-skel" style={{ minHeight: 220, width: "100%" }} />
-            ))}
+        <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 10, lineHeight: 1.7 }}>
+          Manual open {openPositions.length} · Auto open {autoPositions.length} · Closed trades {overall.closedCount} · Est. θ{" "}
+          {fmtMoney(summary?.dailyTheta ?? 0)}/day · Mock mode: {mockMode ? "on" : "off"} · Regime:{" "}
+          <span style={{ color: AMBER }}>{regime}</span>
+        </div>
+        {autoPfError && (
+          <div style={{ marginTop: 10, color: RED, fontSize: 12 }}>
+            Auto Trader portfolio unavailable: {autoPfError}
           </div>
         )}
-        {!scanLoading && !scanError && (
-          <div className="ma-options-grid">
-            {filteredOpportunities.map((opp, idx) => {
-              const meta = STRATEGY[opp.strategy] || STRATEGY.COVERED_CALL;
-              const full = opp.strategy === "REGIME_HEDGE";
-              const sc = opp.compositeScore != null ? Number(opp.compositeScore) : null;
-              const y = opp.annualizedYield;
-              const dteLow = opp.dte != null && Number(opp.dte) < 14;
-              const yieldCls = yieldToneClass(y);
-              const opening = openingKey && openingKey === oppKey(opp);
-              const rationalePositive =
-                opp.strategy === "CASH_SECURED_PUT" || (opp.rationale && /high score|discount|yield/i.test(opp.rationale));
-
-              return (
-                <div
-                  key={`${opp.strategy}-${opp.ticker}-${idx}`}
-                  className="ma-options-card ma-opt-opp-card--enter"
-                  style={{
-                    gridColumn: full ? "1 / -1" : undefined,
-                    animationDelay: `${idx * 50}ms`
-                  }}
-                >
-                  <div className="ma-opt-opp-head">
-                    <div className="ma-opt-opp-head__left">
-                      <span className={stratBadgeClass(opp.strategy)}>{meta.shortLabel}</span>
-                      <span className="ma-opt-ticker">{opp.ticker}</span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {sc != null && Number.isFinite(sc) ? (
-                        <span className={`ma-opt-score-pill ${scorePillClass(sc)}`}>Score {sc.toFixed(0)}</span>
-                      ) : opp.strategy === "REGIME_HEDGE" ? (
-                        <span className="ma-opt-score-pill ma-opt-score-pill--lo">Hedge</span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  {opp.strategy === "REGIME_HEDGE" && (
-                    <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 10px", fontStyle: "italic" }}>
-                      Bear/Caution regime — buying puts for portfolio protection.
-                    </p>
-                  )}
-
-                  <div className="ma-opt-strike-row">
-                    <span>Strike {fmtMoney(opp.strike)}</span>
-                    <span>·</span>
-                    <span>Exp {fmtExpiry(opp.expiration)}</span>
-                    <span>·</span>
-                    <span className={dteLow ? "ma-opt-dte-warn" : undefined}>{opp.dte != null ? `${opp.dte}d` : "—"}</span>
-                  </div>
-
-                  <div>
-                    <div className="ma-opt-premium">{fmtMoney(opp.premium)}</div>
-                    <div className="ma-opt-premium-label">premium</div>
-                    <div className="ma-opt-bidask">
-                      Bid {fmtMoney(opp.bid)} · Ask {fmtMoney(opp.ask)}
-                    </div>
-                  </div>
-
-                  <div className="ma-opt-greeks-box">
-                    <div>
-                      Δ {opp.delta != null ? Number(opp.delta).toFixed(2) : "—"} · θ {opp.theta != null ? Number(opp.theta).toFixed(4) : "—"}
-                      {y != null && (
-                        <>
-                          {" "}
-                          · Yield{" "}
-                          <span className={yieldCls}>{fmtPct(y)}</span>
-                        </>
-                      )}
-                    </div>
-                    <div style={{ marginTop: 4 }}>
-                      IV {fmtIv(opp.iv)}
-                      {opp.ivRank != null && <> · IVR {opp.ivRank}</>}
-                    </div>
-                  </div>
-
-                  {opp.strategy === "CASH_SECURED_PUT" && (
-                    <div className="ma-mono" style={{ fontSize: 11, marginTop: 8, color: "var(--text-secondary)" }}>
-                      Effective cost {fmtMoney(opp.effectiveCost)} ({fmtPct(opp.discount)} discount) · Required cash {fmtMoney(opp.strike * 100 * 1)}
-                    </div>
-                  )}
-
-                  {opp.strategy !== "REGIME_HEDGE" && (
-                    <>
-                      <div className="ma-opt-metric-line ma-opt-metric-line--profit">Max profit {fmtMoney(opp.maxProfit)}</div>
-                      <div className="ma-opt-metric-line ma-opt-metric-line--neutral">Breakeven {fmtMoney(opp.breakeven)}</div>
-                      <div className="ma-opt-metric-line ma-opt-metric-line--loss">Max loss {fmtMoney(opp.maxLoss)}</div>
-                    </>
-                  )}
-
-                  <p className={"ma-opt-rationale" + (rationalePositive ? " ma-opt-rationale--pos" : "")}>{opp.rationale}</p>
-
-                  {opp.strategy !== "REGIME_HEDGE" ? (
-                    <button
-                      type="button"
-                      className="ma-btn-primary ma-opt-open-btn"
-                      disabled={opening}
-                      onClick={() => {
-                        setOpenQty(1);
-                        setOpenModal(opp);
-                      }}
-                    >
-                      {opening ? (
-                        <>
-                          <Loader2 size={16} className="ma-alphalab-loadbtn__spin" style={{ display: "inline", verticalAlign: "middle", marginRight: 8 }} />
-                          Opening…
-                        </>
-                      ) : (
-                        "Open position"
-                      )}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="ma-btn-primary ma-opt-open-btn"
-                      disabled={opening}
-                      onClick={() => {
-                        setOpenQty(1);
-                        setOpenModal(opp);
-                      }}
-                    >
-                      {opening ? (
-                        <>
-                          <Loader2 size={16} className="ma-alphalab-loadbtn__spin" style={{ display: "inline", verticalAlign: "middle", marginRight: 8 }} />
-                          Opening…
-                        </>
-                      ) : (
-                        "Open hedge"
-                      )}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-        {!scanLoading && !scanError && filteredOpportunities.length === 0 && (
-          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 12 }}>
-            {opportunities.length === 0
-              ? "No opportunities matched the current filters."
-              : "No opportunities for this filter — try All."}
-          </p>
-        )}
       </section>
+
+      <AutoTraderPanel scanRegime={regime} />
 
       <section style={{ marginTop: 36 }}>
-        <h2 className="ma-opt-section-title">Open positions{openPositions.length > 0 ? ` (${openPositions.length})` : ""}</h2>
+        <h2 className="ma-opt-section-title">Manual positions{openPositions.length > 0 ? ` (${openPositions.length})` : ""}</h2>
         {pfLoading && (
           <div className="ma-skeleton" style={{ height: 100, borderRadius: 10, width: "100%" }} />
         )}
@@ -679,8 +954,151 @@ export default function OptionsTab({ visible = true }) {
         )}
       </section>
 
+      {autoPositions.length > 0 && (
+        <section style={{ marginTop: 18 }}>
+          <h2 className="ma-opt-section-title">Auto Trader positions ({autoPositions.length})</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {autoPositions.map((pos) => {
+              const pnl = Number(pos.currentPnL) || 0;
+              const pnlColor = pnl >= 0 ? "var(--green)" : "var(--red)";
+              return (
+                <div key={pos.optionSymbol || pos.entryOrderId || `${pos.ticker}-${pos.strike}-${pos.expiration}`} className="ma-opt-pos-card">
+                  <div className="ma-opt-pos-card__main">
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                      <span className="ma-opt-ticker" style={{ fontSize: 16 }}>
+                        {pos.ticker}
+                      </span>
+                      <span className={stratBadgeClass(pos.strategy)}>{STRATEGY[pos.strategy]?.shortLabel || pos.strategy}</span>
+                      <span style={{ fontSize: 10, background: "#0EA5E9", color: "#fff", padding: "2px 8px", borderRadius: 999 }}>
+                        AUTO
+                      </span>
+                    </div>
+                    <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                      Strike {fmtMoney(pos.strike)} · Exp {fmtExpiry(pos.expiration)} · Opened {pos.entryDate ?? "—"}
+                    </div>
+                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
+                      Credit {fmtMoney(pos.entryCredit)} · Current mark{" "}
+                      {pos.currentMark != null ? fmtMoney(pos.currentMark) : "—"} · DTE{" "}
+                      {pos.currentDTE ?? pos.dte ?? "—"}
+                    </div>
+                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
+                      P&amp;L{" "}
+                      <span style={{ color: pnlColor }}>
+                        {fmtMoney(pnl)}
+                      </span>
+                    </div>
+                    <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
+                      Managed by Auto Trader (closes at 50% profit, closes/rolls near 21 DTE).
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      <header style={{ marginTop: 36 }}>
+        <p className="ma-opt-header-kicker">SCANNER</p>
+        <h1 className="ma-opt-header-title">Opportunity scanner</h1>
+        <p className="ma-opt-header-sub">Covered calls · Cash-secured puts · Regime hedges</p>
+      </header>
+
+      <section className="ma-opt-status" aria-label="Scanner status">
+        <div className="ma-opt-status__row">
+          <div className="ma-opt-status__mid">
+            <span className={`ma-opt-regime-pill ${regimeInfo.pillClass}`}>{regimeInfo.pill}</span>
+            <span className="ma-opt-regime-desc">{regimeInfo.desc}</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+            {mockMode ? (
+              <span className="ma-opt-mock">Mock mode</span>
+            ) : (
+              <span className="ma-opt-live">
+                <span className="ma-opt-live__dot" aria-hidden />
+                Live
+              </span>
+            )}
+            <button type="button" className="ma-opt-refresh" onClick={handleRefresh} disabled={scanLoading || pfLoading}>
+              {scanLoading ? "Scanning…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+        <div className="ma-opt-meta">
+          {scan?.count != null ? `${scan.count} opportunities found` : "—"}
+          {lastScanAt != null ? ` · Last scan: ${formatScanAgo(lastScanAt)}` : ""}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <select
+            className="ma-input"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            style={{ maxWidth: 300, fontFamily: SANS }}
+            aria-label="Sort opportunities"
+          >
+            <option value="ev">Sort by EV (best edge first)</option>
+            <option value="ivRank">Sort by IV Rank (most premium)</option>
+            <option value="dte">Sort by DTE (closest expiry first)</option>
+          </select>
+        </div>
+        <div className="ma-opt-filters" role="tablist" aria-label="Filter by strategy">
+          {[
+            { id: "all", label: "All" },
+            { id: "COVERED_CALL", label: "Covered calls" },
+            { id: "CASH_SECURED_PUT", label: "Cash-secured puts" },
+            { id: "REGIME_HEDGE", label: "Hedges" }
+          ].map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={strategyFilter === f.id}
+              className={"ma-opt-filter" + (strategyFilter === f.id ? " ma-opt-filter--on" : "")}
+              onClick={() => setStrategyFilter(f.id)}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section style={{ marginTop: 28 }}>
+        <h2 className="ma-opt-section-title">Opportunities</h2>
+        {scanError && <div style={{ color: RED, fontSize: 13, marginBottom: 8 }}>{scanError}</div>}
+        {scanLoading && (
+          <div className="ma-options-grid">
+            {[1, 2, 3, 4, 5, 6].map((k) => (
+              <div key={k} className="ma-skeleton ma-options-skel" style={{ minHeight: 220, width: "100%" }} />
+            ))}
+          </div>
+        )}
+        {!scanLoading && !scanError && (
+          <div className="ma-options-grid">
+            <div style={{ gridColumn: "1 / -1" }}>
+              {sortedOpportunities.map((opp, i) => (
+                <OpportunityCard
+                  key={oppKey(opp) || `${opp.strategy}-${opp.ticker}-${i}`}
+                  opp={opp}
+                  onOpen={(o) => {
+                    setOpenQty(1);
+                    setOpenModal(o);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {!scanLoading && !scanError && filteredOpportunities.length === 0 && (
+          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 12 }}>
+            {opportunities.length === 0
+              ? "No opportunities matched the current filters."
+              : "No opportunities for this filter — try All."}
+          </p>
+        )}
+      </section>
+
       <section style={{ marginTop: 36 }}>
-        <h2 className="ma-opt-section-title">Trade history</h2>
+        <h2 className="ma-opt-section-title">Manual trade history</h2>
         {streak && (
           <div style={{ fontSize: 12, marginBottom: 12, color: "var(--text-secondary)" }}>
             Current streak:{" "}
@@ -719,54 +1137,6 @@ export default function OptionsTab({ visible = true }) {
                 </div>
               </div>
             ))}
-
-            <div
-              style={{
-                borderTop: "1px solid var(--border-card)",
-                margin: "20px 0 16px",
-                paddingTop: 8
-              }}
-            />
-            <h3 className="ma-opt-section-title" style={{ marginBottom: 12 }}>
-              Summary
-            </h3>
-            <div className="ma-opt-stats-grid">
-              <div
-                className="ma-bt-stat"
-                style={{ "--bt-accent": plTone === "positive" ? "var(--green)" : "var(--red)" }}
-              >
-                <div className="ma-bt-stat__label">P&amp;L</div>
-                <div
-                  className="ma-bt-stat__val"
-                  style={{ color: historyStats.totalRealized >= 0 ? "var(--green)" : "var(--red)" }}
-                >
-                  {fmtMoney(historyStats.totalRealized)}
-                </div>
-              </div>
-              <div className="ma-bt-stat">
-                <div className="ma-bt-stat__label">Win rate</div>
-                <div className="ma-bt-stat__val" style={{ fontSize: 22 }}>
-                  {historyStats.winRate != null ? `${historyStats.winRate.toFixed(1)}%` : "—"}
-                </div>
-              </div>
-              <div className="ma-bt-stat">
-                <div className="ma-bt-stat__label">Avg win</div>
-                <div className="ma-bt-stat__val" style={{ color: "var(--green)", fontSize: 22 }}>
-                  {historyStats.avgWin != null ? fmtMoney(historyStats.avgWin) : "—"}
-                </div>
-              </div>
-              <div className="ma-bt-stat">
-                <div className="ma-bt-stat__label">Avg loss</div>
-                <div className="ma-bt-stat__val" style={{ color: "var(--red)", fontSize: 22 }}>
-                  {historyStats.avgLoss != null ? fmtMoney(historyStats.avgLoss) : "—"}
-                </div>
-              </div>
-            </div>
-            <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 12, lineHeight: 1.7 }}>
-              Best: {historyStats.best != null ? fmtMoney(historyStats.best) : "—"} · Worst:{" "}
-              {historyStats.worst != null ? fmtMoney(historyStats.worst) : "—"} · Avg DTE:{" "}
-              {historyStats.avgDteOpen != null ? historyStats.avgDteOpen.toFixed(1) : "—"}
-            </div>
           </>
         )}
       </section>

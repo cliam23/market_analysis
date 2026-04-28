@@ -84,6 +84,16 @@ Runtime JSON (paper portfolios, trained agents, `.cache/`) is mostly **gitignore
 
 ---
 
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| **[docs/API.md](docs/API.md)** | HTTP routes (`/api/*`) grouped by area |
+| **[docs/SECURITY.md](docs/SECURITY.md)** | Threat model, spawn/M L, auth, secrets |
+| **[docs/DATA_CONTRACTS.md](docs/DATA_CONTRACTS.md)** | Data shapes, gold layer, verification |
+
+---
+
 ## ML (optional)
 
 ```bash

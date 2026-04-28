@@ -32,6 +32,7 @@ import {
   TOTAL_STATES
 } from './q-learning-agent.js';
 import { DQNAgent, computeRlReward as computeDqnReward } from './dqn-agent.js';
+import { runAutoTrader, getAutoPortfolio } from './options-auto-trader.js';
 import {
   getOptionsChain,
   getIvRank,
@@ -39,6 +40,49 @@ import {
   buildOsiSymbol,
   USE_MOCK as OPTIONS_USE_MOCK
 } from './options-service.js';
+
+async function setupAutoTraderCron() {
+  const enabled =
+    process.env.ENABLE_AUTO_TRADER_CRON === 'true' ||
+    process.env.ENABLE_AUTO_TRADER_CRON === '1' ||
+    String(process.env.ENABLE_AUTO_TRADER_CRON || '').toLowerCase() === 'yes';
+  if (!enabled) return;
+
+  let cron;
+  try {
+    cron = (await import('node-cron')).default;
+  } catch (e) {
+    console.warn(
+      `[AutoTrader] ENABLE_AUTO_TRADER_CRON set but node-cron is not installed. Run: npm install node-cron. (${e?.message || e})`
+    );
+    return;
+  }
+
+  const schedule = process.env.AUTO_TRADER_CRON_SCHEDULE || '35 9 * * 1-5';
+  const timezone = process.env.AUTO_TRADER_CRON_TZ || 'America/New_York';
+  const universeId = String(process.env.AUTO_TRADER_UNIVERSE_ID || 'sp500_top50').trim();
+
+  cron.schedule(
+    schedule,
+    async () => {
+      try {
+        console.log('[AutoTrader] Scheduled run starting...');
+        const scan = await computeOptionsScan(universeId);
+        const opportunities = scan?.opportunities || [];
+        const regime = scan?.regime || 'normal';
+        const result = await runAutoTrader(opportunities, regime);
+        console.log('[AutoTrader]', JSON.stringify(result?.summary || result));
+      } catch (err) {
+        console.error('[AutoTrader] Scheduled run failed:', err?.message || err);
+      }
+    },
+    { timezone }
+  );
+
+  console.log(
+    `[AutoTrader] Cron enabled schedule="${schedule}" tz="${timezone}" universeId="${universeId}"`
+  );
+}
 
 import { REPO_ROOT, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH } from './server/config/paths.js';
 import {
@@ -13807,230 +13851,325 @@ app.get('/api/paper-trade/rebalance-entry', (req, res) => {
 // OPTIONS SCANNER & PAPER OPTIONS PORTFOLIO
 // =====================================================================
 
+async function computeOptionsScan(universeIdRaw) {
+  const universeId = String(universeIdRaw || 'sp500_top50').trim();
+  const universe = UNIVERSE_TICKERS[universeId];
+  if (!universe) {
+    const err = new Error('Unknown universe');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const today = new Date().toISOString().split('T')[0];
+  const lookbackStart = new Date(Date.now() - 500 * 86400000).toISOString().split('T')[0];
+  const tickersToFetch = [...new Set([...universe, 'SPY', 'QQQ'])].filter(Boolean);
+
+  const priceHistory = {};
+  const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+    const data = await bt_fetchPriceHistory(ticker, lookbackStart, today);
+    return { ticker, data };
+  });
+  for (const row of priceRows) {
+    if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+  }
+
+  const pit = await loadPitFundamentalsForUniverse(universe, today, priceHistory);
+  const fundamentalsLive = pit.map;
+
+  const scanWeights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+  let earningsMapScan = null;
+  if ((scanWeights.earningsMomentum ?? 0) > 1e-9) {
+    try {
+      earningsMapScan = await fetchAllEarnings(universe);
+    } catch (e) {
+      console.warn('[OPTIONS SCAN] fetchAllEarnings failed:', e.message);
+    }
+  }
+  const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, scanWeights, {
+    earningsMap: earningsMapScan
+  });
+
+  const spySeries = priceHistory['SPY'];
+  const regimeMeta =
+    spySeries && spySeries.length >= 200
+      ? calculateMarketRegime(spySeries, today, universe, priceHistory)
+      : { regime: 'normal', breadthRatio: null };
+
+  const opportunities = [];
+  const slice = rankings.slice(0, 30);
+  let scanEvaluated = 0;
+  let scanPassedCcScore = 0;
+  let scanPassedCcIvr = 0;
+  let scanPassedCspScore = 0;
+
+  for (const stock of slice) {
+    const { ticker, compositeScore, price } = stock;
+    if (!ticker || price == null || !Number.isFinite(Number(price))) continue;
+    scanEvaluated++;
+
+    const ivRank = await getIvRank(ticker);
+    const chain = await getOptionsChain(ticker, Number(price), null, { liveChainMode: 'single' });
+
+    if (compositeScore >= 52 && compositeScore <= 78 && ivRank >= 40) {
+      scanPassedCcScore++;
+      const ccCandidates = chain
+        .filter(
+          (o) =>
+            o.type === 'call' &&
+            o.dte >= 25 &&
+            o.dte <= 50 &&
+            o.delta >= 0.2 &&
+            o.delta <= 0.35
+        )
+        .sort((a, b) => b.mid - a.mid);
+      if (ccCandidates.length > 0) {
+        scanPassedCcIvr++;
+        const cc = ccCandidates[0];
+        const ccBid = Number(cc.bid) || 0;
+        const ccAsk = Number(cc.ask) || 0;
+        const ccMid =
+          ccBid > 0 && ccAsk > 0
+            ? parseFloat(((ccBid + ccAsk) / 2).toFixed(2))
+            : ccAsk > 0
+              ? parseFloat(ccAsk.toFixed(2))
+              : ccBid > 0
+                ? parseFloat(ccBid.toFixed(2))
+                : Number(cc.mid) || 0;
+        const annualizedYield = (ccMid / Number(price)) * (365 / cc.dte) * 100;
+        const ccDeltaAbs = Math.abs(Number(cc.delta) || 0.25);
+        const ccProbITM = ccDeltaAbs;
+        const ccProbOTM = 1 - ccProbITM;
+        const ccPrem = ccMid;
+        const ccStrike = Number(cc.strike) || 0;
+        const ccCp = Number(price) || ccStrike;
+        const ccEv =
+          ccPrem > 0
+            ? (ccProbOTM * (ccPrem * 100)) -
+              (ccProbITM * (Math.max(0, ccCp - ccStrike) * 100))
+            : null;
+        opportunities.push({
+          strategy: 'COVERED_CALL',
+          ticker,
+          compositeScore,
+          ivRank,
+          currentPrice: Number(price),
+          strike: cc.strike,
+          expiration: cc.expiration,
+          optionType: 'call',
+          dte: cc.dte,
+          premium: ccMid,
+          bid: ccBid,
+          ask: ccAsk,
+          mid: ccMid || null,
+          delta: cc.delta,
+          theta: cc.theta,
+          iv: cc.iv,
+          optionSymbol: buildOsiSymbol({
+            ticker,
+            expiration: cc.expiration,
+            optionType: 'call',
+            strike: cc.strike
+          }),
+          ev: ccEv != null ? parseFloat(ccEv.toFixed(2)) : null,
+          annualizedYield: parseFloat(annualizedYield.toFixed(2)),
+          maxProfit: parseFloat((cc.mid + Math.max(0, cc.strike - Number(price))).toFixed(2)),
+          maxLoss: parseFloat((Number(price) - cc.mid).toFixed(2)),
+          breakeven: parseFloat((Number(price) - cc.mid).toFixed(2)),
+          rationale: `IV rank ${ivRank} — selling premium. ${annualizedYield.toFixed(1)}% annualized yield. Protected to $${(Number(price) - cc.mid).toFixed(2)}.`,
+          osiSymbol: buildOsiSymbol({
+            ticker,
+            expiration: cc.expiration,
+            optionType: 'call',
+            strike: cc.strike
+          })
+        });
+      }
+    }
+
+    if (compositeScore >= 68 && ivRank >= 35) {
+      scanPassedCspScore++;
+      const cspCandidates = chain
+        .filter(
+          (o) =>
+            o.type === 'put' &&
+            o.dte >= 20 &&
+            o.dte <= 45 &&
+            o.delta >= -0.3 &&
+            o.delta <= -0.15
+        )
+        .sort((a, b) => b.mid - a.mid);
+      if (cspCandidates.length > 0) {
+        const csp = cspCandidates[0];
+        const cspBid = Number(csp.bid) || 0;
+        const cspAsk = Number(csp.ask) || 0;
+        const cspMid =
+          cspBid > 0 && cspAsk > 0
+            ? parseFloat(((cspBid + cspAsk) / 2).toFixed(2))
+            : cspAsk > 0
+              ? parseFloat(cspAsk.toFixed(2))
+              : cspBid > 0
+                ? parseFloat(cspBid.toFixed(2))
+                : Number(csp.mid) || 0;
+        const effectiveCost = csp.strike - cspMid;
+        const discount = ((Number(price) - effectiveCost) / Number(price)) * 100;
+        const cspDeltaAbs = Math.abs(Number(csp.delta) || 0.25);
+        const cspProbITM = cspDeltaAbs;
+        const cspProbOTM = 1 - cspProbITM;
+        const cspPrem = cspMid;
+        const cspStrike = Number(csp.strike) || 0;
+        const cspEv =
+          cspPrem > 0
+            ? (cspProbOTM * (cspPrem * 100)) -
+              (cspProbITM * (Math.max(0, cspStrike - cspPrem) * 100))
+            : null;
+        opportunities.push({
+          strategy: 'CASH_SECURED_PUT',
+          ticker,
+          compositeScore,
+          ivRank,
+          currentPrice: Number(price),
+          strike: csp.strike,
+          expiration: csp.expiration,
+          optionType: 'put',
+          dte: csp.dte,
+          premium: cspMid,
+          bid: cspBid,
+          ask: cspAsk,
+          mid: cspMid || null,
+          delta: csp.delta,
+          theta: csp.theta,
+          iv: csp.iv,
+          optionSymbol: buildOsiSymbol({
+            ticker,
+            expiration: csp.expiration,
+            optionType: 'put',
+            strike: csp.strike
+          }),
+          ev: cspEv != null ? parseFloat(cspEv.toFixed(2)) : null,
+          annualizedYield: parseFloat(
+            ((csp.mid / csp.strike) * (365 / csp.dte) * 100).toFixed(2)
+          ),
+          effectiveCost,
+          discount: parseFloat(discount.toFixed(2)),
+          maxProfit: parseFloat(csp.mid.toFixed(2)),
+          maxLoss: parseFloat((csp.strike - csp.mid).toFixed(2)),
+          breakeven: parseFloat(effectiveCost.toFixed(2)),
+          rationale: `High score (${compositeScore.toFixed(0)}) — want to own at discount. Effective cost $${effectiveCost.toFixed(2)} (${discount.toFixed(1)}% below current).`,
+          osiSymbol: buildOsiSymbol({
+            ticker,
+            expiration: csp.expiration,
+            optionType: 'put',
+            strike: csp.strike
+          })
+        });
+      }
+    }
+  }
+
+  if (regimeMeta.regime === 'caution' || regimeMeta.regime === 'bear') {
+    for (const etf of ['SPY', 'QQQ']) {
+      const ph = priceHistory[etf];
+      const px = ph ? getPrice(ph, today) : null;
+      if (px == null || !Number.isFinite(px)) continue;
+      const ivRank = await getIvRank(etf);
+      const chain = await getOptionsChain(etf, Number(px), null, { liveChainMode: 'single' });
+      const hedgeCandidates = chain
+        .filter(
+          (o) =>
+            o.type === 'put' &&
+            o.dte >= 20 &&
+            o.dte <= 45 &&
+            o.delta >= -0.35 &&
+            o.delta <= -0.2
+        )
+        .sort((a, b) => a.mid - b.mid);
+      if (hedgeCandidates.length > 0) {
+        const hedge = hedgeCandidates[0];
+        const hedgeBid = Number(hedge.bid) || 0;
+        const hedgeAsk = Number(hedge.ask) || 0;
+        const hedgeMid =
+          hedgeBid > 0 && hedgeAsk > 0
+            ? parseFloat(((hedgeBid + hedgeAsk) / 2).toFixed(2))
+            : hedgeAsk > 0
+              ? parseFloat(hedgeAsk.toFixed(2))
+              : hedgeBid > 0
+                ? parseFloat(hedgeBid.toFixed(2))
+                : Number(hedge.mid) || 0;
+        const hedgeDeltaAbs = Math.abs(Number(hedge.delta) || 0.25);
+        const hedgeProbITM = hedgeDeltaAbs;
+        const hedgeProbOTM = 1 - hedgeProbITM;
+        const hedgePrem = hedgeMid;
+        const hedgeStrike = Number(hedge.strike) || 0;
+        const hedgeCp = Number(px) || hedgeStrike;
+        const hedgeEv =
+          hedgePrem > 0
+            ? (hedgeProbITM * (Math.max(0, hedgeStrike - hedgeCp) * 100)) -
+              (hedgeProbOTM * (hedgePrem * 100))
+            : null;
+        opportunities.push({
+          strategy: 'REGIME_HEDGE',
+          ticker: etf,
+          compositeScore: null,
+          ivRank,
+          currentPrice: Number(px),
+          strike: hedge.strike,
+          expiration: hedge.expiration,
+          optionType: 'put',
+          dte: hedge.dte,
+          premium: hedgeMid,
+          bid: hedgeBid,
+          ask: hedgeAsk,
+          mid: hedgeMid || null,
+          delta: hedge.delta,
+          theta: hedge.theta,
+          iv: hedge.iv,
+          optionSymbol: buildOsiSymbol({
+            ticker: etf,
+            expiration: hedge.expiration,
+            optionType: 'put',
+            strike: hedge.strike
+          }),
+          ev: hedgeEv != null ? parseFloat(hedgeEv.toFixed(2)) : null,
+          regime: regimeMeta.regime,
+          annualizedYield: null,
+          rationale: `${String(regimeMeta.regime).toUpperCase()} regime detected. Buying puts for portfolio protection. Targets -${((1 - hedge.strike / Number(px)) * 100).toFixed(1)}% downside.`,
+          osiSymbol: buildOsiSymbol({
+            ticker: etf,
+            expiration: hedge.expiration,
+            optionType: 'put',
+            strike: hedge.strike
+          })
+        });
+      }
+    }
+  }
+
+  console.log(
+    `[OPTIONS SCAN] universe=${universeId} tickersEvaluated=${scanEvaluated} CC_band=${scanPassedCcScore} CC_withChain=${scanPassedCcIvr} CSP_prefilter=${scanPassedCspScore} opportunities=${opportunities.length}`
+  );
+
+  opportunities.sort((a, b) => {
+    if (a.strategy === 'REGIME_HEDGE' && b.strategy !== 'REGIME_HEDGE') return -1;
+    if (b.strategy === 'REGIME_HEDGE' && a.strategy !== 'REGIME_HEDGE') return 1;
+    return (b.annualizedYield ?? 0) - (a.annualizedYield ?? 0);
+  });
+
+  return {
+    universeId,
+    scanDate: today,
+    regime: regimeMeta.regime,
+    mockMode: OPTIONS_USE_MOCK,
+    opportunities
+  };
+}
+
 app.get('/api/options/scan', async (req, res) => {
   try {
-    const universeId = (req.query.universeId || 'sp500_top50').trim();
-    const universe = UNIVERSE_TICKERS[universeId];
-    if (!universe) {
-      return res.status(400).json({ success: false, error: 'Unknown universe' });
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    const lookbackStart = new Date(Date.now() - 500 * 86400000).toISOString().split('T')[0];
-    const tickersToFetch = [...new Set([...universe, 'SPY', 'QQQ'])].filter(Boolean);
-
-    const priceHistory = {};
-    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
-      const data = await bt_fetchPriceHistory(ticker, lookbackStart, today);
-      return { ticker, data };
-    });
-    for (const row of priceRows) {
-      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
-    }
-
-    const pit = await loadPitFundamentalsForUniverse(universe, today, priceHistory);
-    const fundamentalsLive = pit.map;
-
-    const scanWeights = { ...DEFAULT_COMPOSITE_WEIGHTS };
-    let earningsMapScan = null;
-    if ((scanWeights.earningsMomentum ?? 0) > 1e-9) {
-      try {
-        earningsMapScan = await fetchAllEarnings(universe);
-      } catch (e) {
-        console.warn('[OPTIONS SCAN] fetchAllEarnings failed:', e.message);
-      }
-    }
-    const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, today, scanWeights, {
-      earningsMap: earningsMapScan
-    });
-
-    const spySeries = priceHistory['SPY'];
-    const regimeMeta =
-      spySeries && spySeries.length >= 200
-        ? calculateMarketRegime(spySeries, today, universe, priceHistory)
-        : { regime: 'normal', breadthRatio: null };
-
-    const opportunities = [];
-    const slice = rankings.slice(0, 30);
-    let scanEvaluated = 0;
-    let scanPassedCcScore = 0;
-    let scanPassedCcIvr = 0;
-    let scanPassedCspScore = 0;
-
-    for (const stock of slice) {
-      const { ticker, compositeScore, price } = stock;
-      if (!ticker || price == null || !Number.isFinite(Number(price))) continue;
-      scanEvaluated++;
-
-      const ivRank = await getIvRank(ticker);
-      const chain = await getOptionsChain(ticker, Number(price), null, { liveChainMode: 'single' });
-
-      if (compositeScore >= 52 && compositeScore <= 78 && ivRank >= 40) {
-        scanPassedCcScore++;
-        const ccCandidates = chain
-          .filter(
-            (o) =>
-              o.type === 'call' &&
-              o.dte >= 25 &&
-              o.dte <= 50 &&
-              o.delta >= 0.2 &&
-              o.delta <= 0.35
-          )
-          .sort((a, b) => b.mid - a.mid);
-        if (ccCandidates.length > 0) {
-          scanPassedCcIvr++;
-          const cc = ccCandidates[0];
-          const annualizedYield = (cc.mid / Number(price)) * (365 / cc.dte) * 100;
-          opportunities.push({
-            strategy: 'COVERED_CALL',
-            ticker,
-            compositeScore,
-            ivRank,
-            currentPrice: Number(price),
-            strike: cc.strike,
-            expiration: cc.expiration,
-            dte: cc.dte,
-            premium: cc.mid,
-            bid: cc.bid,
-            ask: cc.ask,
-            delta: cc.delta,
-            theta: cc.theta,
-            iv: cc.iv,
-            annualizedYield: parseFloat(annualizedYield.toFixed(2)),
-            maxProfit: parseFloat((cc.mid + Math.max(0, cc.strike - Number(price))).toFixed(2)),
-            maxLoss: parseFloat((Number(price) - cc.mid).toFixed(2)),
-            breakeven: parseFloat((Number(price) - cc.mid).toFixed(2)),
-            rationale: `IV rank ${ivRank} — selling premium. ${annualizedYield.toFixed(1)}% annualized yield. Protected to $${(Number(price) - cc.mid).toFixed(2)}.`,
-            osiSymbol: buildOsiSymbol({
-              ticker,
-              expiration: cc.expiration,
-              optionType: 'call',
-              strike: cc.strike
-            })
-          });
-        }
-      }
-
-      if (compositeScore >= 68 && ivRank >= 35) {
-        scanPassedCspScore++;
-        const cspCandidates = chain
-          .filter(
-            (o) =>
-              o.type === 'put' &&
-              o.dte >= 20 &&
-              o.dte <= 45 &&
-              o.delta >= -0.3 &&
-              o.delta <= -0.15
-          )
-          .sort((a, b) => b.mid - a.mid);
-        if (cspCandidates.length > 0) {
-          const csp = cspCandidates[0];
-          const effectiveCost = csp.strike - csp.mid;
-          const discount = ((Number(price) - effectiveCost) / Number(price)) * 100;
-          opportunities.push({
-            strategy: 'CASH_SECURED_PUT',
-            ticker,
-            compositeScore,
-            ivRank,
-            currentPrice: Number(price),
-            strike: csp.strike,
-            expiration: csp.expiration,
-            dte: csp.dte,
-            premium: csp.mid,
-            bid: csp.bid,
-            ask: csp.ask,
-            delta: csp.delta,
-            theta: csp.theta,
-            iv: csp.iv,
-            annualizedYield: parseFloat(
-              ((csp.mid / csp.strike) * (365 / csp.dte) * 100).toFixed(2)
-            ),
-            effectiveCost,
-            discount: parseFloat(discount.toFixed(2)),
-            maxProfit: parseFloat(csp.mid.toFixed(2)),
-            maxLoss: parseFloat((csp.strike - csp.mid).toFixed(2)),
-            breakeven: parseFloat(effectiveCost.toFixed(2)),
-            rationale: `High score (${compositeScore.toFixed(0)}) — want to own at discount. Effective cost $${effectiveCost.toFixed(2)} (${discount.toFixed(1)}% below current).`,
-            osiSymbol: buildOsiSymbol({
-              ticker,
-              expiration: csp.expiration,
-              optionType: 'put',
-              strike: csp.strike
-            })
-          });
-        }
-      }
-    }
-
-    if (regimeMeta.regime === 'caution' || regimeMeta.regime === 'bear') {
-      for (const etf of ['SPY', 'QQQ']) {
-        const ph = priceHistory[etf];
-        const px = ph ? getPrice(ph, today) : null;
-        if (px == null || !Number.isFinite(px)) continue;
-        const ivRank = await getIvRank(etf);
-        const chain = await getOptionsChain(etf, Number(px), null, { liveChainMode: 'single' });
-        const hedgeCandidates = chain
-          .filter(
-            (o) =>
-              o.type === 'put' &&
-              o.dte >= 20 &&
-              o.dte <= 45 &&
-              o.delta >= -0.35 &&
-              o.delta <= -0.2
-          )
-          .sort((a, b) => a.mid - b.mid);
-        if (hedgeCandidates.length > 0) {
-          const hedge = hedgeCandidates[0];
-          opportunities.push({
-            strategy: 'REGIME_HEDGE',
-            ticker: etf,
-            compositeScore: null,
-            ivRank,
-            currentPrice: Number(px),
-            strike: hedge.strike,
-            expiration: hedge.expiration,
-            dte: hedge.dte,
-            premium: hedge.mid,
-            bid: hedge.bid,
-            ask: hedge.ask,
-            delta: hedge.delta,
-            theta: hedge.theta,
-            iv: hedge.iv,
-            regime: regimeMeta.regime,
-            annualizedYield: null,
-            rationale: `${String(regimeMeta.regime).toUpperCase()} regime detected. Buying puts for portfolio protection. Targets -${((1 - hedge.strike / Number(px)) * 100).toFixed(1)}% downside.`,
-            osiSymbol: buildOsiSymbol({
-              ticker: etf,
-              expiration: hedge.expiration,
-              optionType: 'put',
-              strike: hedge.strike
-            })
-          });
-        }
-      }
-    }
-
-    console.log(
-      `[OPTIONS SCAN] universe=${universeId} tickersEvaluated=${scanEvaluated} CC_band=${scanPassedCcScore} CC_withChain=${scanPassedCcIvr} CSP_prefilter=${scanPassedCspScore} opportunities=${opportunities.length}`
-    );
-
-    opportunities.sort((a, b) => {
-      if (a.strategy === 'REGIME_HEDGE' && b.strategy !== 'REGIME_HEDGE') return -1;
-      if (b.strategy === 'REGIME_HEDGE' && a.strategy !== 'REGIME_HEDGE') return 1;
-      return (b.annualizedYield ?? 0) - (a.annualizedYield ?? 0);
-    });
-
-    res.json({
-      success: true,
-      scanDate: today,
-      regime: regimeMeta.regime,
-      mockMode: OPTIONS_USE_MOCK,
-      count: opportunities.length,
-      opportunities
-    });
+    const r = await computeOptionsScan(req.query.universeId || 'sp500_top50');
+    res.json({ success: true, ...r, count: r.opportunities.length });
   } catch (err) {
     console.error('[Options/scan]', err);
-    res.status(500).json({ success: false, error: err.message || String(err) });
+    res.status(err.statusCode || 500).json({ success: false, error: err.message || String(err) });
   }
 });
 
@@ -14054,6 +14193,153 @@ app.get('/api/options/chain/:ticker', async (req, res) => {
       mockMode: OPTIONS_USE_MOCK,
       expirations: grouped
     });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
+// ── Options Auto Trader (Tradier sandbox simulation) ─────────────────────────
+
+function closePaperOptionsPosition(portfolio, positionId, closePremium, reason) {
+  const pos = portfolio.positions.find((p) => p.id === positionId);
+  if (!pos) return { ok: false, error: 'Position not found' };
+  const cp = parseFloat(closePremium);
+  if (!Number.isFinite(cp)) return { ok: false, error: 'Invalid close premium' };
+
+  const isSeller = pos.strategy !== 'REGIME_HEDGE';
+  const mult = pos.quantity * 100;
+  const pnl = isSeller ? (pos.openPremium - cp) * mult : (cp - pos.openPremium) * mult;
+  const pnlPct = isSeller ? (pos.openPremium - cp) / pos.openPremium : (cp - pos.openPremium) / pos.openPremium;
+
+  const closed = {
+    ...pos,
+    closePremium: cp,
+    closeDate: new Date().toISOString().split('T')[0],
+    pnl,
+    pnlPct,
+    closeReason: reason ?? 'manual',
+    status: 'closed'
+  };
+
+  portfolio.positions = portfolio.positions.filter((p) => p.id !== positionId);
+  portfolio.closedPositions.push(closed);
+  return { ok: true, closed };
+}
+
+function markPaperOptionsPosition(pos) {
+  const dteRemaining = Math.max(
+    0,
+    Math.round((new Date(pos.expiration) - new Date()) / (1000 * 60 * 60 * 24))
+  );
+  pos.dteRemaining = dteRemaining;
+
+  const daysSinceOpen = Math.max(
+    0,
+    Math.round((new Date() - new Date(pos.openDate)) / (1000 * 60 * 60 * 24))
+  );
+
+  let currentPremium = pos.currentPremium ?? pos.openPremium;
+  if (OPTIONS_USE_MOCK && pos.theta != null && Number.isFinite(pos.theta)) {
+    const decay = pos.theta * daysSinceOpen;
+    const randomWalk = (mix01(pos.id, pos.ticker, 'mk') - 0.5) * pos.openPremium * 0.1;
+    currentPremium = Math.max(0.01, pos.openPremium + decay + randomWalk);
+  } else if (!OPTIONS_USE_MOCK) {
+    // Live mark plumbing can be added later; for now preserve last seen mark.
+    currentPremium = pos.currentPremium ?? pos.openPremium;
+  }
+  pos.currentPremium = currentPremium;
+
+  const isSeller = pos.strategy !== 'REGIME_HEDGE';
+  const mult = pos.quantity * 100;
+  pos.pnl = isSeller ? (pos.openPremium - currentPremium) * mult : (currentPremium - pos.openPremium) * mult;
+  pos.pnlPct = pos.openPremium * mult !== 0 ? pos.pnl / (pos.openPremium * mult) : 0;
+
+  return pos;
+}
+
+function autoManageManualOptionsPortfolio(regime) {
+  const raw = loadOptionsPortfolio();
+  if (!raw) return { ok: false, error: 'No options portfolio' };
+  const portfolio = normalizeOptionsPortfolio(raw);
+
+  const actions = { closed: [], skipped: [], errors: [] };
+  const regimeStr = String(regime || '').toLowerCase();
+  const bearish = regimeStr === 'bear' || regimeStr === 'caution';
+
+  for (const pos of [...portfolio.positions]) {
+    try {
+      markPaperOptionsPosition(pos);
+      const dte = Number(pos.dteRemaining) || 0;
+      const cp = Number(pos.currentPremium);
+      if (!Number.isFinite(cp) || cp <= 0) {
+        actions.skipped.push({ id: pos.id, ticker: pos.ticker, reason: 'no_mark' });
+        continue;
+      }
+
+      const isSeller = pos.strategy !== 'REGIME_HEDGE';
+      const profitPct = isSeller
+        ? (pos.openPremium - cp) / pos.openPremium
+        : (cp - pos.openPremium) / pos.openPremium;
+
+      let shouldClose = false;
+      let closeReason = null;
+
+      // Rule 1: profit target (default 50% for sellers)
+      if (pos.profitTarget != null && Number.isFinite(Number(pos.profitTarget)) && profitPct >= Number(pos.profitTarget)) {
+        shouldClose = true;
+        closeReason = `profit_target_${Math.round(Number(pos.profitTarget) * 100)}pct`;
+      }
+
+      // Rule 2: close/roll threshold (default rollAt=21)
+      if (pos.rollAt != null && Number.isFinite(Number(pos.rollAt)) && dte <= Number(pos.rollAt)) {
+        shouldClose = true;
+        closeReason = closeReason || `dte_${dte}`;
+      }
+
+      // Rule 3: regime override (close short premium positions in bear/caution)
+      if (bearish && isSeller) {
+        shouldClose = true;
+        closeReason = closeReason || `regime_${regimeStr}`;
+      }
+
+      if (!shouldClose) {
+        actions.skipped.push({ id: pos.id, ticker: pos.ticker, reason: 'hold' });
+        continue;
+      }
+
+      const result = closePaperOptionsPosition(portfolio, pos.id, cp, closeReason);
+      if (!result.ok) {
+        actions.errors.push({ id: pos.id, ticker: pos.ticker, error: result.error });
+        continue;
+      }
+      actions.closed.push({ id: pos.id, ticker: pos.ticker, reason: closeReason, pnl: result.closed.pnl });
+    } catch (e) {
+      actions.errors.push({ id: pos.id, ticker: pos.ticker, error: e.message || String(e) });
+    }
+  }
+
+  saveOptionsPortfolio(portfolio);
+  return { ok: true, actions };
+}
+
+app.post('/api/options/auto-trader/run', async (req, res) => {
+  try {
+    const universeId = req.body?.universeId ?? req.query?.universeId ?? 'sp500_top50';
+    const scan = await computeOptionsScan(universeId);
+    const regime = req.body?.regime ?? scan.regime ?? 'normal';
+    const result = await runAutoTrader(scan.opportunities || [], regime);
+    const includeManual = req.body?.includeManual !== false;
+    const manual = includeManual ? autoManageManualOptionsPortfolio(regime) : null;
+    res.json({ ...result, manual, scanMeta: { universeId: scan.universeId, scanDate: scan.scanDate } });
+  } catch (err) {
+    console.error('[Options/auto-trader/run]', err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
+app.get('/api/options/auto-trader/portfolio', (req, res) => {
+  try {
+    res.json({ success: true, portfolio: getAutoPortfolio() });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || String(err) });
   }
@@ -14170,38 +14456,13 @@ app.post('/api/options/paper/close', async (req, res) => {
     if (!portfolio) return res.status(404).json({ success: false, error: 'No options portfolio' });
 
     const { positionId, closePremium, reason } = req.body || {};
-    const pos = portfolio.positions.find((p) => p.id === positionId);
-    if (!pos) return res.status(404).json({ success: false, error: 'Position not found' });
-
-    const cp = parseFloat(closePremium);
-    if (!Number.isFinite(cp)) {
-      return res.status(400).json({ success: false, error: 'Invalid close premium' });
+    const result = closePaperOptionsPosition(portfolio, positionId, closePremium, reason);
+    if (!result.ok) {
+      const code = result.error === 'Position not found' ? 404 : 400;
+      return res.status(code).json({ success: false, error: result.error });
     }
-
-    const isSeller = pos.strategy !== 'REGIME_HEDGE';
-    const mult = pos.quantity * 100;
-    const pnl = isSeller
-      ? (pos.openPremium - cp) * mult
-      : (cp - pos.openPremium) * mult;
-    const pnlPct = isSeller
-      ? (pos.openPremium - cp) / pos.openPremium
-      : (cp - pos.openPremium) / pos.openPremium;
-
-    const closed = {
-      ...pos,
-      closePremium: cp,
-      closeDate: new Date().toISOString().split('T')[0],
-      pnl,
-      pnlPct,
-      closeReason: reason ?? 'manual',
-      status: 'closed'
-    };
-
-    portfolio.positions = portfolio.positions.filter((p) => p.id !== positionId);
-    portfolio.closedPositions.push(closed);
     saveOptionsPortfolio(portfolio);
-
-    res.json({ success: true, closed });
+    res.json({ success: true, closed: result.closed });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || String(err) });
   }
@@ -14241,35 +14502,10 @@ app.get('/api/options/paper/portfolio', async (req, res) => {
     let totalTheta = 0;
 
     for (const pos of portfolio.positions) {
-      const dteRemaining = Math.max(
-        0,
-        Math.round((new Date(pos.expiration) - new Date()) / (1000 * 60 * 60 * 24))
-      );
-      pos.dteRemaining = dteRemaining;
-
-      const daysSinceOpen = Math.max(
-        0,
-        Math.round((new Date() - new Date(pos.openDate)) / (1000 * 60 * 60 * 24))
-      );
-
-      let currentPremium = pos.openPremium;
-      if (OPTIONS_USE_MOCK && pos.theta != null && Number.isFinite(pos.theta)) {
-        const decay = pos.theta * daysSinceOpen;
-        const randomWalk = (mix01(pos.id, pos.ticker, 'mk') - 0.5) * pos.openPremium * 0.1;
-        currentPremium = Math.max(0.01, pos.openPremium + decay + randomWalk);
-      } else if (!OPTIONS_USE_MOCK) {
-        currentPremium = pos.openPremium;
-      }
-
-      pos.currentPremium = currentPremium;
-
+      markPaperOptionsPosition(pos);
+      const dteRemaining = Number(pos.dteRemaining) || 0;
+      const currentPremium = Number(pos.currentPremium);
       const isSeller = pos.strategy !== 'REGIME_HEDGE';
-      const mult = pos.quantity * 100;
-      pos.pnl = isSeller
-        ? (pos.openPremium - currentPremium) * mult
-        : (currentPremium - pos.openPremium) * mult;
-      pos.pnlPct =
-        pos.openPremium * mult !== 0 ? pos.pnl / (pos.openPremium * mult) : 0;
 
       pos.alerts = [];
       if (pos.profitTarget != null && pos.pnlPct >= pos.profitTarget) {
@@ -15018,6 +15254,7 @@ app.get('/api/health', (req, res) => {
 const server = app.listen(PORT);
 server.once('listening', () => {
   ensureDualPaperPortfoliosInitialized();
+  setupAutoTraderCron();
   console.log(
     `[Yahoo] throttle: chartConcurrency=${YAHOO_CHART_CONCURRENCY} fundamentalsConcurrency=${FUNDAMENTALS_FETCH_CONCURRENCY} chartDelayMs=${YAHOO_CHART_DELAY_MS} (env: YAHOO_CHART_CONCURRENCY, YAHOO_FUNDAMENTALS_CONCURRENCY, YAHOO_CHART_DELAY_MS)`
   );

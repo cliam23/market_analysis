@@ -1,6 +1,8 @@
 /**
- * Q-learning portfolio policy agent (Dou, Goldstein & Ji 2025–style).
- * Portfolio-level actions: exposure, position count, sizing. No server imports.
+ * @fileoverview Tabular Q-learning agent for portfolio-level discrete actions (exposure, position count,
+ * sizing method, rebalance skip). States combine regime, recent alpha, breadth, realized vol, and signal strength.
+ * Serialized Q-table compatible with `/api/rl/train` and backtest RL overlay. No Node server imports.
+ * @module q-learning-agent
  */
 
 export const REGIME_BUCKET_MAP = {
@@ -46,6 +48,7 @@ export const MIN_VISITS_FOR_EXPLOIT = 10;
 /** Default: full exposure, 15 names, invVol, standard rebalance → same numeric index as legacy 48-action space */
 export const DEFAULT_ACTION_IDX = (3 * 4 + 3) * 3 + 1;
 
+/** Map a scalar to a bin index using monotonic edge list `bins` (see ALPHA_BINS, etc.). */
 export function discretize(value, bins) {
   for (let i = 1; i < bins.length; i++) {
     if (value < bins[i]) return i - 1;
@@ -60,6 +63,7 @@ export function regimeStringToBucket(regime) {
 }
 
 /**
+ * Pack discretized features into a single state index in [0, {@link TOTAL_STATES}).
  * @param {{ regimeBucket: number, recentAlpha: number, breadthRatio: number, realizedVol: number, avgTopScore: number }} f
  */
 export function encodeState(f) {
@@ -71,6 +75,7 @@ export function encodeState(f) {
   return ((((r * N_ALPHA + a) * N_BREADTH + b) * N_VOL + v) * N_SIGNAL + s) | 0;
 }
 
+/** Inverse of {@link encodeState}: feature bin indices for a flat state index. */
 export function decodeState(stateIdx) {
   let x = stateIdx | 0;
   const s = x % N_SIGNAL;
@@ -84,6 +89,7 @@ export function decodeState(stateIdx) {
   return { regimeBucket: r, alphaBin: a, breadthBin: b, volBin: v, signalBin: s };
 }
 
+/** Map flat action index to portfolio knobs (exposure, positions, sizing, rebalance skip). */
 export function decodeAction(actionIdx) {
   const idx = Math.max(0, Math.min(TOTAL_ACTIONS - 1, actionIdx | 0));
   const sizingIdx = idx % 3;
@@ -104,6 +110,7 @@ export function decodeAction(actionIdx) {
   };
 }
 
+/** Encode knob indices into a flat action index (inverse of {@link decodeAction}). */
 export function encodeAction(exposureIdx, posCountIdx, sizingIdx, waitIdx = 0) {
   const w = Math.max(0, Math.min(1, waitIdx | 0));
   return (sizingIdx + 3 * (posCountIdx + 4 * (exposureIdx + 4 * w))) | 0;
@@ -139,6 +146,30 @@ export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, 
   // Explicit variance penalty — annualized vol², scaled by γ/2
   const varPenalty = (gamma / 2) * (vol * vol);
   return (sharpeAlpha * 0.7 - varPenalty + ddPenalty) * 3.0;
+}
+
+/** Indices with decoded exposure ≥ 1.0 — for {@link detectOverPruning} membership checks. */
+const HIGH_EXPOSURE_ACTION_SET = new Set(
+  Array.from({ length: TOTAL_ACTIONS }, (_, a) => a).filter((a) => decodeAction(a).exposure >= 1)
+);
+
+/**
+ * Greedy action argmax_a Q(s,a).
+ * @param {{ getQ: (stateIdx: number, actionIdx: number) => number; nActions: number }} agent
+ * @param {number} stateIdx
+ * @returns {number}
+ */
+function greedyArgmaxAction(agent, stateIdx) {
+  let bestAction = 0;
+  let bestQ = agent.getQ(stateIdx, 0);
+  for (let a = 1; a < agent.nActions; a++) {
+    const q = agent.getQ(stateIdx, a);
+    if (q > bestQ) {
+      bestQ = q;
+      bestAction = a;
+    }
+  }
+  return bestAction;
 }
 
 export class QLearningTradingAgent {
@@ -231,16 +262,12 @@ export class QLearningTradingAgent {
           fallback: false
         };
       }
-      let bestAction = 0;
-      let bestQ = this.getQ(stateIdx, 0);
-      for (let a = 1; a < this.nActions; a++) {
-        const q = this.getQ(stateIdx, a);
-        if (q > bestQ) {
-          bestQ = q;
-          bestAction = a;
-        }
-      }
-      return { actionIdx: bestAction, explored: false, epsilon, fallback: false };
+      return {
+        actionIdx: greedyArgmaxAction(this, stateIdx),
+        explored: false,
+        epsilon,
+        fallback: false
+      };
     }
 
     if (!forceExploit && visits < minVisitsFallback) {
@@ -262,16 +289,12 @@ export class QLearningTradingAgent {
       };
     }
 
-    let bestAction = 0;
-    let bestQ = this.getQ(stateIdx, 0);
-    for (let a = 1; a < this.nActions; a++) {
-      const q = this.getQ(stateIdx, a);
-      if (q > bestQ) {
-        bestQ = q;
-        bestAction = a;
-      }
-    }
-    return { actionIdx: bestAction, explored: false, epsilon, fallback: false };
+    return {
+      actionIdx: greedyArgmaxAction(this, stateIdx),
+      explored: false,
+      epsilon,
+      fallback: false
+    };
   }
 
   update(stateIdx, actionIdx, reward, nextStateIdx) {
@@ -492,23 +515,29 @@ export class QLearningTradingAgent {
   }
 }
 
+/** Training diagnostics: Q-value gap between best and second-best action per visited state. */
 export function computeConvergenceMetrics(agent) {
   let totalGap = 0;
   let minGap = Infinity;
   let statesVisited = 0;
+  const na = agent.nActions | 0;
   for (let s = 0; s < agent.nStates; s++) {
     if (agent.visitCounts[s] === 0) continue;
     statesVisited++;
-    const qValues = [];
-    for (let a = 0; a < agent.nActions; a++) {
-      qValues.push(agent.getQ(s, a));
+    let max1 = -Infinity;
+    let max2 = -Infinity;
+    for (let a = 0; a < na; a++) {
+      const q = agent.getQ(s, a);
+      if (q > max1) {
+        max2 = max1;
+        max1 = q;
+      } else if (q > max2) {
+        max2 = q;
+      }
     }
-    qValues.sort((a, b) => b - a);
-    if (qValues.length >= 2) {
-      const gap = qValues[0] - qValues[1];
-      totalGap += gap;
-      minGap = Math.min(minGap, gap);
-    }
+    const gap = Number.isFinite(max2) ? max1 - max2 : 0;
+    totalGap += gap;
+    minGap = Math.min(minGap, gap);
   }
   return {
     statesVisited,
@@ -520,27 +549,15 @@ export function computeConvergenceMetrics(agent) {
   };
 }
 
+/** Heuristic from paper §5.1-style check: greedy policy rarely picks full exposure. */
 export function detectOverPruning(agent) {
-  const highExposureActions = [];
-  for (let a = 0; a < TOTAL_ACTIONS; a++) {
-    const dec = decodeAction(a);
-    if (dec.exposure >= 1) highExposureActions.push(a);
-  }
   let statesPreferringHighExposure = 0;
   let totalVisited = 0;
   for (let s = 0; s < agent.nStates; s++) {
     if (agent.visitCounts[s] === 0) continue;
     totalVisited++;
-    let bestA = 0;
-    let bestQ = agent.getQ(s, 0);
-    for (let a = 1; a < agent.nActions; a++) {
-      const q = agent.getQ(s, a);
-      if (q > bestQ) {
-        bestQ = q;
-        bestA = a;
-      }
-    }
-    if (highExposureActions.includes(bestA)) statesPreferringHighExposure++;
+    const bestA = greedyArgmaxAction(agent, s);
+    if (HIGH_EXPOSURE_ACTION_SET.has(bestA)) statesPreferringHighExposure++;
   }
   const ratio = totalVisited > 0 ? statesPreferringHighExposure / totalVisited : 0;
   return {
