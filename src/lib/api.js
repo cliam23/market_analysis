@@ -9,7 +9,7 @@
  * proxy is bypassed). Point it at the same API you run locally (e.g. `http://localhost:3001`)
  * or KPIs will look “disconnected” / stale compared to the server you restarted.
  */
-const RAW = import.meta.env.VITE_API_BASE ?? "";
+const RAW = import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE ?? "";
 export const API_BASE = String(RAW).replace(/\/$/, "");
 
 export function apiUrl(path) {

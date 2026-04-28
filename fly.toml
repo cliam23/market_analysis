@@ -1,0 +1,48 @@
+# fly.toml — Fly.io deployment config for Market Analysis
+#
+# Notes:
+# - Fly routes traffic to `internal_port`. We set it to 8080 (Fly default).
+# - The server reads PORT from env and binds to 0.0.0.0 (already in server.js).
+# - Persist portfolios/agents under /data via DATA_DIR (already implemented).
+#
+# After creating the app, set secrets:
+#   fly secrets set TRADIER_SANDBOX_TOKEN=... FRONTEND_URL=https://...vercel.app
+# And create a volume:
+#   fly volumes create market_data --size 1 --region ord
+
+app = "market-analysis"
+primary_region = "ord"
+
+[env]
+  NODE_ENV = "production"
+  DATA_DIR = "/data"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[mounts]
+  source = "market_data"
+  destination = "/data"
+
+[[services.http_checks]]
+  interval = "15s"
+  timeout = "10s"
+  grace_period = "30s"
+  path = "/health"
+  method = "GET"
+

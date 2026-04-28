@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import readline from 'readline';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'fs';
 import { createHash } from 'crypto';
+import cron from 'node-cron';
 import {
   safeNum, billions, calcMoatAnalysis, calcAIDisruption,
   calcROICSensitivity, calcProfitabilityPath, calcGrowthConstraints,
@@ -32,7 +33,7 @@ import {
   TOTAL_STATES
 } from './q-learning-agent.js';
 import { DQNAgent, computeRlReward as computeDqnReward } from './dqn-agent.js';
-import { runAutoTrader, getAutoPortfolio } from './options-auto-trader.js';
+import { runAutoTrader, getAutoPortfolio, openShortOptionLeg, manageOptionLegsOnce } from './options-auto-trader.js';
 import {
   getOptionsChain,
   getIvRank,
@@ -40,49 +41,7 @@ import {
   buildOsiSymbol,
   USE_MOCK as OPTIONS_USE_MOCK
 } from './options-service.js';
-
-async function setupAutoTraderCron() {
-  const enabled =
-    process.env.ENABLE_AUTO_TRADER_CRON === 'true' ||
-    process.env.ENABLE_AUTO_TRADER_CRON === '1' ||
-    String(process.env.ENABLE_AUTO_TRADER_CRON || '').toLowerCase() === 'yes';
-  if (!enabled) return;
-
-  let cron;
-  try {
-    cron = (await import('node-cron')).default;
-  } catch (e) {
-    console.warn(
-      `[AutoTrader] ENABLE_AUTO_TRADER_CRON set but node-cron is not installed. Run: npm install node-cron. (${e?.message || e})`
-    );
-    return;
-  }
-
-  const schedule = process.env.AUTO_TRADER_CRON_SCHEDULE || '35 9 * * 1-5';
-  const timezone = process.env.AUTO_TRADER_CRON_TZ || 'America/New_York';
-  const universeId = String(process.env.AUTO_TRADER_UNIVERSE_ID || 'sp500_top50').trim();
-
-  cron.schedule(
-    schedule,
-    async () => {
-      try {
-        console.log('[AutoTrader] Scheduled run starting...');
-        const scan = await computeOptionsScan(universeId);
-        const opportunities = scan?.opportunities || [];
-        const regime = scan?.regime || 'normal';
-        const result = await runAutoTrader(opportunities, regime);
-        console.log('[AutoTrader]', JSON.stringify(result?.summary || result));
-      } catch (err) {
-        console.error('[AutoTrader] Scheduled run failed:', err?.message || err);
-      }
-    },
-    { timezone }
-  );
-
-  console.log(
-    `[AutoTrader] Cron enabled schedule="${schedule}" tz="${timezone}" universeId="${universeId}"`
-  );
-}
+import { loadWheelPortfolio, saveWheelPortfolio, selectWheelTargets, getWheelSummary, WHEEL_CONFIG } from './wheel-portfolio-service.js';
 
 import { REPO_ROOT, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH } from './server/config/paths.js';
 import {
@@ -466,8 +425,36 @@ if (
 }
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3001;
-app.use(cors());
+const PORT = parseInt(process.env.PORT ?? '3001', 10);
+
+// Ensure data directory exists on startup (Railway persistent volume)
+if (process.env.DATA_DIR) {
+  try {
+    mkdirSync(process.env.DATA_DIR, { recursive: true });
+    console.log(`[startup] Data directory: ${process.env.DATA_DIR}`);
+  } catch (e) {
+    console.warn(`[startup] Could not create DATA_DIR: ${e.message || String(e)}`);
+  }
+}
+
+app.use(cors({
+  origin: (origin, callback) => {
+    const allowed = [
+      'http://localhost:5173',
+      'http://localhost:4173',
+      process.env.FRONTEND_URL
+    ].filter(Boolean);
+
+    if (!origin) return callback(null, true);
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
+    if (allowed.includes(origin)) return callback(null, true);
+    if (process.env.NODE_ENV === 'production') {
+      return callback(new Error(`CORS blocked: ${origin}`));
+    }
+    callback(null, true);
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 const yahooFinance = new yf({ 
@@ -6500,6 +6487,77 @@ function bt_volatilityFromPrices(prices) {
     if (prices[i - 1].close > 0) rets.push(Math.log(prices[i].close / prices[i - 1].close));
   }
   return standardDeviation(rets) * Math.sqrt(252);
+}
+
+/**
+ * getRollingHV
+ *
+ * Computes 30-day historical (realized) volatility for a ticker
+ * using ONLY price data available on or before `asOfDate`.
+ * No look-ahead: prices after asOfDate are excluded.
+ *
+ * Returns annualized HV as a decimal (e.g. 0.25 = 25%).
+ * Returns null if insufficient data.
+ *
+ * @param {string} ticker
+ * @param {string} asOfDate  - ISO date string "YYYY-MM-DD"
+ * @param {number} window    - trading days to use (default 30)
+ */
+function getRollingHV(ticker, asOfDate, window = 30) {
+  try {
+    const root = String(ticker || '').trim().toUpperCase();
+    if (!root || !asOfDate) return null;
+    const cachePath = path.join(REPO_ROOT, '.cache', 'yahoo', `${root}.json`);
+    if (!existsSync(cachePath)) return null;
+
+    const raw = JSON.parse(readFileSync(cachePath, 'utf8'));
+
+    // Normalize to array of {date, close} sorted ascending
+    let prices = [];
+    if (Array.isArray(raw.prices)) {
+      prices = raw.prices
+        .filter((p) => p && p.date && (p.close ?? p.adjClose ?? p.price) != null)
+        .map((p) => ({
+          date: String(p.date).split('T')[0],
+          close: Number(p.close ?? p.adjClose ?? p.price)
+        }))
+        .filter((p) => Number.isFinite(p.close) && p.close > 0);
+    } else if (raw.history && typeof raw.history === 'object') {
+      prices = Object.entries(raw.history)
+        .map(([date, data]) => ({
+          date,
+          close:
+            typeof data === 'number'
+              ? Number(data)
+              : Number(data?.close ?? data?.adjClose ?? data?.price)
+        }))
+        .filter((p) => Number.isFinite(p.close) && p.close > 0);
+    }
+
+    prices = prices
+      .filter((p) => p.date <= asOfDate)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-(window + 1)); // need window+1 prices to compute window returns
+
+    if (prices.length < window + 1) return null;
+
+    const returns = [];
+    for (let i = 1; i < prices.length; i++) {
+      const c0 = prices[i - 1].close;
+      const c1 = prices[i].close;
+      if (c0 > 0 && c1 > 0) returns.push(Math.log(c1 / c0));
+    }
+    if (returns.length < 5) return null;
+
+    const mean = returns.reduce((s, r) => s + r, 0) / returns.length;
+    const variance =
+      returns.reduce((s, r) => s + (r - mean) ** 2, 0) / Math.max(1, returns.length - 1);
+    const hvAnnualized = Math.sqrt(variance * 252);
+    if (!Number.isFinite(hvAnnualized) || hvAnnualized <= 0) return null;
+    return parseFloat(hvAnnualized.toFixed(4));
+  } catch {
+    return null;
+  }
 }
 
 function calculateMomentumQuality(priceData, asOfDate) {
@@ -13947,12 +14005,21 @@ async function computeOptionsScan(universeIdRaw) {
             ? (ccProbOTM * (ccPrem * 100)) -
               (ccProbITM * (Math.max(0, ccCp - ccStrike) * 100))
             : null;
+        const ccHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
+        const ccIvNum = cc.iv != null && Number.isFinite(Number(cc.iv)) ? Number(cc.iv) : null;
+        const ccIvProxy = (ccHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const ccVrpr = ccHv30 && ccIvNum ? ccIvNum / ccHv30 : ccHv30 ? ccIvProxy / ccHv30 : null;
+        const ccVrpEdge = ccVrpr != null ? ccVrpr > 1.05 : (ivRank ?? 0) > 50;
         opportunities.push({
           strategy: 'COVERED_CALL',
           ticker,
           compositeScore,
           ivRank,
           currentPrice: Number(price),
+          hv30: ccHv30 != null ? parseFloat((ccHv30 * 100).toFixed(1)) : null,
+          ivProxy: ccHv30 != null ? parseFloat((ccIvProxy * 100).toFixed(1)) : null,
+          vrpRatio: ccVrpr != null ? parseFloat(ccVrpr.toFixed(2)) : null,
+          vrpEdge: ccVrpEdge,
           strike: cc.strike,
           expiration: cc.expiration,
           optionType: 'call',
@@ -14022,12 +14089,21 @@ async function computeOptionsScan(universeIdRaw) {
             ? (cspProbOTM * (cspPrem * 100)) -
               (cspProbITM * (Math.max(0, cspStrike - cspPrem) * 100))
             : null;
+        const cspHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
+        const cspIvNum = csp.iv != null && Number.isFinite(Number(csp.iv)) ? Number(csp.iv) : null;
+        const cspIvProxy = (cspHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const cspVrpr = cspHv30 && cspIvNum ? cspIvNum / cspHv30 : cspHv30 ? cspIvProxy / cspHv30 : null;
+        const cspVrpEdge = cspVrpr != null ? cspVrpr > 1.05 : (ivRank ?? 0) > 50;
         opportunities.push({
           strategy: 'CASH_SECURED_PUT',
           ticker,
           compositeScore,
           ivRank,
           currentPrice: Number(price),
+          hv30: cspHv30 != null ? parseFloat((cspHv30 * 100).toFixed(1)) : null,
+          ivProxy: cspHv30 != null ? parseFloat((cspIvProxy * 100).toFixed(1)) : null,
+          vrpRatio: cspVrpr != null ? parseFloat(cspVrpr.toFixed(2)) : null,
+          vrpEdge: cspVrpEdge,
           strike: csp.strike,
           expiration: csp.expiration,
           optionType: 'put',
@@ -14106,12 +14182,20 @@ async function computeOptionsScan(universeIdRaw) {
             ? (hedgeProbITM * (Math.max(0, hedgeStrike - hedgeCp) * 100)) -
               (hedgeProbOTM * (hedgePrem * 100))
             : null;
+        const hedgeHv30 = getRollingHV(etf, today, 30) ?? bt_volatilityFromPrices((priceHistory[etf] || []).slice(-31));
+        const hedgeIvNum = hedge.iv != null && Number.isFinite(Number(hedge.iv)) ? Number(hedge.iv) : null;
+        const hedgeIvProxy = (hedgeHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const hedgeVrpr = hedgeHv30 && hedgeIvNum ? hedgeIvNum / hedgeHv30 : hedgeHv30 ? hedgeIvProxy / hedgeHv30 : null;
         opportunities.push({
           strategy: 'REGIME_HEDGE',
           ticker: etf,
           compositeScore: null,
           ivRank,
           currentPrice: Number(px),
+          hv30: hedgeHv30 != null ? parseFloat((hedgeHv30 * 100).toFixed(1)) : null,
+          ivProxy: hedgeHv30 != null ? parseFloat((hedgeIvProxy * 100).toFixed(1)) : null,
+          vrpRatio: hedgeVrpr != null ? parseFloat(hedgeVrpr.toFixed(2)) : null,
+          vrpEdge: null,
           strike: hedge.strike,
           expiration: hedge.expiration,
           optionType: 'put',
@@ -14198,7 +14282,458 @@ app.get('/api/options/chain/:ticker', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/options/backtest
+ *
+ * Simplified historical simulation of selling covered calls (CC) and cash-secured puts (CSP)
+ * on top-scored names. Uses cached equity price history (no IV surface).
+ *
+ * Query params:
+ * - period   (default "3y")
+ * - universe (default "sp500_top50")
+ * - topN     (default 5)
+ */
+app.get('/api/options/backtest', async (req, res) => {
+  try {
+    req.setTimeout(300000);
+    res.setTimeout(300000);
+
+    const period = String(req.query.period ?? '3y').trim();
+    const universeId = String(req.query.universe ?? 'sp500_top50').trim();
+    const topN = Math.max(1, parseInt(String(req.query.topN ?? '5'), 10) || 5);
+
+    const universe = UNIVERSE_TICKERS[universeId];
+    if (!universe) return res.status(400).json({ success: false, error: 'Unknown universe' });
+
+    const periodDays = { '1y': 365, '2y': 730, '3y': 1095, '5y': 1825, '7y': 2555 };
+    const days = periodDays[period] || periodDays['3y'];
+    const endDate = new Date();
+    const endDateStr = endDate.toISOString().split('T')[0];
+    const start = new Date(endDate.getTime() - days * 86400000 - 400 * 86400000);
+    const startDateStr = start.toISOString().split('T')[0];
+
+    const rebalanceDates = getRebalanceDates(
+      new Date(endDate.getTime() - days * 86400000).toISOString().split('T')[0],
+      endDateStr,
+      'monthly'
+    );
+    if (rebalanceDates.length < 2) {
+      return res.status(400).json({ success: false, error: 'Insufficient rebalance dates' });
+    }
+
+    clearBacktestRuntimeCaches();
+
+    const tickersToFetch = [...new Set([...universe, 'SPY'])].filter(Boolean);
+    const priceHistory = {};
+    const priceRows = await mapWithConcurrency(tickersToFetch, YAHOO_CHART_CONCURRENCY, async (ticker) => {
+      const data = await bt_fetchPriceHistory(ticker, startDateStr, endDateStr);
+      return { ticker, data };
+    });
+    for (const row of priceRows) {
+      if (row?.data && !row.__error) priceHistory[row.ticker] = row.data;
+    }
+
+    const spyPrices = priceHistory['SPY'];
+    if (!spyPrices?.length) {
+      return res.status(500).json({ success: false, error: 'Could not fetch SPY history' });
+    }
+
+    const pit = await loadPitFundamentalsForUniverse(universe, endDateStr, priceHistory);
+    const fundamentalsLive = pit.map;
+
+    const weights = { ...DEFAULT_COMPOSITE_WEIGHTS };
+    const monthlyPnl = [];
+    let cumulative = 0;
+    let totalPremium = 0;
+    let assignmentCount = 0;
+    let assignmentPnl = 0;
+
+    for (let i = 0; i < rebalanceDates.length - 1; i++) {
+      const date = rebalanceDates[i];
+      const nextDate = rebalanceDates[i + 1];
+
+      const regimeMeta = calculateMarketRegime(spyPrices, date, universe, priceHistory);
+      const regime = regimeMeta?.regime ?? 'normal';
+
+      if (regime === 'bear') {
+        monthlyPnl.push({
+          date,
+          regime,
+          ccPremium: 0,
+          cspPremium: 0,
+          assignments: 0,
+          totalPnl: 0,
+          cumulative: parseFloat(cumulative.toFixed(2)),
+          vrpSkipped: 0,
+          note: 'bear regime — no new options'
+        });
+        continue;
+      }
+
+      const rankings = bt_rankFullCompositeV2(universe, priceHistory, fundamentalsLive, date, weights, {});
+      const picks = (rankings || []).slice(0, Math.max(2 * topN, topN));
+      const holdings = picks.slice(0, topN);
+      const nonHoldings = picks.slice(topN, 2 * topN);
+
+      let ccPrem = 0;
+      let cspPrem = 0;
+      let assigns = 0;
+      let assignPnlLocal = 0;
+      let vrpSkippedCount = 0;
+
+      const dte = 30;
+      const sqrtT = Math.sqrt(dte / 365);
+
+      // Covered calls: allowed in non-bear regimes
+      for (const row of holdings) {
+        const ticker = row?.ticker;
+        const prices = ticker ? priceHistory[ticker] : null;
+        const px = prices ? getPrice(prices, date) : Number(row?.price);
+        const nextPx = prices ? getPrice(prices, nextDate) : null;
+        if (!ticker || px == null || !Number.isFinite(px) || px <= 0) continue;
+
+        // Earnings avoidance: skip if earnings fall within the DTE window
+        const dteToEarnings = daysUntilEarnings(ticker, date, fundamentalsLive);
+        if (dteToEarnings != null && dteToEarnings >= 0 && dteToEarnings <= dte) continue;
+
+        // Rolling HV computed from cached prices, using only data before this date
+        const hv = getRollingHV(ticker, date, 30) ?? 0.25;
+        const ivRank = 55; // backtest doesn't have per-name IVR; treat as slightly elevated baseline
+        const vrpRatio = 1 + (ivRank - 50) / 100;
+        const impliedVol = hv * vrpRatio;
+        if (impliedVol <= hv * 1.05) {
+          vrpSkippedCount++;
+          continue;
+        }
+        const volForPricing = impliedVol;
+
+        const strike = px * 1.05; // ~5% OTM call
+        const deltaApprox = 0.25;
+        const premEst = px * volForPricing * sqrtT * deltaApprox;
+
+        ccPrem += premEst * 100;
+        const assigned = nextPx != null && Number.isFinite(nextPx) ? nextPx > strike : false;
+        if (assigned) assigns += 1;
+      }
+
+      // CSPs: only in strong_bull/normal
+      if (regime === 'strong_bull' || regime === 'normal') {
+        for (const row of nonHoldings) {
+          const ticker = row?.ticker;
+          const prices = ticker ? priceHistory[ticker] : null;
+          const px = prices ? getPrice(prices, date) : Number(row?.price);
+          const nextPx = prices ? getPrice(prices, nextDate) : null;
+          if (!ticker || px == null || !Number.isFinite(px) || px <= 0) continue;
+
+          // Earnings avoidance: skip if earnings fall within the DTE window
+          const dteToEarnings = daysUntilEarnings(ticker, date, fundamentalsLive);
+          if (dteToEarnings != null && dteToEarnings >= 0 && dteToEarnings <= dte) continue;
+
+          // Rolling HV computed from cached prices, using only data before this date
+          const hv = getRollingHV(ticker, date, 30) ?? 0.25;
+          const ivRank = 55; // backtest doesn't have per-name IVR; treat as slightly elevated baseline
+          const vrpRatio = 1 + (ivRank - 50) / 100;
+          const impliedVol = hv * vrpRatio;
+          if (impliedVol <= hv * 1.05) {
+            vrpSkippedCount++;
+            continue;
+          }
+          const volForPricing = impliedVol;
+
+          const strike = px * 0.95; // ~5% OTM put
+          const deltaApprox = 0.2;
+          const premEst = px * volForPricing * sqrtT * deltaApprox;
+
+          cspPrem += premEst * 100;
+          const assigned = nextPx != null && Number.isFinite(nextPx) ? nextPx < strike : false;
+          if (assigned) {
+            assigns += 1;
+            // premium minus intrinsic loss at next rebalance (simple proxy)
+            const pnl = premEst * 100 - Math.max(0, strike - nextPx) * 100;
+            assignPnlLocal += pnl;
+          }
+        }
+      }
+
+      const total = ccPrem + cspPrem;
+      cumulative += total;
+      totalPremium += total;
+      assignmentCount += assigns;
+      assignmentPnl += assignPnlLocal;
+
+      monthlyPnl.push({
+        date,
+        regime,
+        ccPremium: parseFloat(ccPrem.toFixed(2)),
+        cspPremium: parseFloat(cspPrem.toFixed(2)),
+        assignments: assigns,
+        totalPnl: parseFloat(total.toFixed(2)),
+        cumulative: parseFloat(cumulative.toFixed(2)),
+        vrpSkipped: vrpSkippedCount
+      });
+    }
+
+    const midpoint = Math.floor(monthlyPnl.length / 2);
+    const firstHalf = monthlyPnl.slice(0, midpoint);
+    const secondHalf = monthlyPnl.slice(midpoint);
+    const halfStats = (arr) => {
+      const total = arr.reduce((s, m) => s + (Number(m.totalPnl) || 0), 0);
+      const vrpSkipped = arr.reduce((s, m) => s + (Number(m.vrpSkipped) || 0), 0);
+      return {
+        months: arr.length,
+        totalPremium: parseFloat(total.toFixed(0)),
+        avgMonthly: arr.length ? parseFloat((total / arr.length).toFixed(0)) : 0,
+        bearMonths: arr.filter((m) => m.regime === 'bear').length,
+        vrpSkipped
+      };
+    };
+
+    // Compare to equity-only backtest using the same cached data
+    const equityStart = new Date(endDate.getTime() - days * 86400000).toISOString().split('T')[0];
+    const equityDates = getRebalanceDates(equityStart, endDateStr, 'monthly');
+    const simOptions = {
+      adaptiveMode: 'fixed',
+      positionSizing: 'invVol',
+      regimeEnabled: true,
+      rlAgent: false,
+      rlMode: 'off',
+      skipMlRankingAdjustments: true
+    };
+    const equitySim = await runBacktestSimulation(
+      universe,
+      priceHistory,
+      fundamentalsLive,
+      spyPrices,
+      equityDates,
+      15,
+      100000,
+      'full_composite',
+      weights,
+      null,
+      universeId,
+      simOptions
+    );
+    const equityOnlyTotalReturnPct = parseFloat(equitySim?.performance?.totalReturn ?? 0);
+
+    const years = days / 365;
+    const annualizedPremiumYieldPct = years > 0 ? (totalPremium / 100000 / years) * 100 : 0;
+    const enhancedReturnPct = equityOnlyTotalReturnPct + (totalPremium / 100000) * 100;
+
+    res.json({
+      success: true,
+      period,
+      universe: universeId,
+      topN,
+      performance: {
+        equityOnlyReturnPct: parseFloat(equityOnlyTotalReturnPct.toFixed(2)),
+        totalPremiumCollected: parseFloat(totalPremium.toFixed(2)),
+        annualizedPremiumYieldPct: parseFloat(annualizedPremiumYieldPct.toFixed(2)),
+        enhancedReturnPct: parseFloat(enhancedReturnPct.toFixed(2)),
+        liftFromOptionsPct: parseFloat((enhancedReturnPct - equityOnlyTotalReturnPct).toFixed(2)),
+        assignmentCount,
+        assignmentPnl: parseFloat(assignmentPnl.toFixed(2))
+      },
+      monthlyPnl,
+      walkForward: {
+        firstHalf: halfStats(firstHalf),
+        secondHalf: halfStats(secondHalf),
+        note: 'Second half is a better estimate of forward returns — less in-sample bias'
+      },
+      interpretation: {
+        whatThisMeans:
+          `Simplified wheel-style premium simulation using equity price history only (no IV surface).`,
+        caveats: [
+          'Premium is a rough estimate from realized vol; no bid/ask, slippage, or fees modeled.',
+          'Assignment is approximated using next-rebalance price vs strike (path-dependent in reality).',
+          'This is a directional sanity check, not a brokerage-grade options backtest.'
+        ]
+      }
+    });
+  } catch (err) {
+    console.error('[options/backtest]', err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
 // ── Options Auto Trader (Tradier sandbox simulation) ─────────────────────────
+
+// ── Wheel Portfolio (equity + options overlay) ───────────────────────────────
+
+async function paperPortfolioSnapshot(universeId) {
+  const paperUid = String(universeId || 'sp500_top50').trim();
+  let portfolio = loadPaperPortfolioForUniverse(paperUid);
+  if (!portfolio) return { portfolio: null, holdings: [], totalValue: 0, totalReturnPct: 0, regime: null };
+
+  portfolio = normalizePaperPortfolio(portfolio);
+  if (portfolio.holdings.length > 0) {
+    portfolio = await takeNavSnapshot(portfolio);
+  }
+
+  const tickers = portfolio.holdings.map((h) => h.ticker);
+  const currentPrices = {};
+  for (const ticker of tickers) {
+    try {
+      const quote = await fetchYahooOp(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
+      currentPrices[ticker] = quote?.regularMarketPrice || null;
+    } catch {
+      currentPrices[ticker] = null;
+    }
+    await sleep(25);
+  }
+
+  let totalValue = Number(portfolio.cash) || 0;
+  const enrichedHoldings = portfolio.holdings.map((h) => {
+    const currentPrice = currentPrices[h.ticker] || h.entryPrice;
+    const marketValue = h.shares * currentPrice;
+    totalValue += marketValue;
+    return { ...h, currentPrice, marketValue };
+  });
+
+  const totalReturnPct =
+    portfolio.initialCapital > 0 ? ((totalValue / portfolio.initialCapital) - 1) * 100 : 0;
+  const lastRb =
+    portfolio.rebalanceHistory && portfolio.rebalanceHistory.length > 0
+      ? portfolio.rebalanceHistory[portfolio.rebalanceHistory.length - 1]
+      : null;
+  const regime = lastRb?.regime ?? portfolio?.summary?.currentRegime ?? null;
+
+  return { portfolio, holdings: enrichedHoldings, totalValue, totalReturnPct, regime };
+}
+
+app.get('/api/wheel/status', async (req, res) => {
+  try {
+    const universeId = String(req.query.universeId ?? 'sp500_top50').trim();
+    const wheel = loadWheelPortfolio();
+    const snap = await paperPortfolioSnapshot(universeId);
+    const summary = getWheelSummary(
+      { equityTotalValue: snap.totalValue, equityTotalReturnPct: snap.totalReturnPct, regime: snap.regime },
+      wheel
+    );
+    res.json({
+      success: true,
+      universeId,
+      config: WHEEL_CONFIG,
+      equity: {
+        holdingsCount: snap.holdings.length,
+        totalValue: parseFloat(Number(snap.totalValue || 0).toFixed(2)),
+        totalReturnPct: parseFloat(Number(snap.totalReturnPct || 0).toFixed(2)),
+        regime: snap.regime
+      },
+      summary,
+      optionsLegs: wheel.optionsLegs || [],
+      closedLegs: (wheel.closedLegs || []).slice(-10)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
+app.post('/api/wheel/run', async (req, res) => {
+  try {
+    const universeId = String(req.body?.universeId ?? req.query?.universeId ?? 'sp500_top50').trim();
+    const wheel = loadWheelPortfolio();
+    const snap = await paperPortfolioSnapshot(universeId);
+    const regime = String(req.body?.regime ?? snap.regime ?? 'normal').toLowerCase();
+
+    // ── Phase 1: manage existing legs ─────────────────────────────────────
+    if (WHEEL_CONFIG.regimeClosesAll.includes(regime)) {
+      // still let manageOptionLegsOnce handle closing logic (bear override included)
+    }
+    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime);
+    const remaining = mgmt.positions || [];
+    const closed = mgmt.actions?.closed || [];
+    wheel.optionsLegs = remaining;
+
+    for (const c of closed) {
+      const pnl = Number(c.pnl) || 0;
+      wheel.closedLegs.push({
+        symbol: c.symbol,
+        ticker: c.ticker,
+        closedAt: c.closedAt,
+        closeReason: c.reason,
+        realizedPnL: pnl
+      });
+      wheel.stats.totalOptionsPnl += pnl;
+      wheel.stats.totalLegs += 1;
+      if (pnl >= 0) wheel.stats.wins += 1;
+      else wheel.stats.losses += 1;
+    }
+
+    // ── Phase 2: open new legs from scanner targets ───────────────────────
+    const scan = await computeOptionsScan(universeId);
+    const targets = selectWheelTargets(snap.holdings || [], scan.opportunities || [], wheel.optionsLegs || [], regime);
+
+    const opened = [];
+    const errors = [];
+
+    for (const t of targets) {
+      try {
+        const opp = t.opp;
+        const prem = Number(opp.premium ?? opp.mid ?? opp.bid ?? 0) || 0;
+        const limit = Math.max(0.01, parseFloat((prem - 0.02).toFixed(2)));
+        if (limit < 0.1) continue;
+
+        const resp = await openShortOptionLeg({
+          ticker: t.ticker,
+          optionSymbol: opp.optionSymbol,
+          quantity: 1,
+          limitPrice: limit
+        });
+
+        wheel.optionsLegs.push({
+          ticker: t.ticker,
+          strategy: opp.strategy,
+          optionSymbol: opp.optionSymbol,
+          strike: opp.strike,
+          expiration: opp.expiration,
+          quantity: 1,
+          entryCredit: limit,
+          entryDate: new Date().toISOString(),
+          entryOrderId: resp?.order?.id ?? 'DRY_RUN',
+          ev: opp.ev,
+          delta: opp.delta,
+          dte: opp.dte,
+          ivRank: opp.ivRank,
+          currentPrice: opp.currentPrice,
+          compositeScore: opp.compositeScore,
+          reason: t.reason
+        });
+        wheel.stats.premiumCollected += limit * 100;
+        opened.push({ ticker: t.ticker, strategy: opp.strategy, symbol: opp.optionSymbol, credit: limit, orderId: resp?.order?.id ?? 'DRY_RUN' });
+      } catch (e) {
+        errors.push({ ticker: t.ticker, error: e.message || String(e) });
+      }
+    }
+
+    wheel.lastRun = new Date().toISOString();
+    saveWheelPortfolio(wheel);
+
+    const summary = getWheelSummary(
+      { equityTotalValue: snap.totalValue, equityTotalReturnPct: snap.totalReturnPct, regime },
+      wheel
+    );
+
+    res.json({
+      success: true,
+      universeId,
+      regime,
+      mode: mgmt.mode,
+      summary,
+      actions: {
+        closed,
+        opened,
+        errors
+      },
+      optionsLegs: wheel.optionsLegs
+    });
+  } catch (err) {
+    console.error('[wheel/run]', err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
 
 function closePaperOptionsPosition(portfolio, positionId, closePremium, reason) {
   const pos = portfolio.positions.find((p) => p.id === positionId);
@@ -15247,14 +15782,95 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// ── Health check — Railway / load balancer ────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV ?? 'development',
+    dataDir: process.env.DATA_DIR ?? 'local'
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CRON SCHEDULES
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SERVER_STARTED_AT = Date.now();
+function isTradingDay(date = new Date()) {
+  const day = date.getDay();
+  if (day === 0 || day === 6) return false;
+  const mmdd = `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const holidays = ['01-01', '07-04', '12-25'];
+  return !holidays.includes(mmdd);
+}
+
+function cronWarmupDone(minMs = 3 * 60 * 1000) {
+  return Date.now() - SERVER_STARTED_AT >= minMs;
+}
+
+// Paper portfolio rebalance — 1st and 15th of each month at 9:45 AM ET
+cron.schedule(
+  '45 9 1,15 * *',
+  async () => {
+    if (!cronWarmupDone()) return;
+    if (!isTradingDay()) {
+      console.log('[CRON] Skipping rebalance — not a trading day');
+      return;
+    }
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const base = `http://localhost:${PORT}`;
+      await fetch(`${base}/api/paper-trade/rebalance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: today })
+      });
+      console.log(`[CRON] Paper rebalance executed ${today}`);
+    } catch (e) {
+      console.error('[CRON] Paper rebalance failed:', e?.message || e);
+    }
+  },
+  { timezone: 'America/New_York' }
+);
+
+// Auto trader + wheel — every trading day at 9:35 AM ET
+cron.schedule(
+  '35 9 * * 1-5',
+  async () => {
+    if (!cronWarmupDone()) return;
+    if (!isTradingDay()) {
+      console.log('[CRON] Skipping — not a trading day');
+      return;
+    }
+    try {
+      const base = `http://localhost:${PORT}`;
+      await fetch(`${base}/api/options/auto-trader/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      await fetch(`${base}/api/wheel/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      console.log('[CRON] Auto trader + wheel cycle complete');
+    } catch (e) {
+      console.error('[CRON] Auto trader + wheel failed:', e?.message || e);
+    }
+  },
+  { timezone: 'America/New_York' }
+);
+
 
 // Express 5 wires the listen() callback to `server.once('error', done)` as well as
 // success — so a single (err?) => ... cb can run on EADDRINUSE and falsely log "running".
 // Use explicit `listening` / `error` handlers instead of passing a callback to listen().
-const server = app.listen(PORT);
+const server = app.listen(PORT, '0.0.0.0');
 server.once('listening', () => {
   ensureDualPaperPortfoliosInitialized();
-  setupAutoTraderCron();
   console.log(
     `[Yahoo] throttle: chartConcurrency=${YAHOO_CHART_CONCURRENCY} fundamentalsConcurrency=${FUNDAMENTALS_FETCH_CONCURRENCY} chartDelayMs=${YAHOO_CHART_DELAY_MS} (env: YAHOO_CHART_CONCURRENCY, YAHOO_FUNDAMENTALS_CONCURRENCY, YAHOO_CHART_DELAY_MS)`
   );

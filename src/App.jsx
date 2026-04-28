@@ -7,6 +7,7 @@ import RLTab from "./components/RLTab.jsx";
 import PaperTradeTab from "./components/PaperTradeTab.jsx";
 import AlphaLabTab from "./components/AlphaLabTab.jsx";
 import OptionsTab from "./components/OptionsTab.jsx";
+import WheelTab from "./components/WheelTab.jsx";
 import AboutTab from "./components/AboutTab.jsx";
 import PaperRebalanceStandalone from "./components/PaperRebalanceStandalone.jsx";
 import Sidebar, { SidebarStandalone } from "./components/Sidebar.jsx";
@@ -124,6 +125,10 @@ export default function App() {
 
           <div style={{ display: tab === "options" ? "block" : "none" }}>
             <OptionsTab visible={tab === "options"} />
+          </div>
+
+          <div style={{ display: tab === "wheel" ? "block" : "none" }}>
+            <WheelTab visible={tab === "wheel"} />
           </div>
 
           <div style={{ display: tab === "rl" ? "block" : "none" }}>
