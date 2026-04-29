@@ -1,26 +1,54 @@
+# ── Dependencies ─────────────────────────────────────────────
 node_modules/
-# Upstream graphify (git clone); remove this line if you want it tracked
-graphify/
+.venv/
+__pycache__/
+*.py[cod]
+
+# ── Build / dist ─────────────────────────────────────────────
+dist/
+
+# ── Caches ───────────────────────────────────────────────────
+.cache/
+yahoo-cache*.tar.gz
+data/gold/
+data/local-snapshots/
+
+# ── Secrets / env ────────────────────────────────────────────
 .env
 .env.local
 .env.production
-.cache/
-data/gold/
-data/local-snapshots/
+.env.*.local
+
+# ── Editor / OS ──────────────────────────────────────────────
 .DS_Store
-dist/
-# NOTE: portfolio JSON files are NOT ignored (Railway /data bootstrapping).
+.idea/
+.vscode/
+*.swp
+*~
+.cursor/
+.obsidian/
+
+# ── Generated / large data exports ───────────────────────────
+presentation-data.json
+
+# ── RL / DQN training artifacts (regenerate via training scripts) ──
 dqn-retrain*.json
-rl-test-report.json
-rl-train-*.json
-rl-agent.backup*.json
 dqn-agent.json
 dqn-agent-best.json
 dqn-final-*.json
 hp-sweep*.json
+rl-train-*.json
+rl-test-report.json
+rl-agent.backup*.json
+
+# ── Diagnostic sweeps (regenerate via /api/diagnostics/weight-sweep) ──
 /weight-sweep-result.json
 /weight-sweep-nocorr.json
-.cursor/
-__pycache__/
-*.py[cod]
-*~
+
+# ── Upstream graphify clone (kept locally, not tracked) ──────
+graphify/
+
+# NOTE: paper-portfolio*.json, options-portfolio*.json, wheel-portfolio.json,
+# rl-agent-top*.json, dqn-agent.js, and presentation-data.json are intentionally
+# tracked OR ignored as documented above so the app can boot with sensible seed
+# state on Railway/Fly persistent volumes.
