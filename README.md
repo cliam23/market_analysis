@@ -1,193 +1,314 @@
 # Market Analysis
 
-Local-first equity research app: **multi-factor composite ranking**, **walk-forward backtests**, optional **paper trading**, optional **ML blending** (Python), optional **RL overlays** (tabular Q-learning or DQN), and an **options scanner**.  
-**Frontend:** React (Vite). **Backend:** Node (Express). Data mainly from **Yahoo Finance**.
+A local-first equity-research workbench: multi-factor composite ranking, walk-forward backtests, paper trading, an options scanner / wheel manager, and optional ML and reinforcement-learning overlays.
+
+> Single repo, two processes: a **React + Vite** SPA on `:5173` talking to an **Express** JSON API on `:3001`. Data comes mostly from public Yahoo Finance with optional FRED, Tradier sandbox, and Anthropic / Alpha Vantage hooks.
 
 ---
 
-## Run from Git (any computer)
+## Highlights
 
-Works on **Windows**, **macOS**, and **Linux** once [Node.js](https://nodejs.org/) **18+** (20 LTS recommended) and **npm** are installed.
+- **Composite ranking** — momentum, value, fundamental, earnings momentum, DCF, and valuation pillars with rolling-IC adaptive weights.
+- **Walk-forward backtests** — universes (S&P 500 top 50 / 150, Magnificent 7, Aristocrats), rebalance cadences, regime tagging, factor attribution, monthly heatmaps.
+- **Paper trading** — Top 50 / Top 150 portfolios, RL overlay, wheel manager (covered calls + cash-secured puts), full trade history.
+- **Options scanner & auto-trader** — academic sell edge (G&S, C&H, B&K), EV / IV-rank / Δ filters, scoring, optional Tradier sandbox execution.
+- **Optional ML** — Python random forest / RNN models for rank blending or alpha prediction.
+- **Optional RL** — tabular Q-learning or DQN agent that learns a sizing/exposure policy from rebalance histories.
+
+---
+
+## Quick start
+
+### Prerequisites
+
+| Tool | Version | Why |
+|------|---------|-----|
+| **Node.js** | 20 LTS (or 18.x) | Server + Vite |
+| **npm**     | 9+              | Package manager |
+| **Python**  | 3.11+ *(optional)* | ML training / blending |
+| **jq**      | any *(optional)* | `extract-presentation-data.sh` |
+
+The repo also ships with `.nvmrc` for `nvm`.
+
+### Clone and run
 
 ```bash
 git clone https://github.com/cliam23/market_analysis.git
 cd market_analysis
 npm install
-cp .env.example .env
-```
-
-Edit **`.env`** as needed (see [Environment](#environment)). Then start **UI + API** together:
-
-```bash
+cp .env.example .env        # leave it empty for mock data, or fill in keys
 npm run dev:all
 ```
 
-| Where | URL |
-|--------|-----|
-| Web app (Vite) | [http://localhost:5173](http://localhost:5173) |
-| JSON API | [http://localhost:3001](http://localhost:3001) |
+| Service | URL |
+|---------|-----|
+| Web app (Vite) | http://localhost:5173 |
+| JSON API       | http://localhost:3001 |
 
-Stop with **Ctrl+C**.
+Stop with **Ctrl+C**. The very first paint can take a few seconds while Yahoo warms its cache.
 
-**Working directory:** Always run `npm run …` and `node server.js` from the **repository root** so paths like `./paper-portfolio*.json`, caches, and `server/config/paths.js` resolve correctly.
+> **Working directory matters.** Always run scripts from the repo root — paths in `server/config/paths.js` resolve there.
 
-**Windows:** Prefer PowerShell or Git Bash; commands above are the same.
+### Backend only / frontend only
 
-**Backend only:** `npm run server` — then open the UI with `npm run dev` in another terminal, or build the SPA (`npm run build`) and use `npm run preview` / a static host with API proxy.
+```bash
+npm run server   # API on :3001 only
+npm run dev      # SPA on :5173 only (expects API somewhere)
+```
+
+### Production-style local run
+
+```bash
+npm run build    # outputs to dist/
+npm run server   # serves dist/ from Express + /api routes
+```
 
 ---
 
 ## npm scripts
 
-| Script | Purpose |
-|--------|---------|
-| `npm run dev:all` | **Recommended:** Vite + Express (frees API port then starts server) |
-| `npm run dev` | Frontend only — start API separately |
-| `npm run server` | API only (`node server.js`) |
-| `npm run server:free` | Free TCP port used by API (helper; macOS/Linux) |
-| `npm run build` | Production bundle → `dist/` |
-| `npm run preview` | Serve `dist/` (configure API base for split deploys) |
-| `npm run analyze` / `pull` / `oos-adaptive` | CLI utilities — see `package.json` |
+| Script | What it does |
+|--------|--------------|
+| `npm run dev:all`        | Recommended: free `:3001`, start API + Vite together |
+| `npm run dev`            | Vite only |
+| `npm run server`         | API only (`node server.js`) |
+| `npm run server:free`    | Helper to free `$PORT` (macOS / Linux) |
+| `npm run build`          | Production SPA bundle into `dist/` |
+| `npm run preview`        | Vite preview of `dist/` |
+| `npm run analyze`        | One-off CLI ranker (`analyze.js`) |
+| `npm run pull`           | Yahoo data pull helper |
+| `npm run oos-adaptive`   | OOS replay of adaptive composite weights |
+| `npm run train-qlearn-both` | Train Q-learning agents for top50 + top150 |
+| `npm run verify:golden`  | Golden snapshot replay |
+| `npm run warm:gold`      | Warm `data/gold/` bars |
+| `npm run snapshot:ui`    | Snapshot dashboard / API responses |
 
 ---
 
-## Environment
+## Configuration
 
-Copy **`.env.example`** → **`.env`**. Common variables:
+All variables live in **`.env`** (gitignored). Copy from `.env.example` and fill in only what you need — the app boots with mock data when keys are absent.
 
-| Variable | Role |
-|----------|------|
-| `PORT` | API port (default **3001**) |
-| `VITE_API_TARGET` | Where Vite proxies `/api` in dev (default `http://localhost:3001`) |
-| `VITE_API_BASE` | Optional absolute API URL for **built** UI (split hosting) |
-| `FRED_API_KEY` | U.S. CPI for backtest inflation; server degrades gracefully if unset |
-| `RL_ENABLED` | `true`/`1` to prefer RL when a trained agent exists |
-| `RL_AGENT_TYPE` | `qlearning` (default; `rl-agent-top50.json` / `rl-agent-top150.json`) or `dqn` (`dqn-agent.json`) |
+### Core
 
-More toggles are documented in **`.env.example`**.
+| Variable | Purpose |
+|----------|---------|
+| `NODE_ENV`   | `development` or `production` |
+| `PORT`       | API port (default `3001`) |
+| `DATA_DIR`   | Persistent volume for runtime JSON (Railway / Fly: `/data`) |
+| `FRONTEND_URL` | CORS origin for split-deployed UI |
+| `VITE_API_TARGET` | Vite dev-server proxy target (default `http://localhost:3001`) |
+| `VITE_API_BASE`   | Absolute API URL baked into a built SPA |
+
+### Optional data providers
+
+| Variable | Provider | Free? |
+|----------|----------|-------|
+| `FRED_API_KEY` | [FRED](https://fred.stlouisfed.org) — U.S. macro / CPI | yes |
+| `TRADIER_SANDBOX_TOKEN` + `TRADIER_ACCOUNT_ID` | [Tradier](https://documentation.tradier.com/sandbox) — real options chains | sandbox is free |
+| `VITE_AV_KEY` | [Alpha Vantage](https://www.alphavantage.co) — quote fallback | free tier |
+| `VITE_ANTHROPIC_API_KEY` | Anthropic — only if you wire LLM helpers | paid |
+
+If none are set, options chains use a deterministic mock generator and CPI is treated as flat — backtests still run.
+
+### Optional ML, RL, diagnostics
+
+See **`.env.example`** for the full list of toggles (`ML_RANK_WEIGHT`, `RL_ENABLED`, `RL_AGENT_TYPE`, `ROLLING_IC_PERIODS`, `TRAILING_STOP_ENABLED`, plus a handful of debug-log switches).
 
 ---
 
-## What’s in the repo (short)
+## Repository layout
 
-| Area | Role |
-|------|------|
-| `server.js` | Express: `/api/*`, Yahoo/FRED, backtest, paper trade, RL train/eval, options |
-| `analysis-engine.js` | Scoring, comps/DCF inputs, **composite** + **backtest rankers** |
-| `adaptiveWeights.js` | Rolling IC-style composite weights when not `fixed` |
-| `q-learning-agent.js` / `dqn-agent.js` | RL agents + serialization to `rl-agent*.json` / `dqn-agent.json` |
-| `src/` | React UI (Dashboard, Search, Backtest, Paper Trade, Options, RL, About, …) |
-| `ml/` | Python RF/RNN training; Node calls `ml/predict.py` when ML blending is on |
-| `server/` | Extracted modules (config, data, scoring) — see [server/README.md](server/README.md) |
+```
+.
+├─ src/                      # React UI (Vite)
+│  ├─ App.jsx, main.jsx
+│  ├─ components/            # Dashboard, Search, Backtest, PaperTrade, Wheel, Options, RL, About, …
+│  ├─ assets/                # Bundled JSON fixtures
+│  └─ lib/, utils/           # API client, formatters, education content
+├─ server/                   # Modular server (config, data, scoring, paper-trade, options, RL, routes)
+│  ├─ index.js               # Re-exports app from root server.js
+│  └─ README.md
+├─ server.js                 # Top-level Express app (legacy single-file entry)
+├─ analysis-engine.js        # Pillar scoring, comps/DCF inputs, backtest rankers
+├─ adaptiveWeights.js        # Rolling-IC adaptive composite weights
+├─ q-learning-agent.js       # Tabular Q-learning agent (shared client/server)
+├─ dqn-agent.js              # DQN agent (Node, optional tfjs-node)
+├─ options-service.js        # Options chain fetch (Tradier / mock)
+├─ options-auto-trader.js    # Scanner + auto-trader loop
+├─ wheel-portfolio-service.js# Covered-call / CSP wheel manager
+├─ pull-data.js, analyze.js  # CLI utilities
+├─ scripts/                  # OOS replay, golden snapshots, qlearning trainer, etc.
+├─ ml/                       # Python: train_rf*, train_rnn, predict workers
+├─ models/                   # Trained sklearn / pytorch artifacts (joblib / pt)
+├─ data/                     # gold/ bars, local-snapshots/  (both gitignored)
+├─ docs/                     # API.md, DATA_CONTRACTS.md, SECURITY.md, slide PDF
+├─ graphify-out/             # Knowledge-graph reports for the codebase
+├─ Dockerfile, .dockerignore
+├─ fly.toml, railway.json, vercel.json
+└─ README.md
+```
 
-Runtime JSON (paper portfolios, trained agents, wheel portfolios, options paper JSON, `.cache/`) is mostly **gitignored** — see `.gitignore`.
+### Tracked runtime / seed JSON
+
+These live at the repo root so the app boots with sensible state on a fresh persistent volume. They are *seed data*, not secrets — you can wipe them or move them to `$DATA_DIR` at any time.
+
+- `paper-portfolio.json`, `paper-portfolio-top50.json`, `paper-portfolio-top150.json`
+- `wheel-portfolio.json`, `options-portfolio.json`, `options-auto-portfolio.json`
+- `rl-agent-top50.json`, `rl-agent-top150.json` (Q-learning)
+
+Anything else (DQN, training reports, sweep outputs, caches, presentation export) is gitignored and regenerated on demand.
 
 ---
 
-## UI overview (React + Vite)
+## How it runs locally (architecture)
 
-Dark-themed SPA: sidebar navigation, monospace accents, regime and live/mock badges.
+```
+ Browser (Vite :5173)
+        │
+        │  GET/POST /api/*
+        ▼
+ Express (Node :3001, server.js)
+   ├─ analysis-engine.js   ← composite ranker
+   ├─ adaptiveWeights.js   ← rolling-IC weights
+   ├─ q-learning-agent.js  ← RL overlay (optional)
+   ├─ options-* / wheel-*  ← options + wheel
+   ├─ server/data, server/scoring, server/backtest …
+   └─ ml/predict_worker.py ← spawned only if ML_* flags set
+        │
+        ▼ on disk
+   .cache/yahoo, .cache/earnings   ← Yahoo / earnings caches
+   data/gold/bars                  ← normalized daily bars (optional)
+   *-portfolio*.json, rl-agent-*.json, dqn-*.json (state)
+```
+
+Dependency direction inside `server/`: `config → utils → data → scoring → backtest`. Use `server/config/paths.js` for repo-root-relative file resolution; do not hard-code paths.
+
+---
+
+## UI tour
 
 | Tab | Purpose |
 |-----|---------|
-| **Dashboard** | Indices, regime & system status, adaptive weight bar, performance tiles, signal feed, factor pulse, paper positions (Top 50/150), movers |
-| **Search** | Single-ticker composite and pillar detail |
-| **Backtest** | Walk-forward simulation vs benchmark |
-| **Paper Trade** | Top 50 / Top 150 toggle; **Portfolio** (holdings, rebalance, RL) vs **Wheel** (options-enhanced wheel UI) |
-| **Options** | Portfolio KPIs, strategy **backtest** card, **Auto Trader** (sandbox when configured), manual & auto positions, **scanner** (academic sell score, EV, IV rank, filters), **manual trade history** — five summary tiles (total realized, win rate, avg loss, avg DTE@open, streak) and per-close rows with **closeReason** chips (`REGIME_*`, `DTE_*`, profit target, etc.) |
-| **RL Agent** | Train / compare Q-learning or DQN |
-| **About** | In-app docs (pillars, paper vs backtest, RL, options & wheel, data limits) |
+| **Dashboard** *(default)* | Indices, regime + system status, adaptive weight bar, performance tiles, signal feed, factor pulse, paper positions, movers |
+| **Search**       | Single-ticker composite + pillar detail |
+| **Backtest**     | Walk-forward simulation vs benchmark with regime tagging |
+| **Paper Trade**  | Top 50 / Top 150 portfolios, holdings, rebalance, RL toggle, wheel layer |
+| **Options**      | Portfolio KPIs, strategy backtest, auto-trader, scanner (G&S, C&H, B&K), manual + auto positions, full close-reason history |
+| **RL Agent**     | Train and compare Q-learning or DQN |
+| **About**        | In-app docs (pillars, paper vs backtest, RL, options & wheel, data limits) |
 
-Options wheel logic is shared with Paper Trade via `WheelTab.jsx`; data from `GET /api/wheel/status`. Academic rows use G&amp;S, C&amp;H, B&amp;K signals when legs store scanner snapshots.
+The first paint opens **Dashboard**; selecting a ticker from the search panel switches to **Search**.
+
+---
+
+## Optional: Python ML
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate         # Windows: .venv\Scripts\activate
+pip install -r ml/requirements.txt
+
+python3 ml/train_rf.py            # writes models/rf_regressor.joblib + metrics
+python3 ml/train_rnn.py           # writes models/rnn.pt + config
+```
+
+Then enable blending via `ML_RANK_WEIGHT`, `ML_ALPHA_RANKING`, `ML_COMPOSITE_ANALYSIS`, or `ML_COMPOSITE_CLUSTER` in `.env`. Node automatically uses `.venv/bin/python3` when present.
+
+## Optional: RL overlay
+
+Train via the **`POST /api/rl/train`** route (body: `universeId`, `period`, `episodes`, `strategy`, optional `gamma`). Diagnose with `GET /api/rl/status`, `/api/rl/policy`, `/api/rl/compare`, `/api/rl/oracle`. Set `RL_ENABLED=true` to actually use a trained agent, and `RL_AGENT_TYPE=qlearning|dqn` to pick the file.
+
+## Presentation snapshot
+
+With the API running on `:3001`:
+
+```bash
+bash extract-presentation-data.sh   # ~3–4 minutes, requires jq
+```
+
+Writes a self-contained `presentation-data.json` (gitignored).
 
 ---
 
 ## Documentation
 
-| Doc | Contents |
-|-----|----------|
-| **[docs/API.md](docs/API.md)** | HTTP routes (`/api/*`) grouped by area |
-| **[docs/SECURITY.md](docs/SECURITY.md)** | Threat model, spawn/M L, auth, secrets |
-| **[docs/DATA_CONTRACTS.md](docs/DATA_CONTRACTS.md)** | Data shapes, gold layer, verification |
+- [`docs/API.md`](docs/API.md) — HTTP routes by area.
+- [`docs/DATA_CONTRACTS.md`](docs/DATA_CONTRACTS.md) — data shapes, gold layer, verification.
+- [`docs/SECURITY.md`](docs/SECURITY.md) — threat model, ML spawning, secrets handling.
+- [`server/README.md`](server/README.md) — module breakdown.
 
----
-
-## ML (optional)
+A smoke check after starting the server:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r ml/requirements.txt
+curl -sS "http://localhost:3001/api/backtest/sp500_top150?period=1y&rebalanceFreq=bimonthly&topN=15&strategy=full_composite&rlAgent=false&fresh=true" \
+  | jq '{cached, computedAt, return: .performance.totalReturn}'
 ```
 
-Train (writes under `models/`): `python3 ml/train_rf.py`, `python3 ml/train_rnn.py`.  
-Blend weight for backtest/paper: **`ML_RANK_WEIGHT`** in `.env` (0–1). Node uses `.venv/bin/python3` automatically when present.
-
 ---
 
-## RL (optional)
+## Deployment
 
-Train via **`POST /api/rl/train`** (body: `universeId`, `period`, `episodes`, `strategy`, weights, optional **`gamma`** for reward tuning).  
-Diagnostics: **`GET /api/rl/status`**, **`/api/rl/policy`**, **`/api/rl/compare`**, **`GET /api/rl/oracle`** (constant-policy oracle vs full greedy policy).
+The repo includes config for three free-tier-friendly targets — pick one or roll your own. **Always set `DATA_DIR`** to a persistent volume so portfolio / RL state survives restarts.
 
----
+### Fly.io (single container, mounted volume)
 
-## Presentation data export
-
-With the API running on port **3001**:
+`fly.toml` defines a Dockerfile build, a `/data` volume mount, and a `/health` HTTP check.
 
 ```bash
-bash extract-presentation-data.sh
+fly volumes create market_data --size 1
+fly secrets set FRED_API_KEY=… TRADIER_SANDBOX_TOKEN=… TRADIER_ACCOUNT_ID=…
+fly deploy
 ```
 
-Writes **`presentation-data.json`** (~3–4 minutes; oracle runs 48 backtests). Requires **`jq`** installed.
+> Update `app = "market-analysis-liam"` in `fly.toml` to your own Fly app slug before the first deploy.
+
+### Railway (Nixpacks, persistent volume)
+
+`railway.json` uses the Nixpacks builder, runs `node server.js`, and points the health check at `/health`. Add a Railway volume mounted at `/data` and set `DATA_DIR=/data`.
+
+### Vercel (frontend only, split deploy)
+
+`vercel.json` builds the SPA (`npm run build`, `dist/`) and rewrites all routes to `index.html`. Point `VITE_API_BASE` at your API host (Fly / Railway) and add the same domain to `FRONTEND_URL` on the API side for CORS.
+
+### Docker
+
+```bash
+docker build -t market-analysis .
+docker run --rm -p 3001:3001 \
+  -e DATA_DIR=/data -v market_data:/data \
+  --env-file .env market-analysis
+```
 
 ---
 
-## Architecture notes (`server/`)
+## Security & data notes
 
-- Dependency direction: `config/` → `utils/` → `data/` → `scoring/` → `backtest/` — avoid circular imports.
-- Use **`server/config/paths.js`** for repo-root-relative JSON and caches.
-- **`q-learning-agent.js`** stays at **repo root** so the client can share encoding helpers without pulling Node-only code into odd bundles.
-- **`server/index.js`** re-exports the main app from root `server.js`.
+- **Never commit `.env`.** `.gitignore` covers `.env`, `.env.local`, `.env.production`.
+- The repo contains **no real credentials**; verified against tracked files and full git history before publication.
+- Tradier sandbox tokens are *paper money only* — there are no production order paths.
+- Yahoo data is best-effort. Backtest results are simulations, not investment advice.
 
-**Smoke check** (after `npm run server`):
-
-```bash
-curl -sS "http://localhost:3001/api/backtest/sp500_top150?period=1y&rebalanceFreq=bimonthly&topN=15&strategy=full_composite&rlAgent=false&fresh=true" | jq '{cached, computedAt, return: .performance.totalReturn}'
-```
-
-Backtests: UI typically sends **`fresh=true`**. Cached reuse needs **`useResultCache=1`**. Golden / gold-bar workflows: **`docs/DATA_CONTRACTS.md`**, `npm run verify:golden`, `npm run warm:gold`.
-
----
-
-## Production-style run
-
-```bash
-npm run build
-npm run server
-# Serve `dist/` behind a reverse proxy; set `VITE_API_BASE` at build time if API is on another origin.
-```
+See `docs/SECURITY.md` for spawn boundaries, ML subprocess surface, and audit notes.
 
 ---
 
 ## Troubleshooting
 
-| Issue | What to try |
-|--------|-------------|
-| Blank API / CORS | Run API on `PORT`; ensure Vite proxy target matches (`VITE_API_TARGET`). |
-| Yahoo / slow backtests | Network and rate limits; retry; check server logs for `[Yahoo]`. |
-| RL ignored | Set `RL_ENABLED=true`; ensure matching agent file exists and `RL_AGENT_TYPE` is correct. |
-| Paper portfolio errors | Holdings live under **`holdings`** (not only `positions`); init via **`POST /api/paper-trade/init`**. |
+| Symptom | Try |
+|---------|-----|
+| Blank API / CORS errors | API on `PORT`, Vite proxy at `VITE_API_TARGET`, or set `FRONTEND_URL` for split deploys |
+| Slow / failing Yahoo backtests | Network or rate limits; retry, check `[Yahoo]` server logs, warm `data/gold/` |
+| RL toggle does nothing | `RL_ENABLED=true` **and** the matching `rl-agent-top*.json` / `dqn-agent.json` exists for `RL_AGENT_TYPE` |
+| Paper portfolio errors | Init via `POST /api/paper-trade/init`; holdings live under `holdings`, not `positions` |
+| Options chains look fake | Without `TRADIER_SANDBOX_TOKEN` the server uses a deterministic mock by design |
 
 ---
+
+## Contributing
+
+This is a personal research project published for visibility. Issues and small PRs (typos, docs, obvious bugs) are welcome; please open an issue for anything bigger so we can sanity-check the direction first.
 
 ## License
 
-Private project (`"private": true` in `package.json`).
-
----
-
-## Other README files
-
-Third-party **`README`** files under `node_modules/` come from npm packages — do not edit or delete them. **This file** is the maintained project overview.
+Released as source-available for educational and research use. Not investment advice. See `package.json` for `"private": true` (no npm publishing) and treat any data, signals, or agent outputs as illustrative.
