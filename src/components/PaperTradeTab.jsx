@@ -15,8 +15,10 @@ import { apiFetch, safeJson } from "../lib/api.js";
 import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS } from "../lib/constants.js";
 import { fmtDate, fmtWeightPct, weightToPct } from "../lib/formatters.js";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
+import WheelTab from "./WheelTab.jsx";
 
 const PAPER_TRADE_SESSION_KEY = "ma-paper-trade-session-v1";
+const PAPER_TRADE_SUBTAB_KEY = "ma-paper-trade-subtab-v1";
 
 /** Set by Dashboard when navigating to Trading with a universe. */
 const PAPER_TRADE_NAV_UNIVERSE_KEY = "ma-paper-trade-nav-universe";
@@ -50,6 +52,24 @@ function writePaperTradeSessionCache(portfolio, history) {
 function clearPaperTradeSessionCache() {
   try {
     sessionStorage.removeItem(PAPER_TRADE_SESSION_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function readPaperTradeSubTab() {
+  if (typeof sessionStorage === "undefined") return "portfolio";
+  try {
+    const v = sessionStorage.getItem(PAPER_TRADE_SUBTAB_KEY);
+    return v === "wheel" ? "wheel" : "portfolio";
+  } catch {
+    return "portfolio";
+  }
+}
+
+function writePaperTradeSubTab(tab) {
+  try {
+    sessionStorage.setItem(PAPER_TRADE_SUBTAB_KEY, tab);
   } catch {
     /* ignore */
   }
@@ -125,6 +145,29 @@ function PaperSlotLoadingBanner({ show }) {
     <div className="ma-pt-slot-loading" role="status" aria-live="polite">
       <span className="ma-pt-spin" aria-hidden />
       <span className="ma-mono">Loading portfolio slot…</span>
+    </div>
+  );
+}
+
+function PaperTradeSubTabs({ active, disabled, onPick }) {
+  return (
+    <div className="ma-pt-segmented ma-pt-subtabs" style={{ width: "100%", maxWidth: 320, marginTop: 12 }}>
+      <button
+        type="button"
+        className={`ma-pt-seg ${active === "portfolio" ? "ma-pt-seg--active" : ""}`}
+        disabled={disabled}
+        onClick={() => onPick("portfolio")}
+      >
+        Portfolio
+      </button>
+      <button
+        type="button"
+        className={`ma-pt-seg ${active === "wheel" ? "ma-pt-seg--active" : ""}`}
+        disabled={disabled}
+        onClick={() => onPick("wheel")}
+      >
+        Wheel
+      </button>
     </div>
   );
 }
@@ -322,6 +365,9 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   const [showWeightHistory, setShowWeightHistory] = useState(false);
   const [showPositionDetails, setShowPositionDetails] = useState(false);
   const [holdingsSort, setHoldingsSort] = useState("weight");
+  const [paperSubTab, setPaperSubTab] = useState(readPaperTradeSubTab);
+  const [autoOptimizing, setAutoOptimizing] = useState(false);
+  const [autoOptResult, setAutoOptResult] = useState(null);
   const paperApi = useAbortableApi();
   /** Monotonic id so an older in-flight paper fetch cannot apply after a newer one. */
   const paperFetchGenRef = useRef(0);
@@ -361,6 +407,31 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
     const t = setTimeout(() => setToast(null), 5000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    writePaperTradeSubTab(paperSubTab);
+  }, [paperSubTab]);
+
+  const runAutoOptimize = async () => {
+    setAutoOptimizing(true);
+    setAutoOptResult(null);
+    try {
+      const res = await apiFetch("/api/paper-trade/auto-optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ universe: paperUniverseView })
+      });
+      const data = await safeJson(res);
+      setAutoOptResult(data);
+      if (Object.values(data.results || {}).some((r) => r.rebalanced)) {
+        await fetchPortfolio(true, paperUniverseView);
+      }
+    } catch (e) {
+      setAutoOptResult({ error: e.message });
+    } finally {
+      setAutoOptimizing(false);
+    }
+  };
 
   useEffect(() => {
     if (!portfolio || autoRebalanced || rebalancing) return;
@@ -558,38 +629,50 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           disabled
           onPick={() => {}}
         />
-        <div className="ma-pt-skel" style={{ height: 100, marginTop: 16, marginBottom: 12 }} />
-        <div className="ma-pt-skel" style={{ height: 280, marginBottom: 12 }} />
-        <div className="ma-pt-skel" style={{ height: 160 }} />
-        <div
-          className="ma-mono"
-          style={{
-            textAlign: "center",
-            fontSize: 12,
-            color: "var(--text-secondary)",
-            marginTop: 16
-          }}
-        >
-          Loading paper portfolio…
-        </div>
-        <div style={{ ...RUN_ACTION_BAR_STYLE, marginTop: 16 }}>
-          <button
-            type="button"
-            className="ma-btn-ghost"
-            onClick={() => {
-              paperApi.abortInFlight();
-              setLoading(false);
-            }}
-            onMouseEnter={() => setLoadBtnHover(true)}
-            onMouseLeave={() => setLoadBtnHover(false)}
-            style={{
-              minWidth: "auto",
-              color: loadBtnHover ? "var(--color-negative)" : undefined
-            }}
-          >
-            {loadBtnHover ? "CANCEL" : "STOP LOADING"}
-          </button>
-        </div>
+        <PaperTradeSubTabs active={paperSubTab} disabled={false} onPick={setPaperSubTab} />
+        {paperSubTab === "wheel" ? (
+          <WheelTab
+            visible={visible && paperSubTab === "wheel"}
+            universeId={paperUniverseView}
+            embedded
+          />
+        ) : (
+          <>
+            <div className="ma-pt-skel" style={{ height: 100, marginTop: 16, marginBottom: 12 }} />
+            <div className="ma-pt-skel" style={{ height: 280, marginBottom: 12 }} />
+            <div className="ma-pt-skel" style={{ height: 160 }} />
+            <div
+              className="ma-mono"
+              style={{
+                textAlign: "center",
+                fontSize: 12,
+                color: "var(--text-secondary)",
+                marginTop: 16
+              }}
+            >
+              Loading paper portfolio…
+            </div>
+            <div style={{ ...RUN_ACTION_BAR_STYLE, marginTop: 16 }}>
+              <button
+                type="button"
+                className="ma-btn-ghost"
+                onClick={() => {
+                  paperApi.abortInFlight();
+                  setLoading(false);
+                }}
+                onMouseEnter={() => setLoadBtnHover(true)}
+                onMouseLeave={() => setLoadBtnHover(false)}
+                style={{
+                  minWidth: "auto",
+                  color: loadBtnHover ? "var(--color-negative)" : undefined
+                }}
+              >
+                {loadBtnHover ? "CANCEL" : "STOP LOADING"}
+              </button>
+            </div>
+          </>
+        )}
+        <div className="ma-pt-foot">Paper trading · No real money · Educational purposes</div>
       </div>
     );
   }
@@ -607,6 +690,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             fetchPortfolio(true, id);
           }}
         />
+        <PaperTradeSubTabs active={paperSubTab} disabled={paperSlotFetchPending} onPick={setPaperSubTab} />
         <PaperSlotLoadingBanner show={paperSlotFetchPending} />
         {showResetConfirm && (
           <ConfirmModal
@@ -615,6 +699,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             onCancel={() => setShowResetConfirm(false)}
           />
         )}
+        {paperSubTab === "wheel" && (
+          <WheelTab
+            visible={visible && paperSubTab === "wheel"}
+            universeId={paperUniverseView}
+            embedded
+          />
+        )}
+        {paperSubTab === "portfolio" && (
         <div
           style={{
             opacity: paperSlotFetchPending ? 0.55 : 1,
@@ -711,6 +803,8 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             </div>
           </Box>
         </div>
+        )}
+        <div className="ma-pt-foot">Paper trading · No real money · Educational purposes</div>
       </div>
     );
   }
@@ -772,25 +866,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           fetchPortfolio(true, id);
         }}
       />
+      <PaperTradeSubTabs active={paperSubTab} disabled={loading || slotUiPending} onPick={setPaperSubTab} />
       <PaperSlotLoadingBanner show={slotUiPending} />
-      <div className="ma-pt-slot-summary">
-        {displayUniLabel} · {holdings.length} positions · ${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Since{" "}
-        {fmtDate(createdAt)}
-      </div>
       {showResetConfirm && (
         <ConfirmModal
           message={`Reset portfolio (implied start ~$${Math.round(derivedInitialCapital).toLocaleString()})? This cannot be undone.`}
           onConfirm={resetPortfolio}
           onCancel={() => setShowResetConfirm(false)}
         />
-      )}
-
-      {rebalancing && autoRebalanced && (
-        <Box>
-          <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
-            Auto-rebalancing — calendar date reached the next scheduled rebalance (15th-aligned, same rule as backtest). Running the model on live data...
-          </div>
-        </Box>
       )}
 
       {error && (
@@ -801,13 +884,28 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
         </Box>
       )}
 
-      <div
-        style={{
-          opacity: slotUiPending ? 0.55 : 1,
-          transition: "opacity 0.2s ease",
-          pointerEvents: slotUiPending ? "none" : undefined
-        }}
-      >
+      {paperSubTab === "portfolio" && (
+        <div className="ma-pt-portfolio-panel">
+          <div className="ma-pt-slot-summary">
+            {displayUniLabel} · {holdings.length} positions · ${summary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 })} · Since{" "}
+            {fmtDate(createdAt)}
+          </div>
+
+          {rebalancing && autoRebalanced && (
+            <Box>
+              <div className="ma-mono" style={{ fontSize: 12, color: "var(--color-text-dim)" }}>
+                Auto-rebalancing — calendar date reached the next scheduled rebalance (15th-aligned, same rule as backtest). Running the model on live data...
+              </div>
+            </Box>
+          )}
+
+          <div
+            style={{
+              opacity: slotUiPending ? 0.55 : 1,
+              transition: "opacity 0.2s ease",
+              pointerEvents: slotUiPending ? "none" : undefined
+            }}
+          >
         <div className="ma-pt-hero">
         <div className="ma-pt-hero__grid">
           <div>
@@ -1041,6 +1139,52 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
               </div>
             </>
           )}
+          <div className="ma-pt-quick__title" style={{ marginTop: 8 }}>
+            AUTO-OPTIMIZER
+          </div>
+          <div className="ma-pt-rl-row">
+            <span className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+              Score check
+            </span>
+            <span className="ma-pt-rl-pill ma-pt-rl-pill--on">ON</span>
+          </div>
+          <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 6 }}>
+            Mon · Wed · Fri at 9:50 AM ET. Triggers rebalance if &gt;30% of holdings have degraded composite score or portfolio is &gt;20 days stale.
+          </div>
+          {autoOptResult && (
+            <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 4 }}>
+              {autoOptResult.error
+                ? <span style={{ color: "var(--red)" }}>{autoOptResult.error}</span>
+                : Object.entries(autoOptResult.results || {}).map(([uid, r]) => (
+                  <div key={uid}>
+                    {uid === paperUniverseView
+                      ? r.rebalanced
+                        ? <span style={{ color: "var(--green)" }}>✓ Rebalanced — {r.triggerReason}</span>
+                        : <span>{r.reason ?? r.triggerReason ?? "healthy"}</span>
+                      : null}
+                  </div>
+                ))}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={autoOptimizing || rebalancing}
+            onClick={runAutoOptimize}
+            style={{
+              background: "transparent",
+              border: "1px solid var(--border-card)",
+              color: autoOptimizing ? "var(--text-secondary)" : "var(--text-primary)",
+              borderRadius: 6,
+              padding: "6px 10px",
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              cursor: autoOptimizing ? "not-allowed" : "pointer",
+              width: "100%",
+              marginBottom: 8
+            }}
+          >
+            {autoOptimizing ? "Checking…" : "Run Optimizer Now"}
+          </button>
           <div className="ma-pt-actions">
             <button type="button" className="ma-pt-btn-primary" disabled={rebalancing} onClick={onRebalanceClick}>
               {rebalancing ? (
@@ -1403,6 +1547,16 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             );
           })}
         </div>
+      )}
+        </div>
+      )}
+
+      {paperSubTab === "wheel" && (
+        <WheelTab
+          visible={visible && paperSubTab === "wheel"}
+          universeId={paperUniverseView}
+          embedded
+        />
       )}
 
       <div className="ma-pt-foot">Paper trading · No real money · Educational purposes</div>

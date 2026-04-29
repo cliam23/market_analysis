@@ -13836,6 +13836,84 @@ app.get('/api/paper-trade/schedule', (req, res) => {
 });
 
 // =====================================================================
+// PAPER TRADE — Auto-optimize (score-degradation check + conditional rebalance)
+// =====================================================================
+
+// Scans the current holdings for composite score degradation and triggers
+// a rebalance when the portfolio has drifted materially off its optimal picks.
+app.post('/api/paper-trade/auto-optimize', async (req, res) => {
+  try {
+    clearBacktestRuntimeCaches();
+    const universeIds = ['sp500_top50', 'sp500_top150'];
+    const results = {};
+
+    for (const uid of universeIds) {
+      const portfolio = loadPaperPortfolioForUniverse(uid);
+      if (!portfolio) {
+        results[uid] = { skipped: true, reason: 'no portfolio' };
+        continue;
+      }
+
+      const holdings = portfolio.holdings || [];
+      if (holdings.length === 0) {
+        results[uid] = { skipped: true, reason: 'no holdings yet' };
+        continue;
+      }
+
+      // Score degradation check: if > 30% of positions have composite score
+      // below the DEGRADATION_FLOOR, or the portfolio hasn't been rebalanced
+      // in > STALE_DAYS, trigger a rebalance.
+      const DEGRADATION_FLOOR = 55;
+      const STALE_DAYS = 20;
+      const now = new Date();
+      const lastRb = portfolio.lastRebalance ? new Date(portfolio.lastRebalance) : null;
+      const daysSinceLast = lastRb ? Math.floor((now - lastRb) / 86400000) : Infinity;
+
+      const degraded = holdings.filter((h) => {
+        const score = Number(h.scores?.composite ?? h.compositeScore ?? h.score ?? 100);
+        return score < DEGRADATION_FLOOR;
+      });
+      const degradedPct = degraded.length / holdings.length;
+
+      const needsRebalance = degradedPct > 0.30 || daysSinceLast > STALE_DAYS;
+      if (!needsRebalance) {
+        results[uid] = {
+          skipped: true,
+          reason: `healthy (degraded ${(degradedPct * 100).toFixed(0)}% < 30%, last rebalanced ${daysSinceLast}d ago)`
+        };
+        continue;
+      }
+
+      // Trigger rebalance
+      const triggerReason = degradedPct > 0.30
+        ? `${(degradedPct * 100).toFixed(0)}% of positions below score floor ${DEGRADATION_FLOOR}`
+        : `stale — ${daysSinceLast} days since last rebalance`;
+
+      try {
+        const asOf = resolvePaperAsOfDate(req.body || {});
+        const out = await paperRebalanceExecute(portfolio, true, { asOfDate: asOf });
+        results[uid] = {
+          rebalanced: true,
+          triggerReason,
+          degradedCount: degraded.length,
+          daysSinceLast,
+          summary: { buys: out.buys?.length ?? 0, sells: out.sells?.length ?? 0 }
+        };
+      } catch (e) {
+        results[uid] = { error: e.message || String(e), triggerReason };
+      }
+    }
+
+    res.json({ success: true, results, ranAt: new Date().toISOString() });
+  } catch (e) {
+    console.error('[paper-trade/auto-optimize]', e);
+    res.status(500).json({ success: false, error: e.message });
+  } finally {
+    clearBacktestRuntimeCaches();
+  }
+});
+
+// =====================================================================
 // PAPER TRADE — History
 // =====================================================================
 
@@ -14623,7 +14701,9 @@ app.get('/api/wheel/status', async (req, res) => {
       },
       summary,
       optionsLegs: wheel.optionsLegs || [],
-      closedLegs: (wheel.closedLegs || []).slice(-10)
+      closedLegs: (wheel.closedLegs || []).slice(-10),
+      lastRun: wheel.lastRun ?? null,
+      lastOptimized: wheel.lastOptimized ?? null
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message || String(err) });
@@ -14734,6 +14814,192 @@ app.post('/api/wheel/run', async (req, res) => {
   }
 });
 
+
+// ── Wheel Optimizer ─────────────────────────────────────────────────────────
+// Smarter than /run: beyond standard profit/DTE closes, also identifies legs
+// that are significantly outclassed by a fresh scan opportunity (EV ratio ≥ 2×)
+// and replaces them. Runs on the same universe-aware snapshot used by /run.
+app.post('/api/wheel/optimize', async (req, res) => {
+  try {
+    const universeId = String(req.body?.universeId ?? req.query?.universeId ?? 'sp500_top50').trim();
+    const wheel = loadWheelPortfolio();
+    const snap = await paperPortfolioSnapshot(universeId);
+    const regime = String(req.body?.regime ?? snap.regime ?? 'normal').toLowerCase();
+
+    const nowIso = new Date().toISOString();
+    const actions = { closed: [], replaced: [], opened: [], errors: [] };
+
+    // ── Phase 1: standard management (profit target / DTE / bear) ─────────
+    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime);
+    let remaining = mgmt.positions || [];
+    for (const c of (mgmt.actions?.closed || [])) {
+      const pnl = Number(c.pnl) || 0;
+      wheel.closedLegs.push({ symbol: c.symbol, ticker: c.ticker, closedAt: c.closedAt, closeReason: c.reason, realizedPnL: pnl });
+      wheel.stats.totalOptionsPnl += pnl;
+      wheel.stats.totalLegs += 1;
+      if (pnl >= 0) wheel.stats.wins += 1; else wheel.stats.losses += 1;
+      actions.closed.push(c);
+    }
+    wheel.optionsLegs = remaining;
+
+    // ── Phase 2: fresh scan ────────────────────────────────────────────────
+    const scan = await computeOptionsScan(universeId);
+    const scanOpps = scan.opportunities || [];
+
+    // Build a quick lookup: best-EV scan opportunity per ticker
+    const bestScanByTicker = {};
+    for (const opp of scanOpps) {
+      const t = String(opp.ticker || '').toUpperCase();
+      if (!t || !opp.optionSymbol) continue;
+      if ((Number(opp.ev) || 0) <= 0) continue;
+      if (!bestScanByTicker[t] || (Number(opp.ev) || 0) > (Number(bestScanByTicker[t].ev) || 0)) {
+        bestScanByTicker[t] = opp;
+      }
+    }
+
+    // ── Phase 3: replace underperforming legs when a 2× better opp exists ─
+    const EV_REPLACE_RATIO = 2.0;
+    const LOSS_PCT_THRESHOLD = -0.10; // only consider replacing legs already down >10%
+    const newRemaining = [];
+    for (const leg of remaining) {
+      const pnlPct = Number(leg.currentPnLPct) || 0;
+      const legEv = Number(leg.ev) || 0;
+      const ticker = String(leg.ticker || '').toUpperCase();
+      const bestAlt = Object.values(bestScanByTicker).find(
+        (o) => String(o.ticker || '').toUpperCase() !== ticker &&
+               (Number(o.ev) || 0) >= legEv * EV_REPLACE_RATIO &&
+               !remaining.some((r) => String(r.ticker).toUpperCase() === String(o.ticker).toUpperCase()) &&
+               !newRemaining.some((r) => String(r.ticker).toUpperCase() === String(o.ticker).toUpperCase())
+      );
+
+      if (pnlPct < LOSS_PCT_THRESHOLD && bestAlt) {
+        // Close the underperformer
+        try {
+          const prem = Number(leg.currentMark ?? leg.entryCredit) || 0;
+          const closeLimit = Math.max(0.01, prem + 0.05);
+          const closeResp = await openShortOptionLeg({
+            ticker: leg.ticker,
+            optionSymbol: leg.optionSymbol,
+            quantity: leg.quantity ?? 1,
+            limitPrice: closeLimit,
+            side: 'buy'
+          }).catch(() => null);
+          const pnl = (Number(leg.entryCredit) - prem) * 100 * (leg.quantity ?? 1);
+          wheel.closedLegs.push({ symbol: leg.optionSymbol, ticker: leg.ticker, closedAt: nowIso, closeReason: `replaced: better opp ${bestAlt.ticker} (EV ${Number(bestAlt.ev).toFixed(0)} vs ${legEv.toFixed(0)})`, realizedPnL: pnl });
+          wheel.stats.totalOptionsPnl += pnl;
+          wheel.stats.totalLegs += 1;
+          if (pnl >= 0) wheel.stats.wins += 1; else wheel.stats.losses += 1;
+          actions.replaced.push({ closedTicker: leg.ticker, closedSymbol: leg.optionSymbol, replacedBy: bestAlt.ticker, replacedByEv: Number(bestAlt.ev) });
+          // Open the replacement
+          const newPrem = Number(bestAlt.premium ?? bestAlt.mid ?? bestAlt.bid ?? 0) || 0;
+          const newLimit = Math.max(0.01, parseFloat((newPrem - 0.02).toFixed(2)));
+          if (newLimit >= 0.1) {
+            const openResp = await openShortOptionLeg({ ticker: bestAlt.ticker, optionSymbol: bestAlt.optionSymbol, quantity: 1, limitPrice: newLimit });
+            const newLeg = {
+              ticker: String(bestAlt.ticker).toUpperCase(),
+              strategy: bestAlt.strategy,
+              optionSymbol: bestAlt.optionSymbol,
+              strike: bestAlt.strike,
+              expiration: bestAlt.expiration,
+              quantity: 1,
+              entryCredit: newLimit,
+              entryDate: nowIso,
+              entryOrderId: openResp?.order?.id ?? 'DRY_RUN',
+              ev: Number(bestAlt.ev) || 0,
+              delta: bestAlt.delta,
+              dte: bestAlt.dte,
+              ivRank: bestAlt.ivRank,
+              currentPrice: bestAlt.currentPrice,
+              compositeScore: bestAlt.compositeScore,
+              reason: `optimizer replacement for ${leg.ticker}`
+            };
+            newRemaining.push(newLeg);
+            wheel.stats.premiumCollected += newLimit * 100;
+            actions.opened.push({ ticker: bestAlt.ticker, symbol: bestAlt.optionSymbol, credit: newLimit, reason: 'optimizer_replacement' });
+          }
+        } catch (e) {
+          newRemaining.push(leg);
+          actions.errors.push({ ticker: leg.ticker, error: e.message || String(e) });
+        }
+      } else {
+        newRemaining.push(leg);
+      }
+    }
+    wheel.optionsLegs = newRemaining;
+
+    // ── Phase 4: fill remaining slots from scored fresh scan ──────────────
+    // Score = EV × log(1 + ivRank) — rewards both premium size and IV edge
+    const scoredOpps = scanOpps
+      .filter((o) => {
+        if (!o?.optionSymbol) return false;
+        if ((Number(o.ev) || 0) <= 0) return false;
+        if ((Number(o.ivRank) || 0) < 40) return false;
+        const vrpOk = o.vrpEdge != null ? !!o.vrpEdge : (Number(o.ivRank) || 0) > 50;
+        if (!vrpOk) return false;
+        const t = String(o.ticker || '').toUpperCase();
+        if (wheel.optionsLegs.some((l) => String(l.ticker).toUpperCase() === t)) return false;
+        // Regime gate
+        const allowedCC = WHEEL_CONFIG.regimeAllowsCC.includes(regime);
+        const allowedCSP = WHEEL_CONFIG.regimeAllowsCSP.includes(regime);
+        if (o.strategy === 'COVERED_CALL' && !allowedCC) return false;
+        if (o.strategy === 'CASH_SECURED_PUT' && !allowedCSP) return false;
+        return true;
+      })
+      .map((o) => ({ ...o, _optimizerScore: (Number(o.ev) || 0) * Math.log(1 + (Number(o.ivRank) || 0)) }))
+      .sort((a, b) => b._optimizerScore - a._optimizerScore);
+
+    const openSlots = Math.max(0, WHEEL_CONFIG.maxWheelPositions - wheel.optionsLegs.length);
+    const toOpen = scoredOpps.slice(0, openSlots);
+    for (const opp of toOpen) {
+      try {
+        const prem = Number(opp.premium ?? opp.mid ?? opp.bid ?? 0) || 0;
+        const limit = Math.max(0.01, parseFloat((prem - 0.02).toFixed(2)));
+        if (limit < 0.1) continue;
+        const resp = await openShortOptionLeg({ ticker: opp.ticker, optionSymbol: opp.optionSymbol, quantity: 1, limitPrice: limit });
+        const newLeg = {
+          ticker: String(opp.ticker).toUpperCase(),
+          strategy: opp.strategy,
+          optionSymbol: opp.optionSymbol,
+          strike: opp.strike,
+          expiration: opp.expiration,
+          quantity: 1,
+          entryCredit: limit,
+          entryDate: nowIso,
+          entryOrderId: resp?.order?.id ?? 'DRY_RUN',
+          ev: Number(opp.ev) || 0,
+          delta: opp.delta,
+          dte: opp.dte,
+          ivRank: opp.ivRank,
+          currentPrice: opp.currentPrice,
+          compositeScore: opp.compositeScore,
+          reason: `optimizer: score ${(opp._optimizerScore || 0).toFixed(1)}`
+        };
+        wheel.optionsLegs.push(newLeg);
+        wheel.stats.premiumCollected += limit * 100;
+        actions.opened.push({ ticker: opp.ticker, symbol: opp.optionSymbol, credit: limit, ev: Number(opp.ev), ivRank: Number(opp.ivRank), reason: 'optimizer_fill' });
+      } catch (e) {
+        actions.errors.push({ ticker: opp.ticker, error: e.message || String(e) });
+      }
+    }
+
+    wheel.lastRun = nowIso;
+    wheel.lastOptimized = nowIso;
+    saveWheelPortfolio(wheel);
+
+    const summary = getWheelSummary({ equityTotalValue: snap.totalValue, equityTotalReturnPct: snap.totalReturnPct, regime }, wheel);
+    res.json({
+      success: true,
+      universeId,
+      regime,
+      actions,
+      summary,
+      optionsLegs: wheel.optionsLegs
+    });
+  } catch (err) {
+    console.error('[wheel/optimize]', err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
 
 function closePaperOptionsPosition(portfolio, positionId, closePremium, reason) {
   const pos = portfolio.positions.find((p) => p.id === positionId);
@@ -15835,7 +16101,7 @@ cron.schedule(
   { timezone: 'America/New_York' }
 );
 
-// Auto trader + wheel — every trading day at 9:35 AM ET
+// Auto trader + wheel optimizer — every trading day at 9:35 AM ET (open)
 cron.schedule(
   '35 9 * * 1-5',
   async () => {
@@ -15851,14 +16117,69 @@ cron.schedule(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
       });
-      await fetch(`${base}/api/wheel/run`, {
+      // Use optimize (smarter replacement) for wheel morning pass
+      await fetch(`${base}/api/wheel/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ universeId: 'sp500_top50' })
+      });
+      await fetch(`${base}/api/wheel/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ universeId: 'sp500_top150' })
+      });
+      console.log('[CRON] Auto trader + wheel optimize (morning) complete');
+    } catch (e) {
+      console.error('[CRON] Auto trader + wheel failed:', e?.message || e);
+    }
+  },
+  { timezone: 'America/New_York' }
+);
+
+// Wheel re-optimize mid-day — every trading day at 2:45 PM ET
+// Catches intraday IV shifts and fills any slots freed by profit targets hit during the session.
+cron.schedule(
+  '45 14 * * 1-5',
+  async () => {
+    if (!cronWarmupDone()) return;
+    if (!isTradingDay()) return;
+    try {
+      const base = `http://localhost:${PORT}`;
+      await fetch(`${base}/api/wheel/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ universeId: 'sp500_top50' })
+      });
+      await fetch(`${base}/api/wheel/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ universeId: 'sp500_top150' })
+      });
+      console.log('[CRON] Wheel mid-day re-optimize complete');
+    } catch (e) {
+      console.error('[CRON] Wheel mid-day re-optimize failed:', e?.message || e);
+    }
+  },
+  { timezone: 'America/New_York' }
+);
+
+// Paper trade score-degradation auto-optimizer — Mon, Wed, Fri at 9:50 AM ET
+cron.schedule(
+  '50 9 * * 1,3,5',
+  async () => {
+    if (!cronWarmupDone()) return;
+    if (!isTradingDay()) return;
+    try {
+      const base = `http://localhost:${PORT}`;
+      const r = await fetch(`${base}/api/paper-trade/auto-optimize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})
       });
-      console.log('[CRON] Auto trader + wheel cycle complete');
+      const j = await r.json().catch(() => ({}));
+      console.log('[CRON] Paper auto-optimize:', JSON.stringify(j.results ?? {}));
     } catch (e) {
-      console.error('[CRON] Auto trader + wheel failed:', e?.message || e);
+      console.error('[CRON] Paper auto-optimize failed:', e?.message || e);
     }
   },
   { timezone: 'America/New_York' }

@@ -6,6 +6,17 @@ import { SANS, TEXT, GREEN, RED, AMBER } from "../lib/theme.js";
 
 const fmtMoney = (n) => _fmtMoney(n, 2);
 
+/** Matches server paper JSON files per `universeId` on GET /api/wheel/status */
+export const WHEEL_EQUITY_BOOK = {
+  sp500_top50: { label: "S&P 500 Top 50", file: "paper-portfolio-top50.json" },
+  sp500_top150: { label: "S&P 500 Top 150", file: "paper-portfolio-top150.json" }
+};
+
+function equityBookMeta(universeId) {
+  const id = String(universeId || "sp500_top50");
+  return WHEEL_EQUITY_BOOK[id] || WHEEL_EQUITY_BOOK.sp500_top50;
+}
+
 function StatCard({ label, value, tone }) {
   const color = tone === "good" ? GREEN : tone === "bad" ? RED : TEXT;
   return (
@@ -18,17 +29,25 @@ function StatCard({ label, value, tone }) {
   );
 }
 
-export default function WheelTab({ visible = true }) {
+export default function WheelTab({
+  visible = true,
+  universeId = "sp500_top50",
+  embedded = true
+}) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [error, setError] = useState(null);
+
+  const book = useMemo(() => equityBookMeta(universeId), [universeId]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch("/api/wheel/status?universeId=sp500_top50");
+      const q = new URLSearchParams({ universeId: String(universeId || "sp500_top50") });
+      const res = await apiFetch(`/api/wheel/status?${q}`);
       const j = await safeJson(res);
       if (!j.success) throw new Error(j.error || "Wheel status failed");
       setStatus(j);
@@ -38,7 +57,7 @@ export default function WheelTab({ visible = true }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [universeId]);
 
   useEffect(() => {
     if (!visible) return;
@@ -52,7 +71,7 @@ export default function WheelTab({ visible = true }) {
       const res = await apiFetch("/api/wheel/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ universeId: "sp500_top50" })
+        body: JSON.stringify({ universeId: String(universeId || "sp500_top50") })
       });
       const j = await safeJson(res);
       if (!j.success && j.mode !== "mock") throw new Error(j.error || "Wheel run failed");
@@ -62,7 +81,26 @@ export default function WheelTab({ visible = true }) {
     } finally {
       setRunning(false);
     }
-  }, [load]);
+  }, [load, universeId]);
+
+  const optimize = useCallback(async () => {
+    setOptimizing(true);
+    setError(null);
+    try {
+      const res = await apiFetch("/api/wheel/optimize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ universeId: String(universeId || "sp500_top50") })
+      });
+      const j = await safeJson(res);
+      if (!j.success) throw new Error(j.error || "Wheel optimize failed");
+      await load();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setOptimizing(false);
+    }
+  }, [load, universeId]);
 
   const summary = status?.summary;
   const legs = status?.optionsLegs ?? [];
@@ -88,31 +126,132 @@ export default function WheelTab({ visible = true }) {
   }, [legs]);
 
   return (
-    <div className="ma-page-container" style={{ fontFamily: SANS, color: TEXT, paddingBottom: 32 }}>
+    <div
+      className={embedded ? "ma-pt-wheel-embed" : "ma-page-container"}
+      style={{ fontFamily: SANS, color: TEXT, paddingBottom: embedded ? 16 : 32 }}
+    >
       <header>
-        <p className="ma-opt-header-kicker">WHEEL</p>
-        <h1 className="ma-opt-header-title">Options-Enhanced Wheel Portfolio</h1>
-        <p className="ma-opt-header-sub">Equity alpha + covered call premium + cash-secured put premium</p>
+        {!embedded && <p className="ma-opt-header-kicker">WHEEL</p>}
+        <h1 className={embedded ? "ma-section-title" : "ma-opt-header-title"} style={{ marginBottom: embedded ? 8 : undefined }}>
+          Options-Enhanced Wheel
+        </h1>
+        <p className="ma-opt-header-sub" style={{ marginBottom: 12 }}>
+          Equity alpha + covered-call premium + cash-secured put premium
+        </p>
       </header>
 
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-          Regime: <span style={{ color: regimeColor, fontWeight: 800 }}>{regime}</span>
+      <div
+        className="ma-pt-wheel-equity-banner"
+        role="status"
+        style={{
+          marginBottom: 16,
+          padding: "12px 14px",
+          borderRadius: 8,
+          border: "1px solid var(--border-card)",
+          background: "rgba(14, 165, 233, 0.08)",
+          fontSize: 13,
+          lineHeight: 1.55
+        }}
+      >
+        <strong style={{ color: "var(--text-primary)" }}>Equity portfolio source</strong>
+        <div style={{ marginTop: 6, color: "var(--text-secondary)" }}>
+          This wheel reads holdings and NAV from the{" "}
+          <strong style={{ color: "var(--text-primary)" }}>{book.label}</strong> paper trade book{" "}
+          <span className="ma-mono" style={{ fontSize: 12, opacity: 0.9 }}>
+            ({book.file})
+          </span>
+          . CC legs target stocks you already hold in that book; CSPs consider high-score names from the same universe scan.
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button type="button" className="ma-opt-refresh" onClick={load} disabled={loading || running}>
+      </div>
+
+      <div
+        className="ma-pt-wheel-metrics-explainer"
+        role="region"
+        aria-label="What equity value means versus wheel profits"
+        style={{
+          marginBottom: 16,
+          padding: "14px 16px",
+          borderRadius: 8,
+          border: "1px solid var(--border-card)",
+          background: "rgba(251, 191, 36, 0.06)",
+          fontSize: 13,
+          lineHeight: 1.65,
+          color: "var(--text-secondary)"
+        }}
+      >
+        <div style={{ fontWeight: 800, color: "var(--text-primary)", marginBottom: 8, fontSize: 13 }}>
+          Equity value is not your wheel “take-home”
+        </div>
+        <p style={{ margin: "0 0 10px" }}>
+          <strong style={{ color: "var(--text-primary)" }}>Paper portfolio value</strong> (shown as{" "}
+          <span className="ma-mono">Paper NAV</span> below) is the total market value of your Paper Trade account—stocks and
+          cash. It moves with the market and rebalances;{" "}
+          <strong style={{ color: "var(--text-primary)" }}>it is not the cumulative profit from selling options alone</strong>.
+        </p>
+        <p style={{ margin: "0 0 10px" }}>
+          <strong style={{ color: "var(--text-primary)" }}>What comes from the wheel</strong> shows up in{" "}
+          <span className="ma-mono">Premium collected</span>, <span className="ma-mono">Options P&amp;L</span>
+          (realized / tracked on closed legs), and <span className="ma-mono">Open P&amp;L</span> on positions still open.
+        </p>
+        <p style={{ margin: 0 }}>
+          <strong style={{ color: "var(--text-primary)" }}>Combined P&amp;L</strong> is an approximation: dollar move implied
+          by your paper portfolio&apos;s return percentage, <em>plus</em> cumulative options P&amp;L—it mixes equity performance
+          with the options overlay; use the options lines when you only care about premium selling results.
+        </p>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            Regime: <span style={{ color: regimeColor, fontWeight: 800 }}>{regime}</span>
+          </div>
+          {/* Auto-reload badge */}
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px",
+            borderRadius: 20, background: "rgba(16, 185, 129, 0.12)",
+            border: "1px solid rgba(16, 185, 129, 0.35)", fontSize: 11
+          }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#10b981", display: "inline-block" }} />
+            <span className="ma-mono" style={{ color: "#10b981", fontWeight: 700 }}>Auto-reload ON</span>
+          </div>
+          {status?.equity != null && (
+            <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+              {status.optionsLegs?.length ?? 0} / {5} legs · auto-replaces underperformers · refills after close
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button type="button" className="ma-opt-refresh" onClick={load} disabled={loading || running || optimizing}>
             Refresh
           </button>
           <button
             type="button"
+            onClick={optimize}
+            disabled={optimizing || running}
+            style={{
+              background: optimizing ? "#334155" : "rgba(14, 165, 233, 0.15)",
+              color: optimizing ? "var(--text-secondary)" : "#0EA5E9",
+              border: "1px solid #0EA5E9",
+              borderRadius: 8,
+              padding: "8px 14px",
+              cursor: optimizing ? "not-allowed" : "pointer",
+              fontWeight: 700,
+              fontSize: 11,
+              fontFamily: "var(--font-mono)"
+            }}
+          >
+            {optimizing ? "Optimizing…" : "Optimize Now"}
+          </button>
+          <button
+            type="button"
             onClick={run}
-            disabled={running}
+            disabled={running || optimizing}
             style={{
               background: running ? "#334155" : "#0EA5E9",
               color: "#fff",
               border: "none",
               borderRadius: 8,
-              padding: "10px 18px",
+              padding: "8px 14px",
               cursor: running ? "not-allowed" : "pointer",
               fontWeight: 800,
               fontSize: 12
@@ -122,6 +261,18 @@ export default function WheelTab({ visible = true }) {
           </button>
         </div>
       </div>
+
+      {/* Last optimized / last run timestamps */}
+      {(status?.equity != null) && (
+        <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.6 }}>
+          {status?.lastOptimized && (
+            <span style={{ marginRight: 12 }}>
+              Last optimized: {new Date(status.lastOptimized).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+            </span>
+          )}
+          <span>Auto schedule: 9:35 AM + 2:45 PM ET every trading day</span>
+        </div>
+      )}
 
       {error && <div style={{ marginTop: 12, color: RED, fontSize: 13 }}>{error}</div>}
 
@@ -136,8 +287,8 @@ export default function WheelTab({ visible = true }) {
         {!loading && summary && (
           <>
             <div className="ma-opt-stats-grid">
-              <StatCard label="Equity value" value={fmtMoney(summary.equityTotalValue)} />
-              <StatCard label="Equity return" value={`${Number(summary.equityTotalReturnPct || 0).toFixed(2)}%`} />
+              <StatCard label="Paper NAV (stocks + cash)" value={fmtMoney(summary.equityTotalValue)} />
+              <StatCard label="Paper portfolio return" value={`${Number(summary.equityTotalReturnPct || 0).toFixed(2)}%`} />
               <StatCard label="Premium collected" value={fmtMoney(summary.premiumCollected)} tone="good" />
               <StatCard label="Options P&L" value={fmtMoney(summary.optionsPnl)} tone={summary.optionsPnl >= 0 ? "good" : "bad"} />
               <StatCard label="Combined P&L" value={fmtMoney(summary.combinedPnl)} tone={toneCombined} />
