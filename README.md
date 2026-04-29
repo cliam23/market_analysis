@@ -95,7 +95,7 @@ All variables live in **`.env`** (gitignored). Copy from `.env.example` and fill
 |----------|---------|
 | `NODE_ENV`   | `development` or `production` |
 | `PORT`       | API port (default `3001`) |
-| `DATA_DIR`   | Persistent volume for runtime JSON (Railway / Fly: `/data`) |
+| `DATA_DIR`   | Persistent volume for runtime JSON (e.g. Railway or Docker: `/data`) |
 | `FRONTEND_URL` | CORS origin for split-deployed UI |
 | `VITE_API_TARGET` | Vite dev-server proxy target (default `http://localhost:3001`) |
 | `VITE_API_BASE`   | Absolute API URL baked into a built SPA |
@@ -145,7 +145,7 @@ See **`.env.example`** for the full list of toggles (`ML_RANK_WEIGHT`, `RL_ENABL
 ├─ docs/                     # API.md, DATA_CONTRACTS.md, SECURITY.md, slide PDF
 ├─ graphify-out/             # Knowledge-graph reports for the codebase
 ├─ Dockerfile, .dockerignore
-├─ fly.toml, railway.json, vercel.json
+├─ railway.json, vercel.json
 └─ README.md
 ```
 
@@ -249,19 +249,7 @@ curl -sS "http://localhost:3001/api/backtest/sp500_top150?period=1y&rebalanceFre
 
 ## Deployment
 
-The repo includes config for three free-tier-friendly targets — pick one or roll your own. **Always set `DATA_DIR`** to a persistent volume so portfolio / RL state survives restarts.
-
-### Fly.io (single container, mounted volume)
-
-`fly.toml` defines a Dockerfile build, a `/data` volume mount, and a `/health` HTTP check.
-
-```bash
-fly volumes create market_data --size 1
-fly secrets set FRED_API_KEY=… TRADIER_SANDBOX_TOKEN=… TRADIER_ACCOUNT_ID=…
-fly deploy
-```
-
-> Update `app = "market-analysis-liam"` in `fly.toml` to your own Fly app slug before the first deploy.
+The repo includes config for common split-deploy setups (Railway API + Vercel UI) plus plain Docker — or roll your own. **Always set `DATA_DIR`** to a persistent volume so portfolio / RL state survives restarts.
 
 ### Railway (Nixpacks, persistent volume)
 
@@ -269,7 +257,7 @@ fly deploy
 
 ### Vercel (frontend only, split deploy)
 
-`vercel.json` builds the SPA (`npm run build`, `dist/`) and rewrites all routes to `index.html`. Point `VITE_API_BASE` at your API host (Fly / Railway) and add the same domain to `FRONTEND_URL` on the API side for CORS.
+`vercel.json` builds the SPA (`npm run build`, `dist/`) and rewrites all routes to `index.html`. Point `VITE_API_BASE` at your API host (e.g. Railway) and add the same domain to `FRONTEND_URL` on the API side for CORS.
 
 ### Docker
 
