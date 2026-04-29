@@ -1345,6 +1345,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                   <th className="ma-num">P&amp;L %</th>
                   <th className="ma-num">Weight</th>
                   <th className="ma-num">Composite</th>
+                  <th className="ma-num ma-pt-col-hide-sm">Congress</th>
                 </tr>
               </thead>
               <tbody>
@@ -1404,6 +1405,24 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                       </td>
                       <td className="ma-mono ma-num" style={{ color: tier, fontWeight: 600 }}>
                         {h.scores?.composite?.toFixed(1) || "—"}
+                      </td>
+                      <td className="ma-mono ma-num ma-pt-col-hide-sm">
+                        {(h.congressScore ?? 0) > 0 ? (
+                          <span
+                            title={`Score: ${h.congressScore}/10 · ${h.congressSentiment}\nNet buys: ${h.congressNetBuys ?? 0}\n${(h.congressPoliticians ?? []).join(", ")}`}
+                            style={{
+                              color: h.congressSentiment === "bullish" ? "var(--green)"
+                                   : h.congressSentiment === "mild"    ? "#38bdf8"
+                                   : h.congressSentiment === "bearish" ? "var(--red)"
+                                   : "var(--color-text-muted)",
+                              fontWeight: 600, cursor: "help",
+                            }}
+                          >
+                            {h.congressSentiment === "bullish" ? "▲" : h.congressSentiment === "bearish" ? "▼" : "●"} {(h.congressScore ?? 0).toFixed(1)}
+                          </span>
+                        ) : (
+                          <span style={{ color: "var(--color-text-muted)" }}>—</span>
+                        )}
                       </td>
                     </tr>
                   );

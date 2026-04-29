@@ -105,6 +105,7 @@ All variables live in **`.env`** (gitignored). Copy from `.env.example` and fill
 | Variable | Provider | Free? |
 |----------|----------|-------|
 | `FRED_API_KEY` | [FRED](https://fred.stlouisfed.org) — U.S. macro / CPI | yes |
+| `FINNHUB_API_KEY` | [Finnhub](https://finnhub.io) — congressional trade disclosures (STOCK Act); refreshed weekly; app degrades gracefully if absent | yes |
 | `TRADIER_SANDBOX_TOKEN` + `TRADIER_ACCOUNT_ID` | [Tradier](https://documentation.tradier.com/sandbox) — real options chains | sandbox is free |
 | `VITE_AV_KEY` | [Alpha Vantage](https://www.alphavantage.co) — quote fallback | free tier |
 | `VITE_ANTHROPIC_API_KEY` | Anthropic — only if you wire LLM helpers | paid |
@@ -193,7 +194,7 @@ Dependency direction inside `server/`: `config → utils → data → scoring �
 | **Dashboard** *(default)* | Indices, regime + system status, adaptive weight bar, performance tiles, signal feed, factor pulse, paper positions, movers |
 | **Search**       | Single-ticker composite + pillar detail |
 | **Backtest**     | Walk-forward simulation vs benchmark with regime tagging |
-| **Paper Trade**  | Top 50 / Top 150 portfolios, holdings, rebalance, RL toggle, wheel layer |
+| **Paper Trade**  | Top 50 / Top 150 portfolios, holdings (with Congress signal column), rebalance, RL toggle, wheel layer |
 | **Options**      | Portfolio KPIs, strategy backtest, auto-trader, scanner (G&S, C&H, B&K), manual + auto positions, full close-reason history |
 | **RL Agent**     | Train and compare Q-learning or DQN |
 | **About**        | In-app docs (pillars, paper vs backtest, RL, options & wheel, data limits) |
