@@ -42,7 +42,17 @@ const AUTO_CONFIG = {
   // In caution: close any short-premium position down > this %
   cautionStopPct: 0.3,
   // In pullback: take profits faster
-  pullbackProfitTarget: 0.35
+  pullbackProfitTarget: 0.35,
+  // ── Three-paper academic signal thresholds ──────────────────────────────
+  // Minimum composite sell score (0-1). 0.35 = moderate signal from 2+ papers.
+  // Set to 0 to disable (use IVR/EV only).
+  minSellScore: 0.35,
+  // When true, rank by blended sellScore×EV rather than EV alone
+  sellScoreWeight: true,
+  // Require positive reading from at least N of 3 papers (0 = disable)
+  minSignalCount: 2,
+  // G&S hard gate: never sell when realized vol > implied vol (options are cheap)
+  blockCheapOptions: true
 };
 
 function portfolioPath() {
@@ -320,7 +330,12 @@ function dryRun(opportunities, currentRegime, portfolio) {
       premium: o.premium ?? o.mid,
       ev: o.ev,
       ivRank: o.ivRank,
-      regime: currentRegime
+      regime: currentRegime,
+      sellScore:    o.sellScore    ?? null,
+      signalCount:  o.signalCount  ?? null,
+      gsSignal:     o.gsSignal     ?? null,
+      ivolPct:      o.ivolPct      ?? null,
+      vrpIntensity: o.vrpIntensity ?? null
     }));
 
   return {
@@ -509,24 +524,40 @@ export async function runAutoTrader(opportunities, currentRegime) {
       .filter((opp) => {
         if (!opp || typeof opp !== 'object') return false;
         if (opp.strategy !== 'COVERED_CALL' && opp.strategy !== 'CASH_SECURED_PUT') return false;
-        // Basic quality filters
         if ((Number(opp.ev) || 0) < AUTO_CONFIG.minEV) return false;
         if ((Number(opp.ivRank) || 0) < AUTO_CONFIG.minIVRank) return false;
         if (!(opp.optionSymbol || opp.osiSymbol) || !opp.ticker) return false;
         if (portfolio.positions.some((p) => p.ticker === String(opp.ticker).toUpperCase())) return false;
 
-        // ── Regime gate: check if this strategy is allowed right now ──
+        // Regime gate
         const allowedRegimes = AUTO_CONFIG.regimeAllowOpen?.[opp.strategy];
         if (Array.isArray(allowedRegimes) && !allowedRegimes.includes(currentRegime)) return false;
 
-        // ── VRP gate: only sell when implied vol > realized vol (edge) ──
-        // Scanner enriches opp.vrpEdge/vrpRatio; fall back to ivRank>50 if missing.
+        // VRP gate (preserved)
         const vrpEdge = opp.vrpEdge != null ? !!opp.vrpEdge : (Number(opp.ivRank) || 0) > 50;
         if (!vrpEdge) return false;
 
+        // ── G&S hard gate: block when options are cheap (RV > IV) ──
+        // Goyal & Saretto: selling on the wrong side is the highest-cost mistake
+        if (AUTO_CONFIG.blockCheapOptions && opp.gsSellEdge === false) return false;
+
+        // ── Composite sell score minimum ──
+        if (AUTO_CONFIG.minSellScore > 0 && opp.sellScore != null && opp.sellScore < AUTO_CONFIG.minSellScore) return false;
+
+        // ── Signal count gate: require positive reading from N papers ──
+        if (AUTO_CONFIG.minSignalCount > 1 && opp.signalCount != null && opp.signalCount < AUTO_CONFIG.minSignalCount) return false;
+
         return true;
       })
-      .sort((a, b) => (Number(b.ev) || 0) - (Number(a.ev) || 0))
+      .sort((a, b) => {
+        // Primary sort: blended sellScore×EV when enabled (academic + dollar edge)
+        if (AUTO_CONFIG.sellScoreWeight && a.sellScore != null && b.sellScore != null) {
+          const aCombo = (a.sellScore * 500) * 0.6 + (Number(a.ev) || 0) * 0.4;
+          const bCombo = (b.sellScore * 500) * 0.6 + (Number(b.ev) || 0) * 0.4;
+          return bCombo - aCombo;
+        }
+        return (Number(b.ev) || 0) - (Number(a.ev) || 0);
+      })
       .slice(0, slotsAvail);
 
     for (const opp of eligible) {
@@ -542,7 +573,10 @@ export async function runAutoTrader(opportunities, currentRegime) {
 
         // sell-to-open: slightly below mid to increase fill probability
         const limit = Math.max(0.01, mid - 0.02);
-        const order = await submitSellToOpen(accountId, ticker, optionSymbol, AUTO_CONFIG.targetContracts, limit);
+        // B&K regime-adjusted contract count: in high-vol regimes the sell edge is stronger
+        const bkBoost  = Number(opp.regimeBoost ?? opp.bkRegimeBoost ?? 1.0);
+        const contracts = Math.max(1, Math.round(AUTO_CONFIG.targetContracts * Math.min(bkBoost, 1.5)));
+        const order = await submitSellToOpen(accountId, ticker, optionSymbol, contracts, limit);
 
         portfolio.orders.push({
           type: 'open',
@@ -550,7 +584,7 @@ export async function runAutoTrader(opportunities, currentRegime) {
           status: order.status,
           optionSymbol,
           ticker,
-          quantity: AUTO_CONFIG.targetContracts,
+          quantity: contracts,
           limitPrice: Number(limit.toFixed(2)),
           placedAt: nowIso,
           ev: Number(opp.ev) || 0
@@ -562,7 +596,7 @@ export async function runAutoTrader(opportunities, currentRegime) {
           strategy: opp.strategy,
           strike: opp.strike,
           expiration: opp.expiration,
-          quantity: AUTO_CONFIG.targetContracts,
+          quantity: contracts,
           entryCredit: Number(limit.toFixed(2)),
           entryDate: nowIso,
           entryOrderId: order.id,
@@ -571,7 +605,15 @@ export async function runAutoTrader(opportunities, currentRegime) {
           dte: opp.dte != null ? Number(opp.dte) : computeDte(opp.expiration),
           ivRank: opp.ivRank != null ? Number(opp.ivRank) : null,
           currentPrice: opp.currentPrice != null ? Number(opp.currentPrice) : null,
-          compositeScore: opp.compositeScore != null ? Number(opp.compositeScore) : null
+          compositeScore: opp.compositeScore != null ? Number(opp.compositeScore) : null,
+          // Academic signal snapshot at entry (three-paper system)
+          gsSignal:         opp.gsSignal         ?? null,
+          sellScore:        opp.sellScore        ?? null,
+          signalCount:      opp.signalCount      ?? null,
+          ivolPct:          opp.ivolPct          ?? null,
+          vrpIntensity:     opp.vrpIntensity      ?? null,
+          regimeBoost:      opp.regimeBoost       ?? null,
+          academicSellEdge: opp.academicSellEdge  ?? null
         };
         portfolio.positions.push(newPos);
         actions.opened.push({ symbol: optionSymbol, orderId: order.id, ev: newPos.ev, credit: newPos.entryCredit });

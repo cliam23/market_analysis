@@ -177,8 +177,8 @@ export default function AboutTab({ setTab, backendConnected = true }) {
         <p className="ma-about-kicker">About</p>
         <h1 className="ma-about-h1">How everything works</h1>
         <p className="ma-about-lead">
-          One scoring engine · Search, Backtest, Trading (paper), Options, and RL Agent · optional Python Random Forest rank blend and
-          tabular Q-learning policies per universe.
+          One scoring engine · Search, Backtest, Paper (stock books + options wheel), Options (scanner, Auto Trader, trade history), and RL
+          Agent · optional Python Random Forest rank blend and tabular Q-learning policies per universe.
         </p>
       </header>
 
@@ -372,7 +372,82 @@ export default function AboutTab({ setTab, backendConnected = true }) {
             </p>
           </Accordion>
 
-          <Accordion title="Q-learning reinforcement learning (RL Agent tab)" idx={6}>
+          <Accordion title="Options fundamentals (academic sell edge)" idx={6}>
+            <p className="ma-about-p">
+              The scanner and wheel attach <Strong>three published signals</Strong> plus a <Strong>market vol multiplier</Strong>. Together they
+              form a 0–1 <Strong>sellScore</Strong> (shown as 0–100 in the UI). This is research scaffolding — not a guarantee of profit.
+            </p>
+
+            <div className="ma-about-subsection">
+              <h3 className="ma-about-h3">Composite sellScore</h3>
+              <p className="ma-about-p">
+                <Strong>Weights:</Strong> <Strong>G&amp;S normalized mispricing 40%</Strong>,{" "}
+                <Strong>C&amp;H IVOL universe percentile 30%</Strong>,{" "}
+                <Strong>B&amp;K VRP (vol-regime–boosted) 30%</Strong>. When a raw input is missing, the server falls back to mild defaults tied to{" "}
+                <Strong>IV rank</Strong> so ranking still works — prefer legs opened after a fresh scan so snapshots are real.
+              </p>
+              <p className="ma-about-p">
+                <Strong>Papers aligned:</Strong> the engine counts how many of three checks fire (G&amp;S sell edge, B&amp;K sell edge, IVOL percentile
+                above a cutoff). <Strong>Academic sell edge</Strong> flags when <Strong>two or more</Strong> align — shown on opportunities and wheel legs.
+              </p>
+            </div>
+
+            <DotList variant="blue">
+              <DotItem>
+                <Strong>Goyal &amp; Saretto (2007) — mispricing:</Strong> signal ={" "}
+                <span className="ma-mono">log(RV<sub>252d</sub>) − log(IV<sub>ATM</sub>)</span>. When IV is high versus trailing realized vol, short
+                premium tends to earn excess — the app maps this to <span className="ma-mono">gsNorm</span> ∈ [0, 1] (more negative raw signal → stronger
+                sell normalization).
+              </DotItem>
+              <DotItem>
+                <Strong>Cao &amp; Han (2013) — idiosyncratic volatility (IVOL):</Strong> CAPM residuals on recent daily returns; annualised residual vol is{" "}
+                <Strong>ranked across the scanned universe</Strong> → percentile ∈ [0, 1]. Higher idiosyncratic vol → dealers demand more premium → stronger
+                sell edge for diversified premium sellers (interpret with diversification — concentration risk remains).
+              </DotItem>
+              <DotItem>
+                <Strong>Bakshi &amp; Kapadia (2003) — vol risk premium intensity:</Strong> compares ATM IV to short-horizon realized vol (e.g. HV30); scales with a{" "}
+                <Strong>vol-regime multiplier</Strong> tied to SPY realized-vol buckets so high-vol regimes weight VRP more heavily (their empirical hedge-loss pattern).
+              </DotItem>
+              <DotItem>
+                <Strong>B&amp;K regime boost (market-wide):</Strong> separate multiplier from SPY 30-day HV bands — roughly{" "}
+                <Strong>0.7×–1.5×</Strong> on how aggressively VRP enters the blend (low realized-vol markets dull the edge; elevated vol strengthens it).
+              </DotItem>
+              <DotItem>
+                <Strong>Equity / options regime:</Strong> the strategy gates <Strong>covered calls</Strong>, <Strong>cash-secured puts</Strong>, and optional{" "}
+                <Strong>regime hedges</Strong> from the same macro regime tape used elsewhere (strong bull vs caution vs bear — exact gates live in server config).
+              </DotItem>
+            </DotList>
+
+            <p className="ma-about-mono-note">
+              Scanner rows also show EV, Greeks-style summaries, and IV rank for execution literacy — academic score drives ranking presets; EV and DTE matter for sizing and rolls.
+            </p>
+          </Accordion>
+
+          <Accordion title="Options tab, Auto Trader, Wheel, and trade history" idx={7}>
+            <p className="ma-about-p">
+              <Strong>Options tab</Strong> is paper-only: manual opens from the scanner, optional <Strong>Auto Trader</Strong> (sandbox when Tradier
+              is configured), and a strategy <Strong>backtest</Strong> card. The top summary shows open count, open / realized P&amp;L, and win rate.
+              Positions use left-accent cards by strategy (covered call, cash-secured put, hedge).
+            </p>
+            <p className="ma-about-p">
+              <Strong>Opportunity scanner</Strong> ranks ideas by academic sell score (Goyal &amp; Saretto mispricing, Cao &amp; Han IVOL rank,
+              Bakshi &amp; Kapadia VRP, blended into a 0–100 score), plus EV, IV rank, and DTE — with regime pills and strategy filters.
+            </p>
+            <p className="ma-about-p">
+              <Strong>Paper Trade → Wheel</Strong> runs the options-enhanced wheel: CC/CSP legs with regime gates, optimizer, and an{" "}
+              <Strong>Academic Signal Health</Strong> panel (entry-snapshot averages for the three papers and a portfolio letter grade from average{" "}
+              <span className="ma-mono">sellScore</span> on scored legs).
+            </p>
+            <p className="ma-about-p">
+              <Strong>Manual trade history</Strong> (bottom of Options) lists every manual close with a five-tile summary: total realized P&amp;L,
+              win rate, average losing trade (shows $0.00 when there are no losses yet), average DTE at open, and current win/loss streak. Each row
+              parses <span className="ma-mono">closeReason</span> into chips — e.g. <Strong>REGIME_CAUTION</Strong> from{" "}
+              <span className="ma-mono">regime_caution</span>, <Strong>DTE_16</Strong> from <span className="ma-mono">dte_16</span>, profit-target
+              closes, or a compact token for long free-text reasons.
+            </p>
+          </Accordion>
+
+          <Accordion title="Q-learning reinforcement learning (RL Agent tab)" idx={8}>
             <DotList variant="green">
               <DotItem>
                 <Strong>What it is:</Strong> a discrete-action Q-learning policy trained on synthetic rebalance episodes; the server persists
@@ -398,7 +473,7 @@ export default function AboutTab({ setTab, backendConnected = true }) {
             </DotList>
           </Accordion>
 
-          <Accordion title="Filters and safeguards" idx={7}>
+          <Accordion title="Filters and safeguards" idx={9}>
             <p className="ma-about-p">Composite strategies apply eligibility rules before ranking (exact thresholds vary by strategy):</p>
             <DotList variant="gray">
               <DotItem>
@@ -420,7 +495,7 @@ export default function AboutTab({ setTab, backendConnected = true }) {
             </DotList>
           </Accordion>
 
-          <Accordion title="Data sources and limitations" idx={8}>
+          <Accordion title="Data sources and limitations" idx={10}>
             <p className="ma-about-p">
               <Strong>Market data:</Strong> Yahoo Finance. Corporate actions are reflected in adjusted prices where the upstream series provides
               them.
@@ -442,7 +517,7 @@ export default function AboutTab({ setTab, backendConnected = true }) {
             </DotList>
           </Accordion>
 
-          <Accordion title="Disclaimer" idx={9}>
+          <Accordion title="Disclaimer" idx={11}>
             <div className="ma-about-disclaimer">
               <p className="ma-about-disclaimer__title">Educational tool — not financial advice</p>
               <p>

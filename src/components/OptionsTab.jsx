@@ -164,6 +164,62 @@ function OpportunityCard({ opp, onOpen }) {
             valueColor: evOk ? evColor : "#E2E8F0",
             sub: PLAIN_ENGLISH.ev_explain,
             subSmall: true
+          },
+          // ── Three-paper academic signal section ──────────────────────────
+          {
+            label: "Academic Sell Score",
+            value: opp.sellScore != null
+              ? `${(opp.sellScore * 100).toFixed(0)}/100`
+              : "—",
+            valueColor: opp.sellScore == null   ? "#64748B"
+              : opp.sellScore >= 0.65           ? "#22C55E"
+              : opp.sellScore >= 0.45           ? "#0EA5E9"
+              : opp.sellScore >= 0.30           ? "#F59E0B"
+              : "#EF4444",
+            sub: opp.signalCount != null
+              ? `${opp.signalCount}/3 papers aligned · ${opp.academicSellEdge ? "Strong sell edge" : "Weak signal"}`
+              : "Composite of G&S + C&H + B&K signals",
+            bold: true
+          },
+          {
+            label: "Mispricing Signal (G&S)",
+            value: opp.gsSignal != null ? opp.gsSignal.toFixed(3) : "—",
+            valueColor: opp.gsSignal == null ? "#64748B"
+              : opp.gsSignal < -0.5            ? "#22C55E"
+              : opp.gsSignal < -0.2            ? "#0EA5E9"
+              : opp.gsSignal < 0.1             ? "#F59E0B"
+              : "#EF4444",
+            sub: opp.rv252 != null && opp.ivProxy != null
+              ? `RV(1Y): ${opp.rv252}%  ·  IV: ${opp.ivProxy}%${opp.overpricingRatio != null ? `  ·  IV ${((opp.overpricingRatio - 1) * 100).toFixed(0)}% above realized` : ""}`
+              : (opp.gsInterpretation ?? "log(RV 12m) − log(IV ATM) — negative = overpriced"),
+            subSmall: true
+          },
+          {
+            label: "Idiosyncratic Vol Rank (C&H)",
+            value: opp.ivolPct != null ? `${Number(opp.ivolPct).toFixed(0)}th pct` : "—",
+            valueColor: opp.ivolPct == null    ? "#64748B"
+              : Number(opp.ivolPct) >= 70      ? "#22C55E"
+              : Number(opp.ivolPct) >= 40      ? "#F59E0B"
+              : "#94A3B8",
+            sub: opp.ivolRaw != null
+              ? `CAPM residual vol: ${opp.ivolRaw}% ann. Dealers charge more on high-IVOL names.`
+              : "Idiosyncratic vol percentile within current scan universe",
+            subSmall: true
+          },
+          {
+            label: "VRP Intensity (B&K)",
+            value: opp.vrpIntensity != null
+              ? `${(opp.vrpIntensity * 100).toFixed(0)}%`
+              : "—",
+            valueColor: opp.vrpIntensity == null ? "#64748B"
+              : opp.vrpIntensity > 0.3           ? "#22C55E"
+              : opp.vrpIntensity > 0.1           ? "#F59E0B"
+              : opp.vrpIntensity > 0             ? "#94A3B8"
+              : "#EF4444",
+            sub: opp.regimeBoost != null
+              ? `IV prem over HV30: ${opp.ivPremium != null ? (opp.ivPremium * 100).toFixed(0) + "%" : "—"}  ·  Vol regime boost: ${opp.regimeBoost}×`
+              : "IV premium over 30-day realized vol, scaled by vol regime",
+            subSmall: true
           }
         ].map(({ label, value, valueColor, sub, subColor, subSmall }, i) => (
           <div key={i} style={{ background: "#1E293B", padding: "10px 12px" }}>
@@ -338,11 +394,45 @@ function stratBadgeClass(strat) {
   return "ma-opt-strat-badge ma-opt-strat-badge--hedge";
 }
 
-function reasonBadgeClass(reason) {
-  const s = String(reason || "manual").toLowerCase();
-  if (s.includes("profit") || s.includes("50")) return "ma-opt-reason-badge ma-opt-reason-badge--profit";
-  if (s.includes("roll") || s.includes("dte")) return "ma-opt-reason-badge ma-opt-reason-badge--roll";
-  return "ma-opt-reason-badge ma-opt-reason-badge--manual";
+/** Parse server / UI closeReason into compact chips (REGIME_*, DTE_*, profit, etc.) */
+function closeReasonChips(reason) {
+  const raw = String(reason ?? "manual").trim();
+  const lower = raw.toLowerCase().replace(/\s+/g, "_");
+  const out = [];
+
+  const regimeM = /^regime_(.+)$/.exec(lower);
+  if (regimeM) {
+    out.push({
+      kind: "regime",
+      label: `REGIME_${regimeM[1].replace(/_/g, "_").toUpperCase()}`
+    });
+  }
+
+  const dteM = /\bdte_(\d+)\b/.exec(lower) || /^dte(\d+)$/.exec(lower);
+  if (dteM) {
+    out.push({ kind: "dte", label: `DTE_${dteM[1]}` });
+  }
+
+  if (/profit/.test(lower) || /target/.test(lower)) {
+    const pm = lower.match(/profit_target_(\d+)/) || lower.match(/(\d+)\s*pct/);
+    out.push({
+      kind: "profit",
+      label: pm ? `PT_${pm[1]}PCT` : "PROFIT_TARGET"
+    });
+  }
+
+  if (out.length === 0) {
+    const cleaned = raw.replace(/[^\w\s-]/g, "").trim();
+    const lab =
+      cleaned.length > 0 && cleaned.length <= 28
+        ? cleaned.replace(/\s+/g, "_").toUpperCase()
+        : cleaned.length > 28
+          ? `${cleaned.slice(0, 22).replace(/\s+/g, "_").toUpperCase()}…`
+          : "MANUAL";
+    out.push({ kind: "other", label: lab });
+  }
+
+  return out;
 }
 
 function computeStreak(closed) {
@@ -417,65 +507,82 @@ function AutoTraderPanel({ scanRegime }) {
   }, [positions]);
 
   return (
-    <div style={panelStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap" }}>
+    <div className="ma-auto-trader-card">
+      <div className="ma-auto-trader-card__head">
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-            <div style={{ color: "#E2E8F0", fontWeight: 800, fontSize: 15 }}>Auto Trader</div>
-            <span style={{ fontSize: 10, background: "#0EA5E9", color: "#fff", padding: "2px 8px", borderRadius: 999 }}>
-              SANDBOX
-            </span>
+          <div className="ma-auto-trader-card__title-row">
+            <span className="ma-auto-trader-card__title">Auto Trader</span>
+            <span className="ma-auto-trader-card__badge">SANDBOX</span>
           </div>
-          <div style={{ color: "#64748B", fontSize: 11, lineHeight: 1.5, maxWidth: 760 }}>
-            Uses Tradier sandbox when <span className="ma-mono">TRADIER_SANDBOX_TOKEN</span> is set. Opens the highest
-            positive-EV short-premium trades and auto-manages: 50% profit close + 21-DTE close. Dry-run if token is missing.
-          </div>
-          <div className="ma-mono" style={{ marginTop: 10, fontSize: 11, color: "#94A3B8", lineHeight: 1.7 }}>
-            Open {positions.length} · Open P&amp;L {fmtMoney(autoOpenPnl)} · Realized P&amp;L {fmtMoney(Number(stats.totalPnl) || 0)} ·
-            Closed {closed.length}
-          </div>
+          <p className="ma-auto-trader-card__desc">
+            Uses Tradier sandbox when <span className="ma-mono">TRADIER_SANDBOX_TOKEN</span> is set.
+            Opens highest positive-EV short-premium trades and auto-manages: 50% profit close + 21-DTE close.
+            Dry-run if token is missing.
+          </p>
         </div>
         <button
           type="button"
+          className="ma-pro-btn ma-pro-btn--primary"
           onClick={handleRun}
           disabled={running}
-          style={{
-            background: running ? "#334155" : "#0EA5E9",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            padding: "10px 18px",
-            cursor: running ? "not-allowed" : "pointer",
-            fontWeight: 800,
-            fontSize: 12,
-            whiteSpace: "nowrap"
-          }}
         >
-          {running ? "Running…" : "Run Auto Trader"}
+          {running ? (
+            <><span style={{ display: "inline-block", width: 12, height: 12, border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.7s linear infinite", marginRight: 6 }} />Running…</>
+          ) : (
+            "Run Auto Trader"
+          )}
         </button>
       </div>
 
-      {error && (
-        <div style={{ marginTop: 12, background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)", color: "#FCA5A5", padding: "10px 12px", borderRadius: 10, fontSize: 12 }}>
-          {error}
+      {/* Status bar */}
+      <div className="ma-auto-trader-card__status-bar">
+        <div className="ma-auto-trader-card__stat">
+          <span className="ma-auto-trader-card__stat-label">Open</span>
+          <span className="ma-auto-trader-card__stat-val">{positions.length}</span>
         </div>
-      )}
+        <div className="ma-auto-trader-card__stat">
+          <span className="ma-auto-trader-card__stat-label">Open P&L</span>
+          <span className="ma-auto-trader-card__stat-val" style={{ color: autoOpenPnl >= 0 ? "var(--green)" : "var(--red)" }}>
+            {fmtMoney(autoOpenPnl)}
+          </span>
+        </div>
+        <div className="ma-auto-trader-card__stat">
+          <span className="ma-auto-trader-card__stat-label">Realized P&L</span>
+          <span className="ma-auto-trader-card__stat-val" style={{ color: Number(stats.totalPnl) >= 0 ? "var(--green)" : "var(--red)" }}>
+            {fmtMoney(Number(stats.totalPnl) || 0)}
+          </span>
+        </div>
+        <div className="ma-auto-trader-card__stat">
+          <span className="ma-auto-trader-card__stat-label">Closed</span>
+          <span className="ma-auto-trader-card__stat-val">{closed.length}</span>
+        </div>
+      </div>
+
+      {error && <div className="ma-pro-error" style={{ marginTop: 10 }}>{error}</div>}
 
       {status && (
-        <div style={{ marginTop: 14, background: "#162033", border: "1px solid #1E3A5F", borderRadius: 10, padding: "12px 12px" }}>
-          <div style={{ color: "#94A3B8", fontSize: 11, marginBottom: 10 }}>
-            Last run: {status.mode === "mock" ? "DRY RUN (no token)" : "SANDBOX"} · Regime: {status.regime ?? "—"}
+        <div style={{ marginTop: 12, padding: "10px 14px", background: "rgba(14,26,46,0.8)", border: "1px solid #1e3a5f", borderRadius: 10 }}>
+          <div style={{ fontFamily: "var(--font-mono)", color: "#64748B", fontSize: 11, marginBottom: 8 }}>
+            Last run: <span style={{ color: "#94A3B8" }}>{status.mode === "mock" ? "DRY RUN (no token)" : "SANDBOX"}</span>
+            {status.regime && <span> · Regime: <span style={{ color: "var(--text-secondary)" }}>{status.regime}</span></span>}
           </div>
           {status.mode === "mock" && status.dryRun && (
-            <div style={{ color: "#E2E8F0", fontSize: 12 }}>
-              Would open {status.dryRun.wouldOpen?.length ?? 0} trade(s).
+            <div style={{ fontSize: 12, color: "var(--text-primary)" }}>
+              Would open {status.dryRun.wouldOpen?.length ?? 0} trade(s)
             </div>
           )}
           {status.actions && (
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
-              <div style={{ color: "#22C55E" }}>Opened: {status.actions.opened?.length ?? 0}</div>
-              <div style={{ color: "#F59E0B" }}>Closed: {status.actions.closed?.length ?? 0}</div>
-              <div style={{ color: "#EF4444" }}>Errors: {status.actions.errors?.length ?? 0}</div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {[
+                { label: "Opened", val: status.actions.opened?.length ?? 0, color: "var(--green)" },
+                { label: "Closed", val: status.actions.closed?.length ?? 0, color: "var(--yellow)" },
+                { label: "Errors", val: status.actions.errors?.length ?? 0, color: "var(--red)" }
+              ].map(({ label, val, color }) => (
+                <div key={label} style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+                  <span style={{ color: "#475569" }}>{label}: </span>
+                  <span style={{ color, fontWeight: 700 }}>{val}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -483,6 +590,7 @@ function AutoTraderPanel({ scanRegime }) {
     </div>
   );
 }
+
 
 function OptionsBacktest() {
   const [result, setResult] = useState(null);
@@ -507,101 +615,117 @@ function OptionsBacktest() {
   }, [period]);
 
   return (
-    <div style={{ background: "#1E293B", borderRadius: 10, padding: 16, marginTop: 14, border: "1px solid #334155" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+    <div className="ma-backtest-card">
+      <div className="ma-backtest-card__head">
         <div>
-          <div style={{ fontWeight: 800, fontSize: 14, color: "#E2E8F0" }}>Options Strategy Backtest</div>
-          <div style={{ color: "#64748B", fontSize: 11, marginTop: 2, lineHeight: 1.5 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", marginBottom: 4 }}>Options Strategy Backtest</div>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }}>
             Simplified simulation of selling covered calls + cash-secured puts on top-scored names.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
           {["1y", "2y", "3y"].map((p) => (
             <button
               key={p}
               type="button"
+              className={`ma-backtest-period-btn ${period === p ? "ma-backtest-period-btn--on" : "ma-backtest-period-btn--off"}`}
               onClick={() => setPeriod(p)}
-              style={{
-                background: period === p ? "#0EA5E9" : "#334155",
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
-                padding: "4px 12px",
-                cursor: "pointer",
-                fontSize: 11,
-                fontWeight: 700
-              }}
             >
               {p}
             </button>
           ))}
           <button
             type="button"
+            className="ma-pro-btn ma-pro-btn--green"
             onClick={run}
             disabled={loading}
-            style={{
-              background: loading ? "#334155" : "#22C55E",
-              color: "#fff",
-              border: "none",
-              borderRadius: 6,
-              padding: "6px 16px",
-              cursor: loading ? "not-allowed" : "pointer",
-              fontWeight: 800,
-              fontSize: 12
-            }}
+            style={{ padding: "6px 16px" }}
           >
-            {loading ? "Running..." : "Run Backtest"}
+            {loading ? "Running…" : "Run Backtest"}
           </button>
         </div>
       </div>
 
-      {error && <div style={{ marginTop: 10, color: RED, fontSize: 12 }}>{error}</div>}
+      {error && <div className="ma-pro-error">{error}</div>}
 
       {result && (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 8, marginTop: 4 }}>
             {[
-              { label: "Equity only", value: `${result.performance.equityOnlyReturnPct.toFixed(2)}%`, color: "#94A3B8" },
-              { label: "Premium collected", value: fmtMoney(result.performance.totalPremiumCollected), color: "#22C55E" },
-              { label: "Premium yield/yr", value: `${result.performance.annualizedPremiumYieldPct.toFixed(2)}%`, color: "#0EA5E9" },
-              { label: "Enhanced return", value: `${result.performance.enhancedReturnPct.toFixed(2)}%`, color: "#22C55E" },
-              { label: "Options lift", value: `${result.performance.liftFromOptionsPct.toFixed(2)}%`, color: "#F59E0B" }
+              { label: "Equity only", value: `${result.performance.equityOnlyReturnPct.toFixed(2)}%`, color: "var(--text-secondary)" },
+              { label: "Premium collected", value: fmtMoney(result.performance.totalPremiumCollected), color: "var(--green)" },
+              { label: "Premium yield/yr", value: `${result.performance.annualizedPremiumYieldPct.toFixed(2)}%`, color: "#38bdf8" },
+              { label: "Enhanced return", value: `${result.performance.enhancedReturnPct.toFixed(2)}%`, color: "var(--green)" },
+              { label: "Options lift", value: `${result.performance.liftFromOptionsPct.toFixed(2)}%`, color: "var(--yellow)" }
             ].map((x) => (
-              <div key={x.label} style={{ background: "#162033", border: "1px solid #1E3A5F", borderRadius: 10, padding: "10px 12px" }}>
-                <div style={{ color: "#64748B", fontSize: 10 }}>{x.label}</div>
-                <div style={{ color: x.color, fontWeight: 800, fontSize: 16, fontFamily: "monospace" }}>{x.value}</div>
+              <div key={x.label} className="ma-bt-result-cell">
+                <div className="ma-bt-result-cell__label">{x.label}</div>
+                <div className="ma-bt-result-cell__val" style={{ color: x.color }}>{x.value}</div>
               </div>
             ))}
           </div>
 
-          <div style={{ marginTop: 10, background: "#0D1B2A", borderRadius: 8, padding: "10px 12px", color: "#94A3B8", fontSize: 11, lineHeight: 1.5 }}>
-            {result.interpretation?.whatThisMeans ?? "—"}
+          {result.interpretation?.whatThisMeans && (
+            <div style={{ marginTop: 10, padding: "10px 14px", background: "rgba(255,255,255,0.03)", borderRadius: 8, border: "1px solid var(--border-card)", fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+              {result.interpretation.whatThisMeans}
+            </div>
+          )}
+
+          <div style={{ overflowX: "auto", marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 80, minWidth: 640 }}>
+              {(() => {
+                const maxVal = Math.max(1, ...result.monthlyPnl.map((x) => Number(x.totalPnl) || 0));
+                return result.monthlyPnl.map((m, i) => {
+                  const val = Number(m.totalPnl) || 0;
+                  const h = m.regime === "bear" ? 6 : Math.max(6, (val / maxVal) * 76);
+                  const color = m.regime === "bear" ? "#1E293B"
+                    : m.bkRegimeBoost >= 1.5 ? "#10b981"
+                    : m.bkRegimeBoost >= 1.2 ? "#22C55E"
+                    : val >= 0 ? "#4ADE80"
+                    : "#EF4444";
+                  const cc = Number(m.ccPremium || 0).toFixed(0);
+                  const csp = Number(m.cspPremium || 0).toFixed(0);
+                  const boost = m.bkRegimeBoost ? `· B&K ${m.bkRegimeBoost}×` : "";
+                  return (
+                    <div
+                      key={i}
+                      title={`${m.date}: $${val.toFixed(0)} total (CC $${cc} + CSP $${csp}) · ${m.regime} ${boost}${m.vrpSkipped ? ` · ${m.vrpSkipped} G&S-skipped` : ""}`}
+                      style={{ flex: 1, background: color, height: h, borderRadius: "2px 2px 0 0", minWidth: 4, opacity: m.regime === "bear" ? 0.4 : 1, cursor: "default" }}
+                    />
+                  );
+                });
+              })()}
+            </div>
+            <div style={{ fontFamily: "var(--font-mono)", color: "#64748B", fontSize: 10, marginTop: 6 }}>
+              Monthly premium — hover for detail · Dark = bear (no trades) · Bright green = high-vol B&K boost
+              {result.walkForward && (
+                <span> · Walk-forward: H1 avg ${result.walkForward.firstHalf.avgMonthly}/mo · H2 avg ${result.walkForward.secondHalf.avgMonthly}/mo</span>
+              )}
+            </div>
           </div>
 
-          <div style={{ overflowX: "auto", marginTop: 10 }}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 64, minWidth: 640 }}>
-              {result.monthlyPnl.map((m, i) => {
-                const maxVal = Math.max(1, ...result.monthlyPnl.map((x) => Number(x.totalPnl) || 0));
-                const h = Math.max(4, ((Number(m.totalPnl) || 0) / maxVal) * 60);
-                const color = m.regime === "bear" ? "#334155" : Number(m.totalPnl) >= 0 ? "#22C55E" : "#EF4444";
-                return (
-                  <div
-                    key={i}
-                    title={`${m.date}: $${Number(m.totalPnl).toFixed(0)} (${m.regime})`}
-                    style={{ flex: 1, background: color, height: h, borderRadius: "2px 2px 0 0", minWidth: 4 }}
-                  />
-                );
-              })}
+          {result.walkForward && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+              {[
+                { label: "First half (in-sample)", data: result.walkForward.firstHalf },
+                { label: "Second half (forward estimate)", data: result.walkForward.secondHalf }
+              ].map(({ label, data }) => (
+                <div key={label} style={{ background: "rgba(14,26,46,0.8)", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 12px" }}>
+                  <div style={{ color: "#64748B", fontSize: 10, marginBottom: 6, fontFamily: "var(--font-mono)", letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</div>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700, color: "var(--green)" }}>${data.avgMonthly}/mo avg</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "#64748B" }}>{data.bearMonths} bear mo · {data.vrpSkipped} G&S-skipped</span>
+                  </div>
+                </div>
+              ))}
             </div>
-            <div style={{ color: "#64748B", fontSize: 10, marginTop: 6 }}>
-              Monthly premium estimate (green=positive, gray=bear/no trades).
-            </div>
-          </div>
+          )}
         </>
       )}
     </div>
   );
 }
+
 
 export default function OptionsTab({ visible = true }) {
   const [scanLoading, setScanLoading] = useState(false);
@@ -628,7 +752,7 @@ export default function OptionsTab({ visible = true }) {
   const [deletingId, setDeletingId] = useState(null);
 
   const [strategyFilter, setStrategyFilter] = useState("all");
-  const [sortBy, setSortBy] = useState("ev");
+  const [sortBy, setSortBy] = useState("sellScore");
 
   const fetchScan = useCallback(async () => {
     setScanLoading(true);
@@ -704,9 +828,10 @@ export default function OptionsTab({ visible = true }) {
   const sortedOpportunities = useMemo(() => {
     const sorted = [...filteredOpportunities];
     sorted.sort((a, b) => {
-      if (sortBy === "ev") return (Number(b.ev) || -Infinity) - (Number(a.ev) || -Infinity);
-      if (sortBy === "ivRank") return (Number(b.ivRank) || 0) - (Number(a.ivRank) || 0);
-      if (sortBy === "dte") return (Number(a.dte) || 999) - (Number(b.dte) || 999);
+      if (sortBy === "ev")        return (Number(b.ev) || -Infinity) - (Number(a.ev) || -Infinity);
+      if (sortBy === "ivRank")    return (Number(b.ivRank) || 0) - (Number(a.ivRank) || 0);
+      if (sortBy === "dte")       return (Number(a.dte) || 999) - (Number(b.dte) || 999);
+      if (sortBy === "sellScore") return (Number(b.sellScore) || 0) - (Number(a.sellScore) || 0);
       return 0;
     });
     return sorted;
@@ -927,126 +1052,172 @@ export default function OptionsTab({ visible = true }) {
 
   const plTone = Number(historyStats.totalRealized) >= 0 ? "positive" : "negative";
 
+  const optRegimePillClass = regime === "strong_bull" || regime === "normal"
+    ? "ma-pro-regime-pill--bull"
+    : regime === "pullback" || regime === "caution"
+      ? "ma-pro-regime-pill--caution"
+      : regime === "bear"
+        ? "ma-pro-regime-pill--bear"
+        : "ma-pro-regime-pill--neutral";
+
   return (
-    <div className="ma-page-container ma-opt-page" style={{ fontFamily: SANS, color: TEXT, paddingBottom: 32 }}>
+    <div className="ma-page-container ma-opt-page ma-pro-page" style={{ fontFamily: SANS, color: TEXT, paddingBottom: 32 }}>
       {flash && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "10px 14px",
-            borderRadius: 8,
-            background: flash.startsWith("Position") ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)",
-            border: `1px solid ${flash.startsWith("Position") ? GREEN : RED}`,
-            fontSize: 13
-          }}
-        >
+        <div style={{
+          marginBottom: 14,
+          padding: "10px 16px",
+          borderRadius: 8,
+          background: flash.startsWith("Position") ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+          border: `1px solid ${flash.startsWith("Position") ? "rgba(34,197,94,0.35)" : "rgba(239,68,68,0.35)"}`,
+          fontSize: 13,
+          color: flash.startsWith("Position") ? "var(--green)" : "var(--red)",
+          fontWeight: 600
+        }}>
           {flash}
         </div>
       )}
 
-      <header>
-        <p className="ma-opt-header-kicker">OPTIONS</p>
-        <h1 className="ma-opt-header-title">Portfolio dashboard</h1>
-        <p className="ma-opt-header-sub">P&amp;L · Open positions · Scanner</p>
-      </header>
+      {/* ── Page header ── */}
+      <div className="ma-pro-header">
+        <div className="ma-pro-header__left">
+          <p className="ma-pro-kicker">Options</p>
+          <h1 className="ma-pro-title">Portfolio Dashboard</h1>
+          <p className="ma-pro-sub">P&L · Open positions · Opportunity scanner</p>
+        </div>
+        <div className="ma-pro-header__right">
+          <span className={`ma-pro-regime-pill ${optRegimePillClass}`}>
+            {regime.replace(/_/g, " ")}
+          </span>
+          {mockMode ? (
+            <span className="ma-opt-mock">Mock mode</span>
+          ) : (
+            <span className="ma-opt-live">
+              <span className="ma-opt-live__dot" aria-hidden />
+              Live
+            </span>
+          )}
+          <button
+            type="button"
+            className="ma-pro-btn ma-pro-btn--ghost"
+            onClick={handleRefresh}
+            disabled={scanLoading || pfLoading}
+          >
+            {scanLoading ? "Scanning…" : "Refresh all"}
+          </button>
+        </div>
+      </div>
 
-      <section style={{ marginTop: 14 }}>
-        <div className="ma-opt-stats-grid">
-          <div className="ma-bt-stat" style={{ "--bt-accent": "var(--blue)" }}>
-            <div className="ma-bt-stat__label">Open positions</div>
-            <div className="ma-bt-stat__val" style={{ fontSize: 22 }}>
-              {overall.openPositions}
-            </div>
+      {/* ── KPI cards ── */}
+      <section style={{ marginTop: 4 }}>
+        <div className="ma-pro-stats">
+          <div className="ma-pro-stat" style={{ "--pro-stat-accent": "var(--blue)" }}>
+            <div className="ma-pro-stat__label">Open positions</div>
+            <div className="ma-pro-stat__val" style={{ color: "var(--blue)", fontSize: 26 }}>{overall.openPositions}</div>
+            <div className="ma-pro-stat__sub">manual + auto</div>
           </div>
-          <div className="ma-bt-stat" style={{ "--bt-accent": "var(--amber)" }}>
-            <div className="ma-bt-stat__label">Open P&amp;L</div>
-            <div
-              className="ma-bt-stat__val"
-              style={{ color: Number(overall.openPnl ?? 0) >= 0 ? GREEN : RED, fontSize: 22 }}
-            >
+          <div className="ma-pro-stat" style={{ "--pro-stat-accent": Number(overall.openPnl ?? 0) >= 0 ? "var(--green)" : "var(--red)" }}>
+            <div className="ma-pro-stat__label">Open P&L</div>
+            <div className="ma-pro-stat__val" style={{ color: Number(overall.openPnl ?? 0) >= 0 ? "var(--green)" : "var(--red)", fontSize: 26 }}>
               {fmtMoney(overall.openPnl ?? 0)}
             </div>
           </div>
-          <div className="ma-bt-stat" style={{ "--bt-accent": plTone === "positive" ? "var(--green)" : "var(--red)" }}>
-            <div className="ma-bt-stat__label">Realized P&amp;L</div>
-            <div className="ma-bt-stat__val" style={{ color: plTone === "positive" ? GREEN : RED, fontSize: 22 }}>
+          <div className="ma-pro-stat" style={{ "--pro-stat-accent": plTone === "positive" ? "var(--green)" : "var(--red)" }}>
+            <div className="ma-pro-stat__label">Realized P&L</div>
+            <div className="ma-pro-stat__val" style={{ color: plTone === "positive" ? "var(--green)" : "var(--red)", fontSize: 26 }}>
               {fmtMoney(overall.realizedPnl)}
             </div>
           </div>
-          <div className="ma-bt-stat">
-            <div className="ma-bt-stat__label">Win rate</div>
-            <div className="ma-bt-stat__val" style={{ fontSize: 22 }}>
+          <div className="ma-pro-stat" style={{ "--pro-stat-accent": "var(--text-secondary)" }}>
+            <div className="ma-pro-stat__label">Win rate</div>
+            <div className="ma-pro-stat__val" style={{ fontSize: 26 }}>
               {overall.winRate != null ? `${overall.winRate.toFixed(1)}%` : "—"}
             </div>
+            <div className="ma-pro-stat__sub">{overall.closedCount} closed trades</div>
           </div>
         </div>
-        <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 10, lineHeight: 1.7 }}>
-          Manual open {openPositions.length} · Auto open {autoPositions.length} · Closed trades {overall.closedCount} · Est. θ{" "}
-          {fmtMoney(summary?.dailyTheta ?? 0)}/day · Mock mode: {mockMode ? "on" : "off"} · Regime:{" "}
-          <span style={{ color: AMBER }}>{regime}</span>
+        <div className="ma-pro-meta-bar" style={{ marginTop: 10, marginBottom: 0 }}>
+          <span>Manual open {openPositions.length}</span>
+          <span className="ma-pro-meta-sep">·</span>
+          <span>Auto open {autoPositions.length}</span>
+          <span className="ma-pro-meta-sep">·</span>
+          <span>Closed {overall.closedCount}</span>
+          {summary?.dailyTheta != null && (
+            <>
+              <span className="ma-pro-meta-sep">·</span>
+              <span>Est. θ {fmtMoney(summary.dailyTheta)}/day</span>
+            </>
+          )}
         </div>
         {autoPfError && (
-          <div style={{ marginTop: 10, color: RED, fontSize: 12 }}>
-            Auto Trader portfolio unavailable: {autoPfError}
-          </div>
+          <div className="ma-pro-error" style={{ marginTop: 8 }}>Auto Trader portfolio unavailable: {autoPfError}</div>
         )}
       </section>
 
       <OptionsBacktest />
-
       <AutoTraderPanel scanRegime={regime} />
 
-      <section style={{ marginTop: 36 }}>
-        <h2 className="ma-opt-section-title">Manual positions{openPositions.length > 0 ? ` (${openPositions.length})` : ""}</h2>
+      {/* ── Manual positions ── */}
+      <section style={{ marginTop: 32 }}>
+        <div className="ma-pro-section-head">
+          <h2 className="ma-pro-section-title" style={{ margin: 0 }}>
+            Manual positions{openPositions.length > 0 ? ` (${openPositions.length})` : ""}
+          </h2>
+          {summary?.openPnl != null && openPositions.length > 0 && (
+            <div className="ma-pro-meta-bar" style={{ marginBottom: 0 }}>
+              <span>P&L {fmtMoney(summary.openPnl)}</span>
+              {summary.dailyTheta != null && (
+                <><span className="ma-pro-meta-sep">·</span><span>θ {fmtMoney(summary.dailyTheta)}/day</span></>
+              )}
+            </div>
+          )}
+        </div>
         {pfLoading && (
-          <div className="ma-skeleton" style={{ height: 100, borderRadius: 10, width: "100%" }} />
+          <div className="ma-skeleton" style={{ height: 100, borderRadius: 12, width: "100%" }} />
         )}
         {!pfLoading && (!portfolioWrap || openPositions.length === 0) && (
           <div className="ma-opt-empty-card">
             <div className="ma-mono" style={{ fontSize: 14, fontWeight: 700, marginBottom: 6 }}>No active options positions</div>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>Use the scanner above to find opportunities.</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>Use the scanner below to find opportunities.</div>
           </div>
         )}
         {!pfLoading && portfolioWrap && openPositions.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>
-              Open P&amp;L {fmtMoney(summary?.openPnl ?? 0)} · Est. θ {fmtMoney(summary?.dailyTheta ?? 0)}/day
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {openPositions.map((pos) => {
               const dte = pos.dteRemaining ?? 0;
               const pnl = Number(pos.pnl) || 0;
-              const pnlColor = pnl >= 0 ? "var(--green)" : "var(--red)";
-              const strat = STRATEGY[pos.strategy]?.shortLabel || pos.strategy;
               const targetPrem = pos.openPremium != null ? pos.openPremium * 0.5 : null;
+              const isCC = pos.strategy === "COVERED_CALL";
+              const isHedge = pos.strategy === "REGIME_HEDGE";
+              const posAccent = isHedge ? "var(--red)" : isCC ? "var(--blue)" : "#a78bfa";
               const meta = STRATEGY[pos.strategy] || STRATEGY.COVERED_CALL;
               return (
-                <div key={pos.id} className="ma-opt-pos-card">
-                  <div className="ma-opt-pos-card__main">
+                <div key={pos.id} className="ma-opt-pos-card-v2" style={{ "--pos-accent": posAccent }}>
+                  <div className="ma-opt-pos-card-v2__main">
                     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <span className="ma-opt-ticker" style={{ fontSize: 16 }}>
-                        {pos.ticker}
-                      </span>
+                      <span className="ma-opt-pos-card-v2__ticker">{pos.ticker}</span>
                       <span className={stratBadgeClass(pos.strategy)}>{meta.shortLabel}</span>
                     </div>
-                    <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                      Strike {fmtMoney(pos.strike)} · Exp {fmtExpiry(pos.expiration)} · Opened {pos.openDate ?? "—"}
-                    </div>
-                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
-                      Premium {fmtMoney(pos.openPremium)} · Current {fmtMoney(pos.currentPremium)} · DTE {dte}
-                    </div>
-                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
-                      P&amp;L{" "}
-                      <span style={{ color: pnlColor }}>
-                        {fmtMoney(pnl)} ({fmtPct((Number(pos.pnlPct) || 0) * 100)})
-                      </span>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, auto)", gap: "4px 20px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-secondary)", width: "fit-content" }}>
+                      <span>Strike {fmtMoney(pos.strike)}</span>
+                      <span>Exp {fmtExpiry(pos.expiration)}</span>
+                      <span>DTE {dte}d</span>
+                      <span>Open {fmtMoney(pos.openPremium)}</span>
+                      <span>Current {fmtMoney(pos.currentPremium)}</span>
+                      <span>Opened {pos.openDate ?? "—"}</span>
                     </div>
                     {targetPrem != null && (
-                      <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
-                        Target: close near 50% decay (~{fmtMoney(targetPrem)} premium)
+                      <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 6 }}>
+                        Target: close ~50% decay (~{fmtMoney(targetPrem)})
                       </div>
                     )}
                   </div>
-                  <div className="ma-opt-pos-card__actions">
+                  <div className="ma-opt-pos-card-v2__actions">
+                    <div className="ma-opt-pos-card-v2__pnl" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {fmtMoney(pnl)}
+                    </div>
+                    <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: pnl >= 0 ? "var(--green)" : "var(--red)", textAlign: "right", opacity: 0.75, marginBottom: 8 }}>
+                      {fmtPct((Number(pos.pnlPct) || 0) * 100)}
+                    </div>
                     <button
                       type="button"
                       className="ma-opt-close-btn"
@@ -1056,13 +1227,13 @@ export default function OptionsTab({ visible = true }) {
                         setCloseReason("manual");
                       }}
                     >
-                      Close position
+                      Close
                     </button>
                     <button
                       type="button"
                       className="ma-btn-danger-outline"
                       disabled={deletingId === pos.id}
-                      title="Remove from open positions without recording P&L"
+                      title="Remove without recording P&L"
                       onClick={() => deleteOpenPosition(pos)}
                     >
                       {deletingId === pos.id ? "…" : "Delete"}
@@ -1075,41 +1246,41 @@ export default function OptionsTab({ visible = true }) {
         )}
       </section>
 
+      {/* ── Auto Trader positions ── */}
       {autoPositions.length > 0 && (
-        <section style={{ marginTop: 18 }}>
-          <h2 className="ma-opt-section-title">Auto Trader positions ({autoPositions.length})</h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <section style={{ marginTop: 20 }}>
+          <h2 className="ma-pro-section-title">Auto Trader positions ({autoPositions.length})</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {autoPositions.map((pos) => {
               const pnl = Number(pos.currentPnL) || 0;
-              const pnlColor = pnl >= 0 ? "var(--green)" : "var(--red)";
+              const isCSP = pos.strategy === "CASH_SECURED_PUT";
+              const posAccent = isCSP ? "#a78bfa" : "var(--blue)";
               return (
-                <div key={pos.optionSymbol || pos.entryOrderId || `${pos.ticker}-${pos.strike}-${pos.expiration}`} className="ma-opt-pos-card">
-                  <div className="ma-opt-pos-card__main">
+                <div key={pos.optionSymbol || pos.entryOrderId || `${pos.ticker}-${pos.strike}-${pos.expiration}`}
+                  className="ma-opt-pos-card-v2" style={{ "--pos-accent": posAccent }}>
+                  <div className="ma-opt-pos-card-v2__main">
                     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                      <span className="ma-opt-ticker" style={{ fontSize: 16 }}>
-                        {pos.ticker}
-                      </span>
+                      <span className="ma-opt-pos-card-v2__ticker">{pos.ticker}</span>
                       <span className={stratBadgeClass(pos.strategy)}>{STRATEGY[pos.strategy]?.shortLabel || pos.strategy}</span>
-                      <span style={{ fontSize: 10, background: "#0EA5E9", color: "#fff", padding: "2px 8px", borderRadius: 999 }}>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 800, background: "rgba(14,165,233,0.15)", border: "1px solid rgba(14,165,233,0.35)", color: "#38bdf8", padding: "2px 8px", borderRadius: 6, letterSpacing: "0.1em" }}>
                         AUTO
                       </span>
                     </div>
-                    <div className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-                      Strike {fmtMoney(pos.strike)} · Exp {fmtExpiry(pos.expiration)} · Opened {pos.entryDate ?? "—"}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, auto)", gap: "4px 20px", fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-secondary)", width: "fit-content" }}>
+                      <span>Strike {fmtMoney(pos.strike)}</span>
+                      <span>Exp {fmtExpiry(pos.expiration)}</span>
+                      <span>DTE {pos.currentDTE ?? pos.dte ?? "—"}d</span>
+                      <span>Credit {fmtMoney(pos.entryCredit)}</span>
+                      <span>Mark {pos.currentMark != null ? fmtMoney(pos.currentMark) : "—"}</span>
+                      <span>Opened {pos.entryDate ?? "—"}</span>
                     </div>
-                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
-                      Credit {fmtMoney(pos.entryCredit)} · Current mark{" "}
-                      {pos.currentMark != null ? fmtMoney(pos.currentMark) : "—"} · DTE{" "}
-                      {pos.currentDTE ?? pos.dte ?? "—"}
+                    <div className="ma-mono" style={{ fontSize: 10, color: "var(--text-secondary)", marginTop: 6 }}>
+                      Managed: closes at 50% profit or 21 DTE
                     </div>
-                    <div className="ma-mono" style={{ fontSize: 12, marginTop: 4 }}>
-                      P&amp;L{" "}
-                      <span style={{ color: pnlColor }}>
-                        {fmtMoney(pnl)}
-                      </span>
-                    </div>
-                    <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>
-                      Managed by Auto Trader (closes at 50% profit, closes/rolls near 21 DTE).
+                  </div>
+                  <div className="ma-opt-pos-card-v2__actions">
+                    <div className="ma-opt-pos-card-v2__pnl" style={{ color: pnl >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {fmtMoney(pnl)}
                     </div>
                   </div>
                 </div>
@@ -1119,73 +1290,67 @@ export default function OptionsTab({ visible = true }) {
         </section>
       )}
 
-      <header style={{ marginTop: 36 }}>
-        <p className="ma-opt-header-kicker">SCANNER</p>
-        <h1 className="ma-opt-header-title">Opportunity scanner</h1>
-        <p className="ma-opt-header-sub">Covered calls · Cash-secured puts · Regime hedges</p>
-      </header>
+      {/* ── Scanner ── */}
+      <hr className="ma-pro-divider" style={{ marginTop: 32 }} />
+      <div className="ma-pro-header" style={{ marginBottom: 14 }}>
+        <div className="ma-pro-header__left">
+          <p className="ma-pro-kicker">Scanner</p>
+          <h2 className="ma-pro-title" style={{ fontSize: 20 }}>Opportunity Scanner</h2>
+          <p className="ma-pro-sub">Covered calls · Cash-secured puts · Regime hedges</p>
+        </div>
+        <div className="ma-pro-header__right">
+          <span className={`ma-opt-regime-pill ${regimeInfo.pillClass}`}>{regimeInfo.pill}</span>
+          <span className="ma-opt-regime-desc" style={{ fontSize: 12, maxWidth: 300 }}>{regimeInfo.desc}</span>
+        </div>
+      </div>
 
       <section className="ma-opt-status" aria-label="Scanner status">
         <div className="ma-opt-status__row">
           <div className="ma-opt-status__mid">
-            <span className={`ma-opt-regime-pill ${regimeInfo.pillClass}`}>{regimeInfo.pill}</span>
-            <span className="ma-opt-regime-desc">{regimeInfo.desc}</span>
+            <div className="ma-opt-filters" role="tablist" aria-label="Filter by strategy" style={{ marginTop: 0 }}>
+              {[
+                { id: "all", label: "All" },
+                { id: "COVERED_CALL", label: "Covered calls" },
+                { id: "CASH_SECURED_PUT", label: "Cash-secured puts" },
+                { id: "REGIME_HEDGE", label: "Hedges" }
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={strategyFilter === f.id}
+                  className={"ma-opt-filter" + (strategyFilter === f.id ? " ma-opt-filter--on" : "")}
+                  onClick={() => setStrategyFilter(f.id)}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-            {mockMode ? (
-              <span className="ma-opt-mock">Mock mode</span>
-            ) : (
-              <span className="ma-opt-live">
-                <span className="ma-opt-live__dot" aria-hidden />
-                Live
-              </span>
-            )}
-            <button type="button" className="ma-opt-refresh" onClick={handleRefresh} disabled={scanLoading || pfLoading}>
-              {scanLoading ? "Scanning…" : "Refresh"}
-            </button>
-          </div>
-        </div>
-        <div className="ma-opt-meta">
-          {scan?.count != null ? `${scan.count} opportunities found` : "—"}
-          {lastScanAt != null ? ` · Last scan: ${formatScanAgo(lastScanAt)}` : ""}
-        </div>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <select
-            className="ma-input"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            style={{ maxWidth: 300, fontFamily: SANS }}
-            aria-label="Sort opportunities"
-          >
-            <option value="ev">Sort by EV (best edge first)</option>
-            <option value="ivRank">Sort by IV Rank (most premium)</option>
-            <option value="dte">Sort by DTE (closest expiry first)</option>
-          </select>
-        </div>
-        <div className="ma-opt-filters" role="tablist" aria-label="Filter by strategy">
-          {[
-            { id: "all", label: "All" },
-            { id: "COVERED_CALL", label: "Covered calls" },
-            { id: "CASH_SECURED_PUT", label: "Cash-secured puts" },
-            { id: "REGIME_HEDGE", label: "Hedges" }
-          ].map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              role="tab"
-              aria-selected={strategyFilter === f.id}
-              className={"ma-opt-filter" + (strategyFilter === f.id ? " ma-opt-filter--on" : "")}
-              onClick={() => setStrategyFilter(f.id)}
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+            <select
+              className="ma-input"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              style={{ maxWidth: 260, fontFamily: SANS, fontSize: 11 }}
+              aria-label="Sort opportunities"
             >
-              {f.label}
-            </button>
-          ))}
+              <option value="sellScore">Sort: Academic score</option>
+              <option value="ev">Sort: Expected value</option>
+              <option value="ivRank">Sort: IV Rank</option>
+              <option value="dte">Sort: DTE</option>
+            </select>
+            <div className="ma-opt-meta" style={{ margin: 0, fontSize: 11 }}>
+              {scan?.count != null ? `${scan.count} found` : "—"}
+              {lastScanAt != null ? ` · ${formatScanAgo(lastScanAt)}` : ""}
+            </div>
+          </div>
         </div>
       </section>
 
-      <section style={{ marginTop: 28 }}>
-        <h2 className="ma-opt-section-title">Opportunities</h2>
-        {scanError && <div style={{ color: RED, fontSize: 13, marginBottom: 8 }}>{scanError}</div>}
+      <section style={{ marginTop: 20 }}>
+        <h2 className="ma-pro-section-title">Opportunities</h2>
+        {scanError && <div className="ma-pro-error">{scanError}</div>}
         {scanLoading && (
           <div className="ma-options-grid">
             {[1, 2, 3, 4, 5, 6].map((k) => (
@@ -1218,51 +1383,113 @@ export default function OptionsTab({ visible = true }) {
         )}
       </section>
 
-      <section style={{ marginTop: 36 }}>
-        <h2 className="ma-opt-section-title">Manual trade history</h2>
-        {streak && (
-          <div style={{ fontSize: 12, marginBottom: 12, color: "var(--text-secondary)" }}>
-            Current streak:{" "}
-            <strong style={{ color: streak.wins ? GREEN : RED }}>
-              {streak.count} {streak.wins ? "wins" : "losses"}
-            </strong>
+      {/* ── Manual trade history (summary + ledger) ── */}
+      <section className="ma-hist-section">
+        <h2 className="ma-pro-section-title">Manual trade history</h2>
+
+        {closedSorted.length > 0 && (
+          <div className="ma-hist-stats" aria-label="Closed trade summary">
+            <div className="ma-hist-stat">
+              <div className="ma-hist-stat__label">Total realized</div>
+              <div
+                className="ma-hist-stat__val"
+                style={{ color: historyStats.totalRealized >= 0 ? "var(--green)" : "var(--red)" }}
+              >
+                {fmtMoney(historyStats.totalRealized)}
+              </div>
+            </div>
+            <div className="ma-hist-stat">
+              <div className="ma-hist-stat__label">Win rate</div>
+              <div className="ma-hist-stat__val">
+                {historyStats.winRate != null ? `${historyStats.winRate.toFixed(1)}%` : "—"}
+              </div>
+            </div>
+            <div className="ma-hist-stat">
+              <div className="ma-hist-stat__label">Avg loss</div>
+              <div className="ma-hist-stat__val" style={{ color: "var(--red)" }}>
+                {historyStats.avgLoss != null ? fmtMoney(historyStats.avgLoss) : fmtMoney(0)}
+              </div>
+            </div>
+            <div className="ma-hist-stat">
+              <div className="ma-hist-stat__label">Avg DTE@open</div>
+              <div className="ma-hist-stat__val">
+                {historyStats.avgDteOpen != null ? `${historyStats.avgDteOpen.toFixed(0)}d` : "—"}
+              </div>
+            </div>
+            <div className="ma-hist-stat">
+              <div className="ma-hist-stat__label">Streak</div>
+              <div
+                className="ma-hist-stat__val"
+                style={{ color: streak ? (streak.wins ? "var(--green)" : "var(--red)") : "var(--text-secondary)" }}
+              >
+                {streak ? `${streak.count} ${streak.wins ? "W" : "L"}` : "—"}
+              </div>
+            </div>
           </div>
         )}
+
         {closedSorted.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>No closed trades yet.</p>
         ) : (
           <>
-            {closedSorted.map((p, hi) => (
-              <div
-                key={`${p.id}-closed`}
-                className="ma-opt-trade-card"
-                style={{ animationDelay: `${Math.min(hi, 12) * 40}ms` }}
-              >
-                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span className="ma-opt-ticker" style={{ fontSize: 15 }}>
-                    {p.ticker}
-                  </span>
-                  <span className={stratBadgeClass(p.strategy)}>{STRATEGY[p.strategy]?.shortLabel || p.strategy}</span>
-                  <span className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                    {fmtMoney(p.strike)} · {fmtExpiry(p.expiration)}
-                  </span>
+            {closedSorted.map((p, hi) => {
+              const chips = closeReasonChips(p.closeReason);
+              return (
+                <div
+                  key={`${p.id}-closed`}
+                  className="ma-hist-card"
+                  style={{
+                    "--hist-accent": Number(p.pnl) >= 0 ? "rgba(63,185,80,0.55)" : "rgba(248,81,73,0.45)",
+                    animationDelay: `${Math.min(hi, 12) * 40}ms`
+                  }}
+                >
+                  <div className="ma-hist-card__top">
+                    <span className="ma-opt-ticker" style={{ fontSize: 16, fontWeight: 800 }}>{p.ticker}</span>
+                    <span className={stratBadgeClass(p.strategy)}>{STRATEGY[p.strategy]?.shortLabel || p.strategy}</span>
+                    <span className="ma-mono" style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      {fmtMoney(p.strike)} · {fmtExpiry(p.expiration)}
+                    </span>
+                    <span
+                      className="ma-mono"
+                      style={{
+                        fontSize: 15,
+                        fontWeight: 800,
+                        marginLeft: "auto",
+                        color: Number(p.pnl) >= 0 ? "var(--green)" : "var(--red)"
+                      }}
+                    >
+                      {fmtMoney(Number(p.pnl) || 0)}
+                    </span>
+                  </div>
+                  <div className="ma-hist-card__dates">
+                    <span>
+                      Opened {p.openDate ?? "—"} → Closed {p.closeDate ?? "—"}
+                    </span>
+                    <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 4 }}>
+                      {chips.map((c) => (
+                        <span key={`${p.id}-${c.label}`} className={`ma-hist-badge ma-hist-badge--${c.kind}`}>
+                          {c.label}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                  <div className="ma-hist-card__data">
+                    Open {fmtMoney(p.openPremium)} → Close {fmtMoney(p.closePremium)}
+                    {" · "}
+                    <span style={{ color: Number(p.pnl) >= 0 ? "var(--green)" : "var(--red)" }}>
+                      {fmtPct((Number(p.pnlPct) || 0) * 100)}
+                    </span>
+                    {p.dteAtOpen != null && ` · DTE@open ${p.dteAtOpen}`}
+                  </div>
                 </div>
-                <div className="ma-mono" style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
-                  Opened {p.openDate ?? "—"} → Closed {p.closeDate ?? "—"}
-                  <span className={reasonBadgeClass(p.closeReason)}>{p.closeReason ?? "manual"}</span>
-                </div>
-                <div className="ma-mono" style={{ fontSize: 12 }}>
-                  Open {fmtMoney(p.openPremium)} → Close {fmtMoney(p.closePremium)} · P&amp;L{" "}
-                  <span style={{ color: Number(p.pnl) >= 0 ? GREEN : RED }}>{fmtMoney(Number(p.pnl) || 0)}</span> (
-                  {fmtPct((Number(p.pnlPct) || 0) * 100)}) · DTE @ open {p.dteAtOpen ?? "—"}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </section>
 
       <p className="ma-opt-footnote">Educational tool · Not financial advice</p>
+
 
       {openModal && (
         <div

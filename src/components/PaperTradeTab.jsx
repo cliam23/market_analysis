@@ -691,7 +691,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           }}
         />
         <PaperTradeSubTabs active={paperSubTab} disabled={paperSlotFetchPending} onPick={setPaperSubTab} />
-        <PaperSlotLoadingBanner show={paperSlotFetchPending} />
+        <PaperSlotLoadingBanner show={paperSlotFetchPending && paperSubTab === "portfolio"} />
         {showResetConfirm && (
           <ConfirmModal
             message={`Reset portfolio to $${Number(initForm.initialCapital || 100000).toLocaleString()}? This cannot be undone.`}
@@ -867,7 +867,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
         }}
       />
       <PaperTradeSubTabs active={paperSubTab} disabled={loading || slotUiPending} onPick={setPaperSubTab} />
-      <PaperSlotLoadingBanner show={slotUiPending} />
+      <PaperSlotLoadingBanner show={slotUiPending && paperSubTab === "portfolio"} />
       {showResetConfirm && (
         <ConfirmModal
           message={`Reset portfolio (implied start ~$${Math.round(derivedInitialCapital).toLocaleString()})? This cannot be undone.`}

@@ -26,7 +26,14 @@ export const WHEEL_CONFIG = {
   // Regime permissions
   regimeAllowsCSP: ['strong_bull', 'normal'],
   regimeAllowsCC: ['strong_bull', 'normal', 'pullback'],
-  regimeClosesAll: ['bear']
+  regimeClosesAll: ['bear'],
+  // ── Three-paper academic signal thresholds ──────────────────────────────
+  // Lower than auto-trader (wheel uses longer horizons, equity quality matters too)
+  minSellScore:      0.30,
+  // Never sell CCs/CSPs when realized vol > implied vol (Goyal & Saretto)
+  blockCheapOptions: true,
+  // Require at least 1 positive paper signal (relaxed vs auto-trader's 2)
+  minSignalCount:    1
 };
 
 function portfolioPath() {
@@ -110,8 +117,23 @@ export function selectWheelTargets(paperHoldings, opportunities, existingLegs, r
       if (score > 0 && score < WHEEL_CONFIG.scoreFloor) continue;
 
       const best = opps
-        .filter((o) => o && o.strategy === 'COVERED_CALL' && String(o.ticker || '').toUpperCase() === t)
-        .sort((a, b) => (Number(b.ev) || -Infinity) - (Number(a.ev) || -Infinity))[0];
+        .filter((o) => {
+          if (!o || o.strategy !== 'COVERED_CALL') return false;
+          if (String(o.ticker || '').toUpperCase() !== t) return false;
+          // G&S: don't sell CCs when options are cheap (RV > IV)
+          if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) return false;
+          // Composite score minimum
+          if (WHEEL_CONFIG.minSellScore > 0 && o.sellScore != null && o.sellScore < WHEEL_CONFIG.minSellScore) return false;
+          // Signal count minimum
+          if (WHEEL_CONFIG.minSignalCount > 1 && o.signalCount != null && o.signalCount < WHEEL_CONFIG.minSignalCount) return false;
+          return true;
+        })
+        .sort((a, b) => {
+          // Blend academic sellScore with equity composite score for CC ranking
+          const aScore = (a.sellScore ?? 0.3) * 50 + (Number(a.compositeScore ?? score) || 0) * 0.5;
+          const bScore = (b.sellScore ?? 0.3) * 50 + (Number(b.compositeScore ?? score) || 0) * 0.5;
+          return bScore - aScore;
+        })[0];
 
       if (!best) continue;
       const prem = Number(best.mid ?? best.premium ?? 0) || 0;
@@ -132,17 +154,27 @@ export function selectWheelTargets(paperHoldings, opportunities, existingLegs, r
   // CSPs on not-held tickers
   if (regimeAllowsCSP && out.length < slots) {
     const csp = opps
-      .filter((o) => o && o.strategy === 'CASH_SECURED_PUT')
       .filter((o) => {
+        if (!o || o.strategy !== 'CASH_SECURED_PUT') return false;
         const t = String(o.ticker || '').toUpperCase();
-        if (!t) return false;
-        if (held.has(t) || active.has(t)) return false;
+        if (!t || held.has(t) || active.has(t)) return false;
         if (!o.optionSymbol) return false;
         const score = Number(o.compositeScore ?? 0) || 0;
         if (score > 0 && score < WHEEL_CONFIG.scoreFloor) return false;
+        // G&S: don't sell CSPs when options are cheap
+        if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) return false;
+        // Composite score minimum
+        if (WHEEL_CONFIG.minSellScore > 0 && o.sellScore != null && o.sellScore < WHEEL_CONFIG.minSellScore) return false;
+        // Signal count minimum
+        if (WHEEL_CONFIG.minSignalCount > 1 && o.signalCount != null && o.signalCount < WHEEL_CONFIG.minSignalCount) return false;
         return true;
       })
-      .sort((a, b) => (Number(b.compositeScore) || 0) - (Number(a.compositeScore) || 0));
+      .sort((a, b) => {
+        // Blend academic sellScore with equity composite score for CSP ranking
+        const aScore = (a.sellScore ?? 0.3) * 50 + (Number(a.compositeScore) || 0) * 0.5;
+        const bScore = (b.sellScore ?? 0.3) * 50 + (Number(b.compositeScore) || 0) * 0.5;
+        return bScore - aScore;
+      });
 
     for (const o of csp) {
       if (out.length >= slots) break;
