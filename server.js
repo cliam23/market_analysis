@@ -6560,6 +6560,231 @@ function getRollingHV(ticker, asOfDate, window = 30) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THREE-PAPER ACADEMIC OPTIONS SIGNAL SYSTEM
+//
+// Synthesizes findings from:
+//   Bakshi & Kapadia (2003) — negative VRP; delta-hedged sell edge scales with vol
+//   Cao & Han (2013)        — idiosyncratic vol cross-section; dealers overprice high-IVOL
+//   Goyal & Saretto (2007)  — log(RV) - log(IV) mispricing signal; straddle alpha
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * getPriceArray — internal helper for computeIVOL.
+ * Returns the last `n` closing prices ≤ asOf from the same on-disk cache
+ * that getRollingHV uses (.cache/yahoo/{TICKER}.json).
+ * Returns null when data is insufficient (< 80% fill).
+ */
+function getPriceArray(ticker, asOf, n) {
+  try {
+    const root = String(ticker || '').trim().toUpperCase();
+    if (!root || !asOf) return null;
+    const cachePath = path.join(REPO_ROOT, '.cache', 'yahoo', `${root}.json`);
+    if (!existsSync(cachePath)) return null;
+
+    const raw = JSON.parse(readFileSync(cachePath, 'utf8'));
+    let prices = [];
+    if (Array.isArray(raw.prices)) {
+      prices = raw.prices
+        .filter((p) => p && p.date && (p.close ?? p.adjClose ?? p.price) != null)
+        .map((p) => ({ date: String(p.date).split('T')[0], close: Number(p.close ?? p.adjClose ?? p.price) }))
+        .filter((p) => Number.isFinite(p.close) && p.close > 0);
+    } else if (raw.history && typeof raw.history === 'object') {
+      prices = Object.entries(raw.history)
+        .map(([date, data]) => ({
+          date,
+          close: typeof data === 'number' ? Number(data) : Number(data?.close ?? data?.adjClose ?? data?.price)
+        }))
+        .filter((p) => Number.isFinite(p.close) && p.close > 0);
+    }
+
+    prices = prices
+      .filter((p) => p.date <= asOf)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-n);
+
+    return prices.length >= Math.floor(n * 0.8) ? prices.map((p) => p.close) : null;
+  } catch { return null; }
+}
+
+/**
+ * computeGSSignal — Goyal & Saretto (2007) volatility mispricing signal.
+ *
+ * signal = log(RV_252d) − log(IV_ATM)
+ *   signal << 0  →  IV >> RV  →  options significantly overpriced  →  strong sell edge
+ *   signal ≈  0  →  IV ≈ RV  →  fairly priced                      →  weak edge
+ *   signal >> 0  →  RV >> IV  →  options cheap                      →  avoid selling
+ *
+ * gsNorm is mapped to [0,1] where 1.0 = strongest sell signal (most negative gs).
+ */
+function computeGSSignal(ticker, asOf, ivAtm) {
+  if (!ticker || !ivAtm || ivAtm <= 0) return null;
+  try {
+    const rv252 = getRollingHV(ticker, asOf, 252);
+    if (!rv252 || rv252 <= 0) return null;
+
+    const gsSignal = Math.log(rv252) - Math.log(ivAtm);
+    const overpricingRatio = parseFloat((ivAtm / rv252).toFixed(3));
+
+    // Map [-1.5, +0.5] → [0, 1]: most negative (strong overpricing) = 1.0
+    const SIGNAL_MIN = -1.5, SIGNAL_MAX = 0.5;
+    const gsNorm = parseFloat(
+      Math.max(0, Math.min(1, (SIGNAL_MAX - gsSignal) / (SIGNAL_MAX - SIGNAL_MIN))).toFixed(3)
+    );
+
+    let interpretation;
+    if (gsSignal < -0.5)
+      interpretation = `Strong edge: IV is ${((overpricingRatio - 1) * 100).toFixed(0)}% above 12-month realized — options significantly overpriced.`;
+    else if (gsSignal < -0.2)
+      interpretation = 'Moderate edge: IV modestly above realized vol. Normal premium-selling conditions.';
+    else if (gsSignal < 0.1)
+      interpretation = 'Fairly priced: IV and realized vol are close. Minimal mispricing signal.';
+    else
+      interpretation = 'Avoid selling: realized vol exceeds implied — options are cheap.';
+
+    return {
+      gsSignal:         parseFloat(gsSignal.toFixed(4)),
+      gsNorm,
+      rv252:            parseFloat((rv252 * 100).toFixed(2)),    // pct
+      ivAtmPct:         parseFloat((ivAtm  * 100).toFixed(2)),   // pct
+      overpricingRatio,
+      sellEdge:         gsSignal < -0.1,
+      interpretation
+    };
+  } catch { return null; }
+}
+
+/**
+ * computeIVOL — Cao & Han (2013) idiosyncratic volatility.
+ *
+ * Regresses 21-day daily returns on SPY (CAPM single factor).
+ * IVOL = annualised stdev of residuals.
+ *
+ * Higher IVOL → dealers charge more to supply options → structurally overpriced → stronger sell edge.
+ */
+function computeIVOL(ticker, asOf) {
+  if (!ticker) return null;
+  try {
+    const LOOKBACK = 22; // C&H use 1-month residuals (+1 for returns)
+    const stockPx = getPriceArray(ticker, asOf, LOOKBACK);
+    const spyPx   = getPriceArray('SPY',   asOf, LOOKBACK);
+    if (!stockPx || !spyPx) return null;
+
+    const len = Math.min(stockPx.length, spyPx.length);
+    const stockRets = [], spyRets = [];
+    for (let i = 1; i < len; i++) {
+      const sRet = (stockPx[i] - stockPx[i - 1]) / stockPx[i - 1];
+      const mRet = (spyPx[i]   - spyPx[i - 1])   / spyPx[i - 1];
+      if (Number.isFinite(sRet) && Number.isFinite(mRet)) { stockRets.push(sRet); spyRets.push(mRet); }
+    }
+    if (stockRets.length < 15) return null;
+
+    // OLS: R_stock = α + β × R_spy
+    const n = stockRets.length;
+    const sumX  = spyRets.reduce((a, x) => a + x, 0);
+    const sumY  = stockRets.reduce((a, y) => a + y, 0);
+    const sumXY = spyRets.reduce((a, x, i) => a + x * stockRets[i], 0);
+    const sumXX = spyRets.reduce((a, x) => a + x * x, 0);
+    const denom = n * sumXX - sumX * sumX;
+    if (Math.abs(denom) < 1e-12) return null;
+
+    const beta  = (n * sumXY - sumX * sumY) / denom;
+    const alpha = (sumY - beta * sumX) / n;
+
+    const residuals = stockRets.map((r, i) => r - (alpha + beta * spyRets[i]));
+    const meanR = residuals.reduce((a, r) => a + r, 0) / residuals.length;
+    const variance = residuals.reduce((a, r) => a + (r - meanR) ** 2, 0) / (residuals.length - 1);
+    const ivol = Math.sqrt(variance * 252);
+
+    if (!Number.isFinite(ivol) || ivol <= 0) return null;
+    return {
+      ivol:    parseFloat(ivol.toFixed(4)),
+      ivolPct: parseFloat((ivol * 100).toFixed(2)),
+      beta:    parseFloat(beta.toFixed(3))
+    };
+  } catch { return null; }
+}
+
+/**
+ * computeVRPIntensity — Bakshi & Kapadia (2003) vol risk premium intensity.
+ *
+ * vrpIntensity = (IV_ATM / HV_30) − 1, scaled by vol-regime multiplier.
+ * B&K finding: delta-hedged losses scale with vol level (~3× difference
+ * between high-vol and low-vol regimes per their Table 3).
+ */
+function computeVRPIntensity(ticker, asOf, ivAtm) {
+  if (!ticker || !ivAtm || ivAtm <= 0) return null;
+  try {
+    const hv30 = getRollingHV(ticker, asOf, 30);
+    if (!hv30 || hv30 <= 0) return null;
+
+    const ivPremium = (ivAtm / hv30) - 1;
+
+    // B&K Table 3 vol-regime multiplier
+    const hv30Pct = hv30 * 100;
+    const regimeBoost = hv30Pct < 10 ? 0.70 : hv30Pct < 14 ? 1.00 : hv30Pct < 18 ? 1.30 : 1.60;
+    const vrpIntensity = ivPremium * regimeBoost;
+
+    // Normalize [-0.5, 1.5] → [0, 1]
+    const VRP_MIN = -0.5, VRP_MAX = 1.5;
+    const vrpNorm = parseFloat(
+      Math.max(0, Math.min(1, (vrpIntensity - VRP_MIN) / (VRP_MAX - VRP_MIN))).toFixed(3)
+    );
+
+    return {
+      vrpIntensity: parseFloat(vrpIntensity.toFixed(3)),
+      ivPremium:    parseFloat(ivPremium.toFixed(3)),
+      hv30Pct:      parseFloat(hv30Pct.toFixed(2)),
+      regimeBoost,
+      vrpNorm,
+      sellEdge: ivPremium > 0.05
+    };
+  } catch { return null; }
+}
+
+/**
+ * getBKVolRegimeBoost — Bakshi & Kapadia (2003) market-level sizing multiplier.
+ *
+ * In high-vol regimes the negative VRP effect is ~3× stronger so we can
+ * be proportionally more selective / aggressive. Uses SPY 30-day realized vol.
+ * Range [0.7, 1.5]; baseline 1.0.
+ */
+function getBKVolRegimeBoost(asOf) {
+  try {
+    const spyHV30 = getRollingHV('SPY', asOf, 30);
+    if (!spyHV30) return 1.0;
+    const pct = spyHV30 * 100;
+    return pct < 10 ? 0.7 : pct < 14 ? 1.0 : pct < 18 ? 1.2 : 1.5;
+  } catch { return 1.0; }
+}
+
+/**
+ * buildSellScore — composite academic sell score (0-1, higher = stronger edge).
+ * Weights: G&S 40%, C&H 30%, B&K 30% (vol-regime-boosted).
+ *
+ * @param {object|null} gs   result of computeGSSignal
+ * @param {number}      ivolPct   IVOL cross-sectional percentile [0,1]
+ * @param {object|null} vrp  result of computeVRPIntensity
+ * @param {number}      bkBoost  getBKVolRegimeBoost result
+ * @param {number}      ivRank  fallback IVR [0-100]
+ */
+function buildSellScore(gs, ivolPct, vrp, bkBoost, ivRank) {
+  const gsNorm     = gs?.gsNorm   ?? (ivRank > 50 ? 0.55 : 0.35);
+  const vrpNorm    = vrp?.vrpNorm ?? (ivRank > 40 ? 0.40 : 0.25);
+  const vrpBoosted = Math.min(1, vrpNorm * (bkBoost ?? 1.0));
+  const ivolComp   = Number.isFinite(ivolPct) ? ivolPct : 0.5;
+
+  const sellScore = parseFloat((0.40 * gsNorm + 0.30 * ivolComp + 0.30 * vrpBoosted).toFixed(4));
+
+  const signalCount = [
+    gs?.sellEdge  ?? (ivRank > 50),
+    vrp?.sellEdge ?? (ivRank > 40),
+    ivolComp > 0.40
+  ].filter(Boolean).length;
+
+  return { sellScore, signalCount, academicSellEdge: signalCount >= 2 };
+}
+
 function calculateMomentumQuality(priceData, asOfDate) {
   const available = priceData.filter(p => p.date <= asOfDate);
   if (available.length < 252) return null;
@@ -14031,6 +14256,30 @@ async function computeOptionsScan(universeIdRaw) {
       ? calculateMarketRegime(spySeries, today, universe, priceHistory)
       : { regime: 'normal', breadthRatio: null };
 
+  // ── Three-paper signal pre-computation ────────────────────────────────────
+  // Pre-compute IVOL for cross-sectional ranking (Cao & Han 2013).
+  // Done before the async chain-fetching loop to avoid blocking per-ticker.
+  const bkRegimeBoost = getBKVolRegimeBoost(today);
+  const ivolRawMap = new Map(); // ticker -> raw annualised IVOL (decimal)
+  const fullUniverse = rankings.slice(0, 30);
+  for (const stock of fullUniverse) {
+    const iv = computeIVOL(stock.ticker, today);
+    if (iv) ivolRawMap.set(stock.ticker, iv.ivol);
+  }
+  // Also add SPY/QQQ for REGIME_HEDGE (low IVOL is expected)
+  for (const etf of ['SPY', 'QQQ']) {
+    const iv = computeIVOL(etf, today);
+    if (iv) ivolRawMap.set(etf, iv.ivol);
+  }
+  const ivolValues = [...ivolRawMap.values()].filter(Number.isFinite).sort((a, b) => a - b);
+  // Returns IVOL percentile rank within the current scan universe [0,1]
+  const getIvolPct = (ticker) => {
+    if (!ivolRawMap.has(ticker) || ivolValues.length < 2) return 0.5;
+    const val = ivolRawMap.get(ticker);
+    const rank = ivolValues.findIndex((v) => v >= val);
+    return rank < 0 ? 1.0 : rank / (ivolValues.length - 1);
+  };
+
   const opportunities = [];
   const slice = rankings.slice(0, 30);
   let scanEvaluated = 0;
@@ -14086,8 +14335,16 @@ async function computeOptionsScan(universeIdRaw) {
         const ccHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
         const ccIvNum = cc.iv != null && Number.isFinite(Number(cc.iv)) ? Number(cc.iv) : null;
         const ccIvProxy = (ccHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const ccIvEst = ccIvNum ?? ccIvProxy;
         const ccVrpr = ccHv30 && ccIvNum ? ccIvNum / ccHv30 : ccHv30 ? ccIvProxy / ccHv30 : null;
         const ccVrpEdge = ccVrpr != null ? ccVrpr > 1.05 : (ivRank ?? 0) > 50;
+        // Three-paper academic signals
+        const ccGs  = ccIvEst ? computeGSSignal(ticker, today, ccIvEst)       : null;
+        const ccVrpI = ccIvEst ? computeVRPIntensity(ticker, today, ccIvEst)  : null;
+        const ccIvolPct = getIvolPct(ticker);
+        const ccIvolData = ivolRawMap.has(ticker) ? { ivol: ivolRawMap.get(ticker) } : null;
+        const { sellScore: ccSellScore, signalCount: ccSignalCount, academicSellEdge: ccAcademic } =
+          buildSellScore(ccGs, ccIvolPct, ccVrpI, bkRegimeBoost, ivRank ?? 0);
         opportunities.push({
           strategy: 'COVERED_CALL',
           ticker,
@@ -14096,8 +14353,30 @@ async function computeOptionsScan(universeIdRaw) {
           currentPrice: Number(price),
           hv30: ccHv30 != null ? parseFloat((ccHv30 * 100).toFixed(1)) : null,
           ivProxy: ccHv30 != null ? parseFloat((ccIvProxy * 100).toFixed(1)) : null,
+          impliedVol: ccIvNum,
           vrpRatio: ccVrpr != null ? parseFloat(ccVrpr.toFixed(2)) : null,
           vrpEdge: ccVrpEdge,
+          // Goyal & Saretto (2007)
+          gsSignal:         ccGs?.gsSignal         ?? null,
+          gsNorm:           ccGs?.gsNorm           ?? null,
+          rv252:            ccGs?.rv252            ?? null,
+          overpricingRatio: ccGs?.overpricingRatio ?? null,
+          gsInterpretation: ccGs?.interpretation   ?? null,
+          gsSellEdge:       ccGs?.sellEdge         ?? null,
+          // Bakshi & Kapadia (2003)
+          vrpIntensity:     ccVrpI?.vrpIntensity   ?? null,
+          ivPremium:        ccVrpI?.ivPremium       ?? null,
+          regimeBoost:      ccVrpI?.regimeBoost     ?? bkRegimeBoost,
+          vrpNorm:          ccVrpI?.vrpNorm         ?? null,
+          // Cao & Han (2013)
+          ivol:             ccIvolData?.ivol        ?? null,
+          ivolPct:          parseFloat((ccIvolPct * 100).toFixed(1)), // pct rank in scan universe
+          ivolRaw:          ccIvolData?.ivol != null ? parseFloat((ccIvolData.ivol * 100).toFixed(2)) : null,
+          // Composite
+          sellScore:        ccSellScore,
+          signalCount:      ccSignalCount,
+          academicSellEdge: ccAcademic,
+          bkRegimeBoost,
           strike: cc.strike,
           expiration: cc.expiration,
           optionType: 'call',
@@ -14170,8 +14449,16 @@ async function computeOptionsScan(universeIdRaw) {
         const cspHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
         const cspIvNum = csp.iv != null && Number.isFinite(Number(csp.iv)) ? Number(csp.iv) : null;
         const cspIvProxy = (cspHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const cspIvEst = cspIvNum ?? cspIvProxy;
         const cspVrpr = cspHv30 && cspIvNum ? cspIvNum / cspHv30 : cspHv30 ? cspIvProxy / cspHv30 : null;
         const cspVrpEdge = cspVrpr != null ? cspVrpr > 1.05 : (ivRank ?? 0) > 50;
+        // Three-paper academic signals (reuse IVOL from map — same ticker, same day)
+        const cspGs   = cspIvEst ? computeGSSignal(ticker, today, cspIvEst)       : null;
+        const cspVrpI = cspIvEst ? computeVRPIntensity(ticker, today, cspIvEst)  : null;
+        const cspIvolPct = getIvolPct(ticker);
+        const cspIvolData = ivolRawMap.has(ticker) ? { ivol: ivolRawMap.get(ticker) } : null;
+        const { sellScore: cspSellScore, signalCount: cspSignalCount, academicSellEdge: cspAcademic } =
+          buildSellScore(cspGs, cspIvolPct, cspVrpI, bkRegimeBoost, ivRank ?? 0);
         opportunities.push({
           strategy: 'CASH_SECURED_PUT',
           ticker,
@@ -14180,8 +14467,30 @@ async function computeOptionsScan(universeIdRaw) {
           currentPrice: Number(price),
           hv30: cspHv30 != null ? parseFloat((cspHv30 * 100).toFixed(1)) : null,
           ivProxy: cspHv30 != null ? parseFloat((cspIvProxy * 100).toFixed(1)) : null,
+          impliedVol: cspIvNum,
           vrpRatio: cspVrpr != null ? parseFloat(cspVrpr.toFixed(2)) : null,
           vrpEdge: cspVrpEdge,
+          // Goyal & Saretto (2007)
+          gsSignal:         cspGs?.gsSignal         ?? null,
+          gsNorm:           cspGs?.gsNorm           ?? null,
+          rv252:            cspGs?.rv252            ?? null,
+          overpricingRatio: cspGs?.overpricingRatio ?? null,
+          gsInterpretation: cspGs?.interpretation   ?? null,
+          gsSellEdge:       cspGs?.sellEdge         ?? null,
+          // Bakshi & Kapadia (2003)
+          vrpIntensity:     cspVrpI?.vrpIntensity   ?? null,
+          ivPremium:        cspVrpI?.ivPremium       ?? null,
+          regimeBoost:      cspVrpI?.regimeBoost     ?? bkRegimeBoost,
+          vrpNorm:          cspVrpI?.vrpNorm         ?? null,
+          // Cao & Han (2013)
+          ivol:             cspIvolData?.ivol        ?? null,
+          ivolPct:          parseFloat((cspIvolPct * 100).toFixed(1)),
+          ivolRaw:          cspIvolData?.ivol != null ? parseFloat((cspIvolData.ivol * 100).toFixed(2)) : null,
+          // Composite
+          sellScore:        cspSellScore,
+          signalCount:      cspSignalCount,
+          academicSellEdge: cspAcademic,
+          bkRegimeBoost,
           strike: csp.strike,
           expiration: csp.expiration,
           optionType: 'put',
@@ -14263,6 +14572,7 @@ async function computeOptionsScan(universeIdRaw) {
         const hedgeHv30 = getRollingHV(etf, today, 30) ?? bt_volatilityFromPrices((priceHistory[etf] || []).slice(-31));
         const hedgeIvNum = hedge.iv != null && Number.isFinite(Number(hedge.iv)) ? Number(hedge.iv) : null;
         const hedgeIvProxy = (hedgeHv30 ?? 0.25) * (1 + ((ivRank ?? 50) - 50) / 100);
+        const hedgeIvEst = hedgeIvNum ?? hedgeIvProxy;
         const hedgeVrpr = hedgeHv30 && hedgeIvNum ? hedgeIvNum / hedgeHv30 : hedgeHv30 ? hedgeIvProxy / hedgeHv30 : null;
         opportunities.push({
           strategy: 'REGIME_HEDGE',
@@ -14272,8 +14582,27 @@ async function computeOptionsScan(universeIdRaw) {
           currentPrice: Number(px),
           hv30: hedgeHv30 != null ? parseFloat((hedgeHv30 * 100).toFixed(1)) : null,
           ivProxy: hedgeHv30 != null ? parseFloat((hedgeIvProxy * 100).toFixed(1)) : null,
+          impliedVol: hedgeIvNum,
           vrpRatio: hedgeVrpr != null ? parseFloat(hedgeVrpr.toFixed(2)) : null,
           vrpEdge: null,
+          // Academic signals (regime hedge context: using for market vol regime info only)
+          gsSignal:         null,
+          gsNorm:           null,
+          rv252:            null,
+          overpricingRatio: null,
+          gsInterpretation: null,
+          gsSellEdge:       null,
+          vrpIntensity:     hedgeIvEst ? computeVRPIntensity(etf, today, hedgeIvEst)?.vrpIntensity ?? null : null,
+          ivPremium:        null,
+          regimeBoost:      bkRegimeBoost,
+          vrpNorm:          null,
+          ivol:             null,
+          ivolPct:          parseFloat((getIvolPct(etf) * 100).toFixed(1)),
+          ivolRaw:          null,
+          sellScore:        null,
+          signalCount:      null,
+          academicSellEdge: null,
+          bkRegimeBoost,
           strike: hedge.strike,
           expiration: hedge.expiration,
           optionType: 'put',
@@ -14313,7 +14642,11 @@ async function computeOptionsScan(universeIdRaw) {
   opportunities.sort((a, b) => {
     if (a.strategy === 'REGIME_HEDGE' && b.strategy !== 'REGIME_HEDGE') return -1;
     if (b.strategy === 'REGIME_HEDGE' && a.strategy !== 'REGIME_HEDGE') return 1;
-    return (b.annualizedYield ?? 0) - (a.annualizedYield ?? 0);
+    // Blend sellScore (academic rank) with annualizedYield for final ordering
+    // sellScore 0-1 is scaled to approximate yield range for commensurability
+    const aScore = (a.sellScore ?? 0.3) * 40 + (a.annualizedYield ?? 0);
+    const bScore = (b.sellScore ?? 0.3) * 40 + (b.annualizedYield ?? 0);
+    return bScore - aScore;
   });
 
   return {
@@ -14462,6 +14795,9 @@ app.get('/api/options/backtest', async (req, res) => {
       const dte = 30;
       const sqrtT = Math.sqrt(dte / 365);
 
+      // B&K regime boost for this month (scales premium edge with vol level)
+      const bkBoost = getBKVolRegimeBoost(date);
+
       // Covered calls: allowed in non-bear regimes
       for (const row of holdings) {
         const ticker = row?.ticker;
@@ -14474,20 +14810,24 @@ app.get('/api/options/backtest', async (req, res) => {
         const dteToEarnings = daysUntilEarnings(ticker, date, fundamentalsLive);
         if (dteToEarnings != null && dteToEarnings >= 0 && dteToEarnings <= dte) continue;
 
-        // Rolling HV computed from cached prices, using only data before this date
-        const hv = getRollingHV(ticker, date, 30) ?? 0.25;
-        const ivRank = 55; // backtest doesn't have per-name IVR; treat as slightly elevated baseline
-        const vrpRatio = 1 + (ivRank - 50) / 100;
-        const impliedVol = hv * vrpRatio;
-        if (impliedVol <= hv * 1.05) {
+        // 30-day HV from cache (no look-ahead: only uses data up to `date`)
+        const hv30 = getRollingHV(ticker, date, 30) ?? 0.25;
+        // 252-day HV for G&S mispricing signal
+        const hv252 = getRollingHV(ticker, date, 252) ?? hv30;
+
+        // G&S (2007): skip when RV > IV (options are cheap, selling is wrong side)
+        // In backtest we approximate IV as hv30 × (1 + vol-risk-premium constant 0.08)
+        // Consistent with B&K (2003): options carry ~8% avg IV premium over HV
+        const impliedVol = hv30 * (1 + 0.08 * bkBoost);
+        if (impliedVol < hv252) {
+          // RV(1Y) > IV → G&S says options are cheap → skip
           vrpSkippedCount++;
           continue;
         }
-        const volForPricing = impliedVol;
 
         const strike = px * 1.05; // ~5% OTM call
         const deltaApprox = 0.25;
-        const premEst = px * volForPricing * sqrtT * deltaApprox;
+        const premEst = px * impliedVol * sqrtT * deltaApprox * bkBoost;
 
         ccPrem += premEst * 100;
         const assigned = nextPx != null && Number.isFinite(nextPx) ? nextPx > strike : false;
@@ -14507,26 +14847,24 @@ app.get('/api/options/backtest', async (req, res) => {
           const dteToEarnings = daysUntilEarnings(ticker, date, fundamentalsLive);
           if (dteToEarnings != null && dteToEarnings >= 0 && dteToEarnings <= dte) continue;
 
-          // Rolling HV computed from cached prices, using only data before this date
-          const hv = getRollingHV(ticker, date, 30) ?? 0.25;
-          const ivRank = 55; // backtest doesn't have per-name IVR; treat as slightly elevated baseline
-          const vrpRatio = 1 + (ivRank - 50) / 100;
-          const impliedVol = hv * vrpRatio;
-          if (impliedVol <= hv * 1.05) {
+          const hv30 = getRollingHV(ticker, date, 30) ?? 0.25;
+          const hv252 = getRollingHV(ticker, date, 252) ?? hv30;
+          const impliedVol = hv30 * (1 + 0.08 * bkBoost);
+
+          // G&S: skip when options are cheap
+          if (impliedVol < hv252) {
             vrpSkippedCount++;
             continue;
           }
-          const volForPricing = impliedVol;
 
           const strike = px * 0.95; // ~5% OTM put
           const deltaApprox = 0.2;
-          const premEst = px * volForPricing * sqrtT * deltaApprox;
+          const premEst = px * impliedVol * sqrtT * deltaApprox * bkBoost;
 
           cspPrem += premEst * 100;
           const assigned = nextPx != null && Number.isFinite(nextPx) ? nextPx < strike : false;
           if (assigned) {
             assigns += 1;
-            // premium minus intrinsic loss at next rebalance (simple proxy)
             const pnl = premEst * 100 - Math.max(0, strike - nextPx) * 100;
             assignPnlLocal += pnl;
           }
@@ -14547,7 +14885,8 @@ app.get('/api/options/backtest', async (req, res) => {
         assignments: assigns,
         totalPnl: parseFloat(total.toFixed(2)),
         cumulative: parseFloat(cumulative.toFixed(2)),
-        vrpSkipped: vrpSkippedCount
+        vrpSkipped: vrpSkippedCount,
+        bkRegimeBoost: bkBoost
       });
     }
 
@@ -14651,15 +14990,14 @@ async function paperPortfolioSnapshot(universeId) {
 
   const tickers = portfolio.holdings.map((h) => h.ticker);
   const currentPrices = {};
-  for (const ticker of tickers) {
+  await mapWithConcurrency(tickers, 10, async (ticker) => {
     try {
       const quote = await fetchYahooOp(() => yahooFinance.quote(yahooApiSymbol(ticker)), 8000);
       currentPrices[ticker] = quote?.regularMarketPrice || null;
     } catch {
       currentPrices[ticker] = null;
     }
-    await sleep(25);
-  }
+  });
 
   let totalValue = Number(portfolio.cash) || 0;
   const enrichedHoldings = portfolio.holdings.map((h) => {
@@ -14680,13 +15018,34 @@ async function paperPortfolioSnapshot(universeId) {
   return { portfolio, holdings: enrichedHoldings, totalValue, totalReturnPct, regime };
 }
 
+/**
+ * Live SPY-based regime + B&K sizing boost for wheel / Options UI when paper book has no regime stored yet.
+ */
+async function wheelLiveAcademicContext() {
+  const today = new Date().toISOString().split('T')[0];
+  const bkRegimeBoost = getBKVolRegimeBoost(today);
+  let marketRegime = 'normal';
+  try {
+    const start = new Date(Date.now() - 550 * 86400000).toISOString().split('T')[0];
+    const spyPrices = await bt_fetchPriceHistory('SPY', start, today);
+    if (spyPrices?.length >= 200) {
+      const meta = calculateMarketRegime(spyPrices, today, null, null);
+      marketRegime = meta?.regime ?? 'normal';
+    }
+  } catch {
+    marketRegime = 'normal';
+  }
+  return { asOf: today, bkRegimeBoost, marketRegime };
+}
+
 app.get('/api/wheel/status', async (req, res) => {
   try {
     const universeId = String(req.query.universeId ?? 'sp500_top50').trim();
     const wheel = loadWheelPortfolio();
-    const snap = await paperPortfolioSnapshot(universeId);
+    const [snap, liveCtx] = await Promise.all([paperPortfolioSnapshot(universeId), wheelLiveAcademicContext()]);
+    const effectiveRegime = snap.regime ?? liveCtx.marketRegime ?? 'normal';
     const summary = getWheelSummary(
-      { equityTotalValue: snap.totalValue, equityTotalReturnPct: snap.totalReturnPct, regime: snap.regime },
+      { equityTotalValue: snap.totalValue, equityTotalReturnPct: snap.totalReturnPct, regime: effectiveRegime },
       wheel
     );
     res.json({
@@ -14697,8 +15056,10 @@ app.get('/api/wheel/status', async (req, res) => {
         holdingsCount: snap.holdings.length,
         totalValue: parseFloat(Number(snap.totalValue || 0).toFixed(2)),
         totalReturnPct: parseFloat(Number(snap.totalReturnPct || 0).toFixed(2)),
-        regime: snap.regime
+        regime: effectiveRegime,
+        regimeSource: snap.regime ? 'paper_rebalance' : 'spy_live'
       },
+      academicContext: liveCtx,
       summary,
       optionsLegs: wheel.optionsLegs || [],
       closedLegs: (wheel.closedLegs || []).slice(-10),
@@ -14778,7 +15139,20 @@ app.post('/api/wheel/run', async (req, res) => {
           ivRank: opp.ivRank,
           currentPrice: opp.currentPrice,
           compositeScore: opp.compositeScore,
-          reason: t.reason
+          reason: t.reason,
+          // Three-paper academic signal snapshot at entry
+          sellScore:        opp.sellScore        ?? null,
+          signalCount:      opp.signalCount      ?? null,
+          academicSellEdge: opp.academicSellEdge ?? null,
+          gsSignal:         opp.gsSignal         ?? null,
+          gsSellEdge:       opp.gsSellEdge       ?? null,
+          gsInterpretation: opp.gsInterpretation ?? null,
+          vrpIntensity:     opp.vrpIntensity      ?? null,
+          ivPremium:        opp.ivPremium         ?? null,
+          regimeBoost:      opp.regimeBoost       ?? null,
+          ivolPct:          opp.ivolPct           ?? null,
+          ivolRaw:          opp.ivolRaw           ?? null,
+          bkRegimeBoost:    opp.bkRegimeBoost     ?? null
         });
         wheel.stats.premiumCollected += limit * 100;
         opened.push({ ticker: t.ticker, strategy: opp.strategy, symbol: opp.optionSymbol, credit: limit, orderId: resp?.order?.id ?? 'DRY_RUN' });
@@ -14911,7 +15285,19 @@ app.post('/api/wheel/optimize', async (req, res) => {
               ivRank: bestAlt.ivRank,
               currentPrice: bestAlt.currentPrice,
               compositeScore: bestAlt.compositeScore,
-              reason: `optimizer replacement for ${leg.ticker}`
+              reason: `optimizer replacement for ${leg.ticker}`,
+              sellScore:        bestAlt.sellScore        ?? null,
+              signalCount:      bestAlt.signalCount      ?? null,
+              academicSellEdge: bestAlt.academicSellEdge ?? null,
+              gsSignal:         bestAlt.gsSignal         ?? null,
+              gsSellEdge:       bestAlt.gsSellEdge       ?? null,
+              gsInterpretation: bestAlt.gsInterpretation ?? null,
+              vrpIntensity:     bestAlt.vrpIntensity      ?? null,
+              ivPremium:        bestAlt.ivPremium         ?? null,
+              regimeBoost:      bestAlt.regimeBoost       ?? null,
+              ivolPct:          bestAlt.ivolPct           ?? null,
+              ivolRaw:          bestAlt.ivolRaw           ?? null,
+              bkRegimeBoost:    bestAlt.bkRegimeBoost     ?? null
             };
             newRemaining.push(newLeg);
             wheel.stats.premiumCollected += newLimit * 100;
@@ -14943,9 +15329,22 @@ app.post('/api/wheel/optimize', async (req, res) => {
         const allowedCSP = WHEEL_CONFIG.regimeAllowsCSP.includes(regime);
         if (o.strategy === 'COVERED_CALL' && !allowedCC) return false;
         if (o.strategy === 'CASH_SECURED_PUT' && !allowedCSP) return false;
+        // G&S gate: never sell when realized vol > implied vol
+        if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) return false;
+        // Composite sell score minimum
+        if (WHEEL_CONFIG.minSellScore > 0 && o.sellScore != null && o.sellScore < WHEEL_CONFIG.minSellScore) return false;
+        // Signal count minimum
+        if (WHEEL_CONFIG.minSignalCount > 1 && o.signalCount != null && o.signalCount < WHEEL_CONFIG.minSignalCount) return false;
         return true;
       })
-      .map((o) => ({ ...o, _optimizerScore: (Number(o.ev) || 0) * Math.log(1 + (Number(o.ivRank) || 0)) }))
+      // Blend academic sellScore with EV×log(IVR) for optimizer ranking
+      .map((o) => ({
+        ...o,
+        _optimizerScore:
+          (o.sellScore != null
+            ? (o.sellScore * 500) * 0.5 + (Number(o.ev) || 0) * Math.log(1 + (Number(o.ivRank) || 0)) * 0.5
+            : (Number(o.ev) || 0) * Math.log(1 + (Number(o.ivRank) || 0)))
+      }))
       .sort((a, b) => b._optimizerScore - a._optimizerScore);
 
     const openSlots = Math.max(0, WHEEL_CONFIG.maxWheelPositions - wheel.optionsLegs.length);
@@ -14972,7 +15371,19 @@ app.post('/api/wheel/optimize', async (req, res) => {
           ivRank: opp.ivRank,
           currentPrice: opp.currentPrice,
           compositeScore: opp.compositeScore,
-          reason: `optimizer: score ${(opp._optimizerScore || 0).toFixed(1)}`
+          reason: `optimizer: score ${(opp._optimizerScore || 0).toFixed(1)}${opp.sellScore != null ? ` · academic ${(opp.sellScore * 100).toFixed(0)}/100` : ''}`,
+          sellScore:        opp.sellScore        ?? null,
+          signalCount:      opp.signalCount      ?? null,
+          academicSellEdge: opp.academicSellEdge ?? null,
+          gsSignal:         opp.gsSignal         ?? null,
+          gsSellEdge:       opp.gsSellEdge       ?? null,
+          gsInterpretation: opp.gsInterpretation ?? null,
+          vrpIntensity:     opp.vrpIntensity      ?? null,
+          ivPremium:        opp.ivPremium         ?? null,
+          regimeBoost:      opp.regimeBoost       ?? null,
+          ivolPct:          opp.ivolPct           ?? null,
+          ivolRaw:          opp.ivolRaw           ?? null,
+          bkRegimeBoost:    opp.bkRegimeBoost     ?? null
         };
         wheel.optionsLegs.push(newLeg);
         wheel.stats.premiumCollected += limit * 100;

@@ -76,11 +76,29 @@ More toggles are documented in **`.env.example`**.
 | `analysis-engine.js` | Scoring, comps/DCF inputs, **composite** + **backtest rankers** |
 | `adaptiveWeights.js` | Rolling IC-style composite weights when not `fixed` |
 | `q-learning-agent.js` / `dqn-agent.js` | RL agents + serialization to `rl-agent*.json` / `dqn-agent.json` |
-| `src/` | React UI (Backtest, Paper, Alpha Lab, RL, Options, …) |
+| `src/` | React UI (Dashboard, Search, Backtest, Paper Trade, Options, RL, About, …) |
 | `ml/` | Python RF/RNN training; Node calls `ml/predict.py` when ML blending is on |
 | `server/` | Extracted modules (config, data, scoring) — see [server/README.md](server/README.md) |
 
-Runtime JSON (paper portfolios, trained agents, `.cache/`) is mostly **gitignored** — see `.gitignore`.
+Runtime JSON (paper portfolios, trained agents, wheel portfolios, options paper JSON, `.cache/`) is mostly **gitignored** — see `.gitignore`.
+
+---
+
+## UI overview (React + Vite)
+
+Dark-themed SPA: sidebar navigation, monospace accents, regime and live/mock badges.
+
+| Tab | Purpose |
+|-----|---------|
+| **Dashboard** | Indices, regime & system status, adaptive weight bar, performance tiles, signal feed, factor pulse, paper positions (Top 50/150), movers |
+| **Search** | Single-ticker composite and pillar detail |
+| **Backtest** | Walk-forward simulation vs benchmark |
+| **Paper Trade** | Top 50 / Top 150 toggle; **Portfolio** (holdings, rebalance, RL) vs **Wheel** (options-enhanced wheel UI) |
+| **Options** | Portfolio KPIs, strategy **backtest** card, **Auto Trader** (sandbox when configured), manual & auto positions, **scanner** (academic sell score, EV, IV rank, filters), **manual trade history** — five summary tiles (total realized, win rate, avg loss, avg DTE@open, streak) and per-close rows with **closeReason** chips (`REGIME_*`, `DTE_*`, profit target, etc.) |
+| **RL Agent** | Train / compare Q-learning or DQN |
+| **About** | In-app docs (pillars, paper vs backtest, RL, options & wheel, data limits) |
+
+Options wheel logic is shared with Paper Trade via `WheelTab.jsx`; data from `GET /api/wheel/status`. Academic rows use G&amp;S, C&amp;H, B&amp;K signals when legs store scanner snapshots.
 
 ---
 

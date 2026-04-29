@@ -26,7 +26,7 @@ function parsePaperReportFromSearch() {
 
 export default function App() {
   const [paperReport, setPaperReport] = useState(parsePaperReportFromSearch);
-  const [tab, setTab] = useState("search");
+  const [tab, setTab] = useState("dashboard");
   const [selectedTicker, setSelectedTicker] = useState(null);
   const [backendConnected, setBackendConnected] = useState(true);
 
