@@ -105,7 +105,7 @@ All variables live in **`.env`** (gitignored). Copy from `.env.example` and fill
 | Variable | Provider | Free? |
 |----------|----------|-------|
 | `FRED_API_KEY` | [FRED](https://fred.stlouisfed.org) — U.S. macro / CPI | yes |
-| `FINNHUB_API_KEY` | [Finnhub](https://finnhub.io) — congressional trade disclosures (STOCK Act); refreshed weekly; app degrades gracefully if absent | yes |
+| `FMP_API_KEY` | [Financial Modeling Prep](https://financialmodelingprep.com) — Senate STOCK Act trades for congress signal; ~250 free calls/day; refreshed weekly; omit for score 0 | yes |
 | `TRADIER_SANDBOX_TOKEN` + `TRADIER_ACCOUNT_ID` | [Tradier](https://documentation.tradier.com/sandbox) — real options chains | sandbox is free |
 | `VITE_AV_KEY` | [Alpha Vantage](https://www.alphavantage.co) — quote fallback | free tier |
 | `VITE_ANTHROPIC_API_KEY` | Anthropic — only if you wire LLM helpers | paid |
@@ -291,7 +291,7 @@ See `docs/SECURITY.md` for spawn boundaries, ML subprocess surface, and audit no
 | RL toggle does nothing | `RL_ENABLED=true` **and** the matching `rl-agent-top*.json` / `dqn-agent.json` exists for `RL_AGENT_TYPE` |
 | Paper portfolio errors | Init via `POST /api/paper-trade/init`; holdings live under `holdings`, not `positions` |
 | Options chains look fake | Without `TRADIER_SANDBOX_TOKEN` the server uses a deterministic mock by design |
-| Congress score always 0 | Finnhub may return `You don't have access to this resource` on free tier — congressional trading needs a paid Finnhub plan. Otherwise: one `FINNHUB_API_KEY=` line in `.env`, restart server; watch logs for `[Congress] Finnhub` |
+| Congress score always 0 | Set `FMP_API_KEY` (free signup), restart server. Logs show `[Congress] FMP` on errors. Weekly refresh uses Senate-only (1 call/ticker) to stay under 250 calls/day |
 
 ---
 

@@ -6512,59 +6512,102 @@ function bt_volatilityFromPrices(prices) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CONGRESSIONAL TRADING SIGNAL  (Finnhub free tier — STOCK Act disclosures)
+// CONGRESSIONAL TRADING SIGNAL  (Financial Modeling Prep — STOCK Act disclosures)
 //
-// Set FINNHUB_API_KEY in .env.  App degrades gracefully when key is absent.
+// Set FMP_API_KEY in .env (free tier ~250 calls/day). Degrades gracefully if absent.
 // Data file: congress-signal.json (gitignored runtime artifact).
+// Senate-only fetch per ticker (1 HTTP call) keeps weekly full-universe refresh
+// under the daily budget; enable House by adding /house-disclosure in fetchCongressTrades.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Fetch raw congressional trade records for one ticker from Finnhub.
- * Returns null on any error so callers fall back to score=0 silently.
- */
-function finnhubApiKey() {
-  const raw = process.env.FINNHUB_API_KEY;
+/** FMP API key from env (trimmed, first line only). */
+function fmpApiKey() {
+  const raw = process.env.FMP_API_KEY;
   if (raw == null || String(raw).trim() === '') return '';
-  // .env mistakes: trailing newline, duplicate lines merged — take first non-empty line only
   return String(raw).trim().split(/\r?\n/)[0].trim();
 }
 
+/**
+ * Pull STOCK Act disclosures from Financial Modeling Prep (Senate + optional House).
+ * Returns a unified array matching the shape expected by computeCongressScore, or null if empty/error.
+ */
 async function fetchCongressTrades(ticker, fromDate) {
-  const key = finnhubApiKey();
+  const key = fmpApiKey();
   if (!key) return null;
-  const to = new Date().toISOString().split('T')[0];
-  const from = fromDate ?? (() => {
-    const d = new Date(); d.setDate(d.getDate() - 60); return d.toISOString().split('T')[0];
-  })();
-  try {
-    const url = `https://finnhub.io/api/v1/stock/congressional-trading`
-      + `?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${encodeURIComponent(key)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    const text = await res.text();
-    let json;
+
+  const cutoff = fromDate
+    ? new Date(fromDate).getTime()
+    : Date.now() - 60 * 24 * 60 * 60 * 1000;
+
+  const BASE = 'https://financialmodelingprep.com/api/v4';
+
+  async function fetchEndpoint(path, chamber) {
     try {
-      json = JSON.parse(text);
-    } catch {
-      console.warn(`[Congress] Finnhub non-JSON ${ticker} HTTP ${res.status}:`, text.slice(0, 200));
-      return null;
+      const url = `${BASE}${path}?symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(key)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        console.warn(`[Congress] FMP non-JSON ${path} ${ticker} HTTP ${res.status}:`, text.slice(0, 200));
+        return [];
+      }
+      if (!res.ok) {
+        console.warn(`[Congress] FMP HTTP ${res.status} ${path} ${ticker}:`, text.slice(0, 200));
+        return [];
+      }
+      if (!Array.isArray(data)) {
+        const errMsg = data?.['Error Message'] || data?.error || data?.message;
+        if (errMsg) console.warn(`[Congress] FMP ${ticker}:`, String(errMsg).slice(0, 200));
+        return [];
+      }
+
+      return data
+        .map((t) => {
+          const rawDate = t.transactionDate ?? t.disclosureDate ?? t.dateRecieved ?? t.dateReceived ?? '';
+          if (!rawDate) return null;
+          if (new Date(rawDate).getTime() < cutoff) return null;
+
+          const firstName = t.firstName ?? '';
+          const lastName = t.lastName ?? t.representative ?? '';
+          const name = `${firstName} ${lastName}`.trim() || 'Unknown';
+
+          const raw = (t.type ?? t.transactionType ?? '').toLowerCase();
+          let transaction = 'Other';
+          if (/purchase|buy/i.test(raw)) transaction = 'Buy';
+          else if (/sale|sell/i.test(raw)) transaction = 'Sell';
+
+          return {
+            name,
+            party: t.party ?? '?',
+            chamber,
+            transaction,
+            transactionDate: rawDate,
+            filingDate: t.dateRecieved ?? t.dateReceived ?? t.disclosureDate ?? rawDate,
+            amount: t.amount ?? '?',
+            state: t.state ?? '?',
+            office: t.office ?? name,
+          };
+        })
+        .filter(Boolean);
+    } catch (e) {
+      console.warn(`[Congress] FMP ${path} ${ticker}:`, e?.message || e);
+      return [];
     }
-    if (!res.ok) {
-      console.warn(`[Congress] Finnhub HTTP ${res.status} ${ticker}:`, (json?.error || text).toString().slice(0, 300));
-      return null;
-    }
-    if (json?.error) {
-      console.warn(`[Congress] Finnhub error ${ticker}:`, json.error);
-      return null;
-    }
-    return Array.isArray(json?.data) ? json.data : null;
-  } catch (e) {
-    console.warn(`[Congress] Finnhub fetch failed ${ticker}:`, e?.message || e);
-    return null;
   }
+
+  // Senate only: 1 call per ticker (~150 calls for full universe — within FMP free 250/day)
+  const senateTrades = await fetchEndpoint('/senate-trading', 'Senate');
+  // House: second call per ticker — uncomment if your plan budget allows
+  // const houseTrades = await fetchEndpoint('/house-disclosure', 'House');
+  // const combined = [...senateTrades, ...houseTrades];
+  const combined = senateTrades;
+  return combined.length > 0 ? combined : null;
 }
 
 /**
- * Score 0–10 from raw Finnhub trade records.
+ * Score 0–10 from normalized trade records (FMP / legacy-shaped).
  * Each unique-politician buy = +1pt (×2 if within 21 days); sell = −1pt.
  * Clamped to [0,10].
  */
@@ -6607,11 +6650,11 @@ function computeCongressScore(trades) {
 
 /**
  * Fetch + persist congress signal for all given tickers.
- * 300 ms delay between calls — safe for Finnhub's 60/min free limit.
+ * 300 ms delay between calls — politeness toward FMP.
  */
 async function refreshCongressSignal(tickers) {
-  if (!finnhubApiKey()) {
-    console.log('[Congress] FINNHUB_API_KEY not set — skipping refresh');
+  if (!fmpApiKey()) {
+    console.log('[Congress] FMP_API_KEY not set — skipping refresh');
     return {};
   }
   const fromDate = (() => { const d = new Date(); d.setDate(d.getDate() - 60); return d.toISOString().split('T')[0]; })();
@@ -16631,7 +16674,7 @@ function mix01(...parts) {
 
 // ── GET /api/congress/signal ──────────────────────────────────────────────────
 // Returns cached congressional trade signal. ?ticker=AAPL for single lookup.
-// ?ticker=AAPL&refresh=true triggers an on-demand single-ticker fetch from Finnhub.
+// ?ticker=AAPL&refresh=true triggers an on-demand single-ticker fetch from FMP.
 app.get('/api/congress/signal', async (req, res) => {
   try {
     const { ticker, refresh } = req.query;
@@ -16648,7 +16691,7 @@ app.get('/api/congress/signal', async (req, res) => {
     return res.json({
       updatedAt: Object.values(congressSignalCache)[0]?.refreshedAt ?? null,
       tickerCount: Object.keys(congressSignalCache).length,
-      hasApiKey: !!finnhubApiKey(),
+      hasApiKey: !!fmpApiKey(),
       tickers: congressSignalCache,
     });
   } catch (e) {
@@ -16800,7 +16843,7 @@ cron.schedule(
 
 // Congress signal weekly refresh — Sunday 6 AM ET
 cron.schedule('0 6 * * 0', async () => {
-  if (!finnhubApiKey()) return;
+  if (!fmpApiKey()) return;
   console.log('[Congress] Weekly refresh starting...');
   try {
     const tickers = [
