@@ -6522,8 +6522,15 @@ function bt_volatilityFromPrices(prices) {
  * Fetch raw congressional trade records for one ticker from Finnhub.
  * Returns null on any error so callers fall back to score=0 silently.
  */
+function finnhubApiKey() {
+  const raw = process.env.FINNHUB_API_KEY;
+  if (raw == null || String(raw).trim() === '') return '';
+  // .env mistakes: trailing newline, duplicate lines merged — take first non-empty line only
+  return String(raw).trim().split(/\r?\n/)[0].trim();
+}
+
 async function fetchCongressTrades(ticker, fromDate) {
-  const key = process.env.FINNHUB_API_KEY;
+  const key = finnhubApiKey();
   if (!key) return null;
   const to = new Date().toISOString().split('T')[0];
   const from = fromDate ?? (() => {
@@ -6531,12 +6538,29 @@ async function fetchCongressTrades(ticker, fromDate) {
   })();
   try {
     const url = `https://finnhub.io/api/v1/stock/congressional-trading`
-      + `?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${key}`;
+      + `?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${encodeURIComponent(key)}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return null;
-    const json = await res.json();
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      console.warn(`[Congress] Finnhub non-JSON ${ticker} HTTP ${res.status}:`, text.slice(0, 200));
+      return null;
+    }
+    if (!res.ok) {
+      console.warn(`[Congress] Finnhub HTTP ${res.status} ${ticker}:`, (json?.error || text).toString().slice(0, 300));
+      return null;
+    }
+    if (json?.error) {
+      console.warn(`[Congress] Finnhub error ${ticker}:`, json.error);
+      return null;
+    }
     return Array.isArray(json?.data) ? json.data : null;
-  } catch { return null; }
+  } catch (e) {
+    console.warn(`[Congress] Finnhub fetch failed ${ticker}:`, e?.message || e);
+    return null;
+  }
 }
 
 /**
@@ -6586,7 +6610,7 @@ function computeCongressScore(trades) {
  * 300 ms delay between calls — safe for Finnhub's 60/min free limit.
  */
 async function refreshCongressSignal(tickers) {
-  if (!process.env.FINNHUB_API_KEY) {
+  if (!finnhubApiKey()) {
     console.log('[Congress] FINNHUB_API_KEY not set — skipping refresh');
     return {};
   }
@@ -16624,7 +16648,7 @@ app.get('/api/congress/signal', async (req, res) => {
     return res.json({
       updatedAt: Object.values(congressSignalCache)[0]?.refreshedAt ?? null,
       tickerCount: Object.keys(congressSignalCache).length,
-      hasApiKey: !!process.env.FINNHUB_API_KEY,
+      hasApiKey: !!finnhubApiKey(),
       tickers: congressSignalCache,
     });
   } catch (e) {
@@ -16776,7 +16800,7 @@ cron.schedule(
 
 // Congress signal weekly refresh — Sunday 6 AM ET
 cron.schedule('0 6 * * 0', async () => {
-  if (!process.env.FINNHUB_API_KEY) return;
+  if (!finnhubApiKey()) return;
   console.log('[Congress] Weekly refresh starting...');
   try {
     const tickers = [

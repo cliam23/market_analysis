@@ -291,6 +291,7 @@ See `docs/SECURITY.md` for spawn boundaries, ML subprocess surface, and audit no
 | RL toggle does nothing | `RL_ENABLED=true` **and** the matching `rl-agent-top*.json` / `dqn-agent.json` exists for `RL_AGENT_TYPE` |
 | Paper portfolio errors | Init via `POST /api/paper-trade/init`; holdings live under `holdings`, not `positions` |
 | Options chains look fake | Without `TRADIER_SANDBOX_TOKEN` the server uses a deterministic mock by design |
+| Congress score always 0 | Check server logs for `[Congress] Finnhub` (403 = plan lacks endpoint). One `FINNHUB_API_KEY=` line in `.env`, no quotes/newlines. For manual curl use `grep '^FINNHUB_API_KEY=' .env` so the token is not malformed |
 
 ---
 
