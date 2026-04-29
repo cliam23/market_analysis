@@ -60,7 +60,7 @@ export default function PaperRebalanceReportBody({ rb, variant = "inline" }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: MONO }}>
             <thead>
               <tr>
-                {["#", "Ticker", "Composite", "Fund", "Mom", "Val", "Value"].map((h) => (
+                {["#", "Ticker", "Composite", "Fund", "Mom", "Val", "Value", "Congress"].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "4px 6px", color: "#f0f0f0", fontSize: 10, fontWeight: 700, letterSpacing: 1 }}>{h}</th>
                 ))}
               </tr>
@@ -75,6 +75,16 @@ export default function PaperRebalanceReportBody({ rb, variant = "inline" }) {
                   <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.momentumScore != null ? Number(r.momentumScore).toFixed(0) : "—"}</td>
                   <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.valuationScore != null ? Number(r.valuationScore).toFixed(0) : "—"}</td>
                   <td style={{ padding: "4px 6px", color: "#f0f0f0" }}>{r.valueScore != null ? Number(r.valueScore).toFixed(0) : "—"}</td>
+                  <td style={{ padding: "4px 6px" }}>
+                    {(r.congressScore ?? 0) > 0 ? (
+                      <span
+                        title={`${r.congressSentiment} · ${r.congressScore}/10${r.congressBoosted ? ` · +${r.congressBoosted}pts` : ""}`}
+                        style={{ color: r.congressSentiment === "bullish" ? "#4ade80" : r.congressSentiment === "mild" ? "#38bdf8" : "#f0f0f0", fontWeight: 600, cursor: "help" }}
+                      >
+                        {r.congressSentiment === "bullish" ? "▲" : r.congressSentiment === "bearish" ? "▼" : "●"} {r.congressScore?.toFixed(1)}
+                      </span>
+                    ) : <span style={{ color: "#475569" }}>—</span>}
+                  </td>
                 </tr>
               ))}
             </tbody>

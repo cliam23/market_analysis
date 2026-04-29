@@ -43,7 +43,8 @@ import {
 } from './options-service.js';
 import { loadWheelPortfolio, saveWheelPortfolio, selectWheelTargets, getWheelSummary, WHEEL_CONFIG } from './wheel-portfolio-service.js';
 
-import { REPO_ROOT, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH } from './server/config/paths.js';
+import { REPO_ROOT, dataPath, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH, CONGRESS_SIGNAL_PATH } from './server/config/paths.js';
+import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
 import {
   YAHOO_QUOTE_SUMMARY_MODULE_OPTS,
   MOMENTUM_CACHE,
@@ -4568,6 +4569,27 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
         rankings = await applyMlBlendToCompositeRankings(rankings, fundamentalsLive, priceHistory, date, mlWBacktest, spyPrices);
       }
 
+      // ── Congress signal nudge (STOCK Act disclosures) ─────────────────────
+      // Soft boost: max +3pts on compositeScore. Only applied when rebalance
+      // date is ≤45 days old (current holdings). Historical runs are unaffected.
+      const MAX_CONGRESS_BOOST = 3;
+      const congressIsRecent = Math.abs(Date.now() - new Date(date).getTime()) < 45 * 24 * 60 * 60 * 1000;
+      if (congressIsRecent) {
+        for (const r of rankings) {
+          const cs = getCongressScore(r.ticker);
+          r.congressScore = cs.score;
+          r.congressSentiment = cs.sentiment;
+          if (cs.hasSignal) {
+            const boost = parseFloat(((cs.score / 10) * MAX_CONGRESS_BOOST).toFixed(2));
+            r.compositeScore = (r.compositeScore ?? 0) + boost;
+            r.congressBoosted = boost;
+            r.congressPoliticians = cs.politicians;
+          }
+        }
+        // Re-sort after nudge
+        rankings.sort((a, b) => (b.compositeScore ?? 0) - (a.compositeScore ?? 0));
+      }
+
       let portfolioValuePre = cash;
       for (const [ticker, holding] of Object.entries(holdings)) {
         const price = dailyPx[ticker];
@@ -6488,6 +6510,113 @@ function bt_volatilityFromPrices(prices) {
   }
   return standardDeviation(rets) * Math.sqrt(252);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONGRESSIONAL TRADING SIGNAL  (Finnhub free tier — STOCK Act disclosures)
+//
+// Set FINNHUB_API_KEY in .env.  App degrades gracefully when key is absent.
+// Data file: congress-signal.json (gitignored runtime artifact).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch raw congressional trade records for one ticker from Finnhub.
+ * Returns null on any error so callers fall back to score=0 silently.
+ */
+async function fetchCongressTrades(ticker, fromDate) {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key) return null;
+  const to = new Date().toISOString().split('T')[0];
+  const from = fromDate ?? (() => {
+    const d = new Date(); d.setDate(d.getDate() - 60); return d.toISOString().split('T')[0];
+  })();
+  try {
+    const url = `https://finnhub.io/api/v1/stock/congressional-trading`
+      + `?symbol=${encodeURIComponent(ticker)}&from=${from}&to=${to}&token=${key}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return Array.isArray(json?.data) ? json.data : null;
+  } catch { return null; }
+}
+
+/**
+ * Score 0–10 from raw Finnhub trade records.
+ * Each unique-politician buy = +1pt (×2 if within 21 days); sell = −1pt.
+ * Clamped to [0,10].
+ */
+function computeCongressScore(trades) {
+  if (!trades || trades.length === 0) {
+    return { score: 0, netBuys: 0, netSells: 0, uniquePoliticians: 0, sentiment: 'neutral', hasSignal: false, politicians: [], recentTrades: [] };
+  }
+  const now = Date.now();
+  const MS_21D = 21 * 24 * 60 * 60 * 1000;
+  let rawScore = 0, netBuys = 0, netSells = 0;
+  const politicians = new Set();
+  const recentTrades = [];
+
+  for (const t of trades) {
+    const tDate = new Date(t.transactionDate || t.filingDate || '').getTime();
+    if (isNaN(tDate) || (now - tDate) > 60 * 24 * 60 * 60 * 1000) continue;
+    const isBuy  = /buy|purchase/i.test(t.transaction ?? '');
+    const isSell = /sell|sale/i.test(t.transaction ?? '');
+    const weight = (now - tDate) < MS_21D ? 2 : 1;
+    politicians.add(t.name ?? t.politician ?? 'Unknown');
+    if (isBuy)  { netBuys++;  rawScore += weight; }
+    else if (isSell) { netSells++; rawScore -= weight; }
+    recentTrades.push({
+      name: t.name ?? t.politician ?? 'Unknown', party: t.party ?? '?', chamber: t.chamber ?? '?',
+      action: isBuy ? 'Buy' : isSell ? 'Sell' : t.transaction,
+      date: t.transactionDate ?? t.filingDate ?? '', amount: t.amount ?? '?',
+      isRecent: (now - tDate) < MS_21D,
+    });
+  }
+  const score = parseFloat(Math.max(0, Math.min(10, rawScore)).toFixed(1));
+  return {
+    score, netBuys, netSells,
+    uniquePoliticians: politicians.size,
+    politicians: [...politicians].slice(0, 5),
+    recentTrades: recentTrades.sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10),
+    hasSignal: score >= 3,
+    sentiment: score >= 5 ? 'bullish' : score >= 3 ? 'mild' : netSells > netBuys ? 'bearish' : 'neutral',
+  };
+}
+
+/**
+ * Fetch + persist congress signal for all given tickers.
+ * 300 ms delay between calls — safe for Finnhub's 60/min free limit.
+ */
+async function refreshCongressSignal(tickers) {
+  if (!process.env.FINNHUB_API_KEY) {
+    console.log('[Congress] FINNHUB_API_KEY not set — skipping refresh');
+    return {};
+  }
+  const fromDate = (() => { const d = new Date(); d.setDate(d.getDate() - 60); return d.toISOString().split('T')[0]; })();
+  const results = {};
+  for (let i = 0; i < tickers.length; i++) {
+    const ticker = tickers[i];
+    try {
+      const trades = await fetchCongressTrades(ticker, fromDate);
+      results[ticker] = { ...computeCongressScore(trades), ticker, refreshedAt: new Date().toISOString() };
+    } catch {
+      results[ticker] = { score: 0, ticker, error: true, refreshedAt: new Date().toISOString() };
+    }
+    if (i < tickers.length - 1) await new Promise(r => setTimeout(r, 300));
+  }
+  await fsWriteFile(CONGRESS_SIGNAL_PATH, JSON.stringify({ updatedAt: new Date().toISOString(), tickers: results }, null, 2));
+  console.log(`[Congress] Refreshed ${Object.keys(results).length} tickers → congress-signal.json`);
+  return results;
+}
+
+// In-memory cache — loaded at startup, refreshed by weekly cron
+let congressSignalCache = {};
+
+/** O(1) lookup — returns zeroed default when ticker has no data. */
+function getCongressScore(ticker) {
+  return congressSignalCache[String(ticker || '').toUpperCase()]
+    ?? { score: 0, netBuys: 0, netSells: 0, uniquePoliticians: 0, sentiment: 'neutral', hasSignal: false, politicians: [] };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * getRollingHV
@@ -12761,7 +12890,14 @@ app.get('/api/paper-trade/portfolio', async (req, res) => {
       totalValue += h.shares * currentPrice;
       const pnl = (currentPrice - h.entryPrice) * h.shares;
       const pnlPct = h.entryPrice > 0 ? ((currentPrice / h.entryPrice) - 1) * 100 : 0;
-      return { ...h, currentPrice, marketValue, pnl, pnlPct: parseFloat(pnlPct.toFixed(2)) };
+      const cs = getCongressScore(h.ticker);
+      return {
+        ...h, currentPrice, marketValue, pnl, pnlPct: parseFloat(pnlPct.toFixed(2)),
+        congressScore: cs.score,
+        congressSentiment: cs.sentiment,
+        congressPoliticians: cs.politicians ?? [],
+        congressNetBuys: cs.netBuys ?? 0,
+      };
     });
 
     enrichedHoldings.forEach(h => {
@@ -13359,6 +13495,20 @@ async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
       && mlW > 0 && fundamentalsLive) {
       rankings = await applyMlBlendToCompositeRankings(rankings, fundamentalsLive, priceHistory, today, mlW, spyPaper);
     }
+
+    // ── Congress signal nudge (paper rebalance) ───────────────────────────
+    for (const r of rankings) {
+      const cs = getCongressScore(r.ticker);
+      r.congressScore = cs.score;
+      r.congressSentiment = cs.sentiment;
+      if (cs.hasSignal) {
+        const boost = parseFloat(((cs.score / 10) * 3).toFixed(2));
+        r.compositeScore = (r.compositeScore ?? 0) + boost;
+        r.congressBoosted = boost;
+        r.congressPoliticians = cs.politicians;
+      }
+    }
+    rankings.sort((a, b) => (b.compositeScore ?? 0) - (a.compositeScore ?? 0));
 
     const regimeEnabledPaper = portfolio.config.regimeEnabled !== false;
     const regimeMetaPaper = regimeEnabledPaper
@@ -16455,6 +16605,34 @@ function mix01(...parts) {
 
 // =====================================================================
 
+// ── GET /api/congress/signal ──────────────────────────────────────────────────
+// Returns cached congressional trade signal. ?ticker=AAPL for single lookup.
+// ?ticker=AAPL&refresh=true triggers an on-demand single-ticker fetch from Finnhub.
+app.get('/api/congress/signal', async (req, res) => {
+  try {
+    const { ticker, refresh } = req.query;
+    if (ticker) {
+      const t = String(ticker).toUpperCase();
+      if (refresh === 'true') {
+        const trades = await fetchCongressTrades(t);
+        const result = { ...computeCongressScore(trades), ticker: t, refreshedAt: new Date().toISOString() };
+        congressSignalCache[t] = result;
+        return res.json({ [t]: result });
+      }
+      return res.json({ [t]: getCongressScore(t) });
+    }
+    return res.json({
+      updatedAt: Object.values(congressSignalCache)[0]?.refreshedAt ?? null,
+      tickerCount: Object.keys(congressSignalCache).length,
+      hasApiKey: !!process.env.FINNHUB_API_KEY,
+      tickers: congressSignalCache,
+    });
+  } catch (e) {
+    console.error('[Congress] /api/congress/signal error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -16596,6 +16774,24 @@ cron.schedule(
   { timezone: 'America/New_York' }
 );
 
+// Congress signal weekly refresh — Sunday 6 AM ET
+cron.schedule('0 6 * * 0', async () => {
+  if (!process.env.FINNHUB_API_KEY) return;
+  console.log('[Congress] Weekly refresh starting...');
+  try {
+    const tickers = [
+      ...(UNIVERSE_TICKERS['sp500_top50'] ?? []),
+      ...(UNIVERSE_TICKERS['sp500_top150'] ?? []),
+    ].filter((t, i, a) => t && a.indexOf(t) === i);
+    if (!tickers.length) return;
+    const results = await refreshCongressSignal(tickers);
+    congressSignalCache = results;
+    console.log(`[Congress] Weekly refresh complete. ${Object.keys(results).length} tickers cached.`);
+  } catch (e) {
+    console.error('[Congress] Weekly refresh failed:', e?.message || e);
+  }
+}, { timezone: 'America/New_York' });
+
 
 // Express 5 wires the listen() callback to `server.once('error', done)` as well as
 // success — so a single (err?) => ... cb can run on EADDRINUSE and falsely log "running".
@@ -16603,6 +16799,16 @@ cron.schedule(
 const server = app.listen(PORT, '0.0.0.0');
 server.once('listening', () => {
   ensureDualPaperPortfoliosInitialized();
+
+  // ── Congress signal: load cache from disk ────────────────────────────────
+  fsReadFile(CONGRESS_SIGNAL_PATH, 'utf8')
+    .then(raw => {
+      const parsed = JSON.parse(raw);
+      congressSignalCache = parsed.tickers ?? {};
+      console.log(`[Congress] Loaded cache (${Object.keys(congressSignalCache).length} tickers, updated ${parsed.updatedAt})`);
+    })
+    .catch(() => console.log('[Congress] No congress-signal.json — will populate on first cron run or manual ?refresh=true'));
+
   console.log(
     `[Yahoo] throttle: chartConcurrency=${YAHOO_CHART_CONCURRENCY} fundamentalsConcurrency=${FUNDAMENTALS_FETCH_CONCURRENCY} chartDelayMs=${YAHOO_CHART_DELAY_MS} (env: YAHOO_CHART_CONCURRENCY, YAHOO_FUNDAMENTALS_CONCURRENCY, YAHOO_CHART_DELAY_MS)`
   );
