@@ -6531,15 +6531,12 @@ function fmpApiKey() {
  * Pull STOCK Act disclosures from Financial Modeling Prep (Senate + optional House).
  * Returns a unified array matching the shape expected by computeCongressScore, or null if empty/error.
  */
-async function fetchCongressTrades(ticker, fromDate) {
+async function fetchCongressTrades(ticker, _fromDate) {
   const key = fmpApiKey();
   if (!key) return null;
 
-  const cutoff = fromDate
-    ? new Date(fromDate).getTime()
-    : Date.now() - 60 * 24 * 60 * 60 * 1000;
-
-  const BASE = 'https://financialmodelingprep.com/api/v4';
+  // Stable API (current FMP docs). The legacy /api/v4/senate-trading path often returns [].
+  const BASE = 'https://financialmodelingprep.com/stable';
 
   async function fetchEndpoint(path, chamber) {
     try {
@@ -6567,7 +6564,7 @@ async function fetchCongressTrades(ticker, fromDate) {
         .map((t) => {
           const rawDate = t.transactionDate ?? t.disclosureDate ?? t.dateRecieved ?? t.dateReceived ?? '';
           if (!rawDate) return null;
-          if (new Date(rawDate).getTime() < cutoff) return null;
+          // 60-day scoring window is applied in computeCongressScore — do not pre-filter here
 
           const firstName = t.firstName ?? '';
           const lastName = t.lastName ?? t.representative ?? '';
@@ -6576,7 +6573,7 @@ async function fetchCongressTrades(ticker, fromDate) {
           const raw = (t.type ?? t.transactionType ?? '').toLowerCase();
           let transaction = 'Other';
           if (/purchase|buy/i.test(raw)) transaction = 'Buy';
-          else if (/sale|sell/i.test(raw)) transaction = 'Sell';
+          else if (/sale|sell|partial/i.test(raw)) transaction = 'Sell';
 
           return {
             name,
@@ -6597,11 +6594,10 @@ async function fetchCongressTrades(ticker, fromDate) {
     }
   }
 
-  // Senate only: 1 call per ticker (~150 calls for full universe — within FMP free 250/day)
-  const senateTrades = await fetchEndpoint('/senate-trading', 'Senate');
-  // House: second call per ticker — uncomment if your plan budget allows
-  // const houseTrades = await fetchEndpoint('/house-disclosure', 'House');
-  // const combined = [...senateTrades, ...houseTrades];
+  // Senate only: 1 call per ticker (within FMP free 250/day for weekly full refresh)
+  const senateTrades = await fetchEndpoint('/senate-trades', 'Senate');
+  // House: +1 call/ticker — https://financialmodelingprep.com/stable/house-trades?symbol=
+  // const houseTrades = await fetchEndpoint('/house-trades', 'House');
   const combined = senateTrades;
   return combined.length > 0 ? combined : null;
 }
