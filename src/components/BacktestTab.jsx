@@ -310,7 +310,8 @@ function buildBacktestQuery(settings, rlAgentOn) {
     _t: String(Date.now())
   });
   const strat = (settings.strategy || "").toLowerCase().trim();
-  if (isCompositeStrategy(strat)) {
+  const comp = isCompositeStrategy(strat);
+  if (comp) {
     params.set("rlAgent", rlAgentOn ? "true" : "false");
     params.set("rlMode", rlAgentOn ? "eval" : "off");
   }
