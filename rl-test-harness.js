@@ -49,7 +49,8 @@ const STATE_FEATURES = {
 const ALPHA_REP = [-0.06, -0.035, -0.01, 0.01, 0.035, 0.06];
 const BREADTH_REP = [0.2, 0.4, 0.6, 0.85];
 const VOL_REP = [0.08, 0.125, 0.2, 0.35];
-const SIGNAL_REP = [83, 84.5, 87, 90];
+/** Midpoints inside each SIGNAL_BIN interval (must round-trip through discretize). */
+const SIGNAL_REP = [76, 80, 84, 87];
 
 function decodedBinsToEncodeFeatures(d) {
   return {
@@ -94,7 +95,7 @@ function testActionRoundtrip() {
       dec.exposureIdx * ACTION_SPACE.positionCount.n * ACTION_SPACE.sizingMethod.n +
       dec.posCountIdx * ACTION_SPACE.sizingMethod.n +
       dec.sizingIdx;
-    const enc = encodeAction(dec.exposureIdx, dec.posCountIdx, dec.sizingIdx, dec.waitIdx ?? 0);
+    const enc = encodeAction(dec.exposureIdx, dec.posCountIdx, dec.sizingIdx);
     if (re !== idx || enc !== idx) failures.push(idx);
     if (failures.length > 10) break;
   }

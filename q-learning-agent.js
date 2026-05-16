@@ -1,7 +1,9 @@
 /**
  * @fileoverview Tabular Q-learning agent for portfolio-level discrete actions (exposure, position count,
- * sizing method, rebalance skip). States combine regime, recent alpha, breadth, realized vol, and signal strength.
+ * sizing method). States combine regime, recent alpha, breadth, realized vol, and signal strength (5D → 1920 states).
+ * Actions: 5 × 4 × 3 = 60 (exposure grid includes 0.85 to align with regime rules pullback/normal tiers vs coarse {0.8,1.0}).
  * Serialized Q-table compatible with `/api/rl/train` and backtest RL overlay. No Node server imports.
+ * Eval/paper: `server.js` may remap the greedy action in `strong_bull` (min exposure 0.8, min 13 positions) and `bear` (max exposure 0.65) before executing trades.
  * @module q-learning-agent
  */
 
@@ -18,8 +20,11 @@ export const REGIME_BUCKET_MAP = {
 export const ALPHA_BINS = [-Infinity, -0.05, -0.02, 0, 0.02, 0.05, Infinity];
 export const BREADTH_BINS = [-Infinity, 0.3, 0.5, 0.7, Infinity];
 export const VOL_BINS = [-Infinity, 0.1, 0.15, 0.25, Infinity];
-/** Top-15 avg composite score on 0–100 scale (edges ≈ p25/p50/p75 combined top50+top150 3y sample; recalibrated Apr 2026). */
-export const SIGNAL_BINS = [-Infinity, 84, 85.5, 88, Infinity];
+/**
+ * Recalibrated May 2026 — quartiles of actual avgTopScore range ~74–88 (Top 50 live backtests).
+ * bucket 0: below 78 · bucket 1: [78,82) · bucket 2: [82,86) · bucket 3: ≥86
+ */
+export const SIGNAL_BINS = [-Infinity, 78, 82, 86, Infinity];
 
 export const N_REGIME = 5;
 export const N_ALPHA = 6;
@@ -33,20 +38,28 @@ export const TOTAL_STATES = N_REGIME * N_ALPHA * N_BREADTH * N_VOL * N_SIGNAL;
 export const N_SUBPERIODS = 3;
 
 export const ACTION_SPACE = {
-  exposure: { levels: [0.5, 0.65, 0.8, 1.0], n: 4 },
+  /** Includes 0.85 so greedy policies can approximate regime pullback (~0.85) instead of jumping 0.8 ↔ 1.0 or collapsing to 0.5. */
+  exposure: { levels: [0.5, 0.65, 0.8, 0.85, 1.0], n: 5 },
   positionCount: { levels: [7, 10, 13, 15], n: 4 },
-  sizingMethod: { levels: ['equal', 'invVol', 'score'], n: 3 },
-  rebalanceWait: { levels: ['standard', 'skip'], n: 2 }
+  sizingMethod: { levels: ['equal', 'invVol', 'score'], n: 3 }
 };
 
-/** 4 × 4 × 3 × 2 — rebalanceWait slowest so indices 0..47 match legacy (standard only). */
-export const TOTAL_ACTIONS = 4 * 4 * 3 * 2;
+/** exposure.n × positionCount.n × sizingMethod.n */
+export const TOTAL_ACTIONS =
+  ACTION_SPACE.exposure.n * ACTION_SPACE.positionCount.n * ACTION_SPACE.sizingMethod.n;
+
+/** Flat `Q` length = {@link TOTAL_STATES} × {@link TOTAL_ACTIONS} = 1920 × 60 = 115,200. */
+export const Q_TABLE_FLAT_LENGTH = TOTAL_STATES * TOTAL_ACTIONS;
 
 export const Q_VALUE_CLIP = 2;
 export const MIN_VISITS_FOR_EXPLOIT = 10;
 
-/** Default: full exposure, 15 names, invVol, standard rebalance → same numeric index as legacy 48-action space */
-export const DEFAULT_ACTION_IDX = (3 * 4 + 3) * 3 + 1;
+/** Default: full exposure (last idx), 15 names (idx 3), invVol (idx 1). */
+export const DEFAULT_ACTION_IDX =
+  ((ACTION_SPACE.exposure.n - 1) * ACTION_SPACE.positionCount.n +
+    (ACTION_SPACE.positionCount.n - 1)) *
+    ACTION_SPACE.sizingMethod.n +
+  1;
 
 /** Map a scalar to a bin index using monotonic edge list `bins` (see ALPHA_BINS, etc.). */
 export function discretize(value, bins) {
@@ -63,7 +76,7 @@ export function regimeStringToBucket(regime) {
 }
 
 /**
- * Pack discretized features into a single state index in [0, {@link TOTAL_STATES}).
+ * Pack regime, alpha, breadth, vol, signal into a flat index in [0, {@link TOTAL_STATES}).
  * @param {{ regimeBucket: number, recentAlpha: number, breadthRatio: number, realizedVol: number, avgTopScore: number }} f
  */
 export function encodeState(f) {
@@ -75,7 +88,7 @@ export function encodeState(f) {
   return ((((r * N_ALPHA + a) * N_BREADTH + b) * N_VOL + v) * N_SIGNAL + s) | 0;
 }
 
-/** Inverse of {@link encodeState}: feature bin indices for a flat state index. */
+/** Inverse of {@link encodeState}. */
 export function decodeState(stateIdx) {
   let x = stateIdx | 0;
   const s = x % N_SIGNAL;
@@ -89,31 +102,33 @@ export function decodeState(stateIdx) {
   return { regimeBucket: r, alphaBin: a, breadthBin: b, volBin: v, signalBin: s };
 }
 
-/** Map flat action index to portfolio knobs (exposure, positions, sizing, rebalance skip). */
+/** Map flat action index to portfolio knobs (exposure, positions, sizing). `rebalanceWait` is always standard (compat). */
 export function decodeAction(actionIdx) {
   const idx = Math.max(0, Math.min(TOTAL_ACTIONS - 1, actionIdx | 0));
-  const sizingIdx = idx % 3;
-  let x = Math.floor(idx / 3);
-  const posCountIdx = x % 4;
-  x = Math.floor(x / 4);
-  const exposureIdx = x % 4;
-  const waitIdx = Math.floor(x / 4);
+  const nS = ACTION_SPACE.sizingMethod.n;
+  const nP = ACTION_SPACE.positionCount.n;
+  const nE = ACTION_SPACE.exposure.n;
+  const sizingIdx = idx % nS;
+  let x = Math.floor(idx / nS);
+  const posCountIdx = x % nP;
+  x = Math.floor(x / nP);
+  const exposureIdx = Math.max(0, Math.min(nE - 1, x));
   return {
     exposure: ACTION_SPACE.exposure.levels[exposureIdx],
     positionCount: ACTION_SPACE.positionCount.levels[posCountIdx],
     sizingMethod: ACTION_SPACE.sizingMethod.levels[sizingIdx],
-    rebalanceWait: ACTION_SPACE.rebalanceWait.levels[waitIdx] ?? 'standard',
+    rebalanceWait: 'standard',
     exposureIdx,
     posCountIdx,
-    sizingIdx,
-    waitIdx
+    sizingIdx
   };
 }
 
-/** Encode knob indices into a flat action index (inverse of {@link decodeAction}). */
-export function encodeAction(exposureIdx, posCountIdx, sizingIdx, waitIdx = 0) {
-  const w = Math.max(0, Math.min(1, waitIdx | 0));
-  return (sizingIdx + 3 * (posCountIdx + 4 * (exposureIdx + 4 * w))) | 0;
+/** Encode knob indices into a flat action index (inverse of {@link decodeAction}). Optional 4th arg ignored (legacy API). */
+export function encodeAction(exposureIdx, posCountIdx, sizingIdx, _waitIdx = 0) {
+  const nS = ACTION_SPACE.sizingMethod.n;
+  const nP = ACTION_SPACE.positionCount.n;
+  return (sizingIdx + nS * (posCountIdx + nP * exposureIdx)) | 0;
 }
 
 /** Policy default matching `DEFAULT_ACTION_IDX` (full exposure, 15 names, invVol, rebalance as usual). */
@@ -125,27 +140,15 @@ export const DEFAULT_ACTION = {
 };
 
 /**
- * MV-inspired reward with explicit risk aversion parameter γ (gamma).
- *
- * Combines Sharpe-alpha signal with a mean-variance penalty term:
- *   base = sharpeAlpha * 0.7 + ddPenalty
- *   varPenalty = (gamma / 2) * portfolioVol²
- *
- * At gamma=0 the function is identical to the original.
- * Higher gamma shifts the agent toward lower-variance actions in
- * volatile regimes, directly analogous to MV utility R = r_p - (γ/2)·r_p².
- *
- * Recommended sweep: gamma = 0, 1, 3, 5, 10.
- * Default gamma = 3 — meaningful penalty without dominating Sharpe signal.
+ * Sharpe-style alpha reward with drawdown penalty; 3× scale matches training signal scale.
+ * (Server sim still uses `computeRlReward` from dqn-agent for step rewards; keep formulas aligned there for DQN.)
  */
-export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown, gamma = 3) {
+export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown) {
   const alpha = portfolioReturn - benchmarkReturn;
   const vol = portfolioVol > 0 ? portfolioVol : 0.15;
   const sharpeAlpha = alpha / vol;
   const ddPenalty = maxDrawdown < -0.15 ? (maxDrawdown + 0.15) * 1.0 : 0;
-  // Explicit variance penalty — annualized vol², scaled by γ/2
-  const varPenalty = (gamma / 2) * (vol * vol);
-  return (sharpeAlpha * 0.7 - varPenalty + ddPenalty) * 3.0;
+  return (sharpeAlpha * 0.7 + ddPenalty) * 3.0;
 }
 
 /** Indices with decoded exposure ≥ 1.0 — for {@link detectOverPruning} membership checks. */
@@ -179,16 +182,27 @@ export class QLearningTradingAgent {
     this.rho = config.rho ?? 0.9;
     this.nStates = config.nStates ?? TOTAL_STATES;
     this.nActions = config.nActions ?? TOTAL_ACTIONS;
-    /** Set by server during `/api/rl/train` episodes; drives linear ε below. Cleared after training. */
+    /** Set by server during `/api/rl/train` episodes; drives ε schedule below. Cleared after training. */
     this.currentTrainingEpisode = 0;
-    /** Linear ε schedule (training only): episode 1 → epsilonStart, episode epsilonDecayEpisodes → epsilonEnd, then epsilonEnd. */
-    this.epsilonStart = config.epsilonStart ?? 1;
+    /**
+     * Exponential ε schedule (training only):
+     *   ε(ep) = epsilonEnd + (epsilonStart - epsilonEnd) * exp(-3 * ep / epsilonDecayEpisodes)
+     * Defaults: 0.30 → 0.05 over 400 episodes.
+     * With the old defaults (1.0 / 25000) a 500-episode run stayed at ε≈0.98 throughout,
+     * meaning the agent never exploited and never learned a stable policy.
+     */
+    this.epsilonStart = config.epsilonStart ?? 0.30;
     this.epsilonEnd = config.epsilonEnd ?? 0.05;
-    this.epsilonDecayEpisodes = config.epsilonDecayEpisodes ?? 25000;
+    this.epsilonDecayEpisodes = config.epsilonDecayEpisodes ?? 400;
     this.Q = new Float64Array(this.nStates * this.nActions);
+    /** Per-state visit count (for fallback guard and convergence diagnostics). */
     this.visitCounts = new Uint32Array(this.nStates);
+    /** Per-state-action visit count for adaptive learning rate: α = 1/(1+n^0.7). */
+    this.visitCountsPerAction = new Uint32Array(this.nStates * this.nActions);
     this.totalUpdates = 0;
     this.statesVisited = 0;
+    /** Set on `/api/rl/train` save — backtest can warn when eval scoring ≠ training (e.g. earnings skip). */
+    this.trainingMeta = config.trainingMeta ?? null;
     this._initializeQ();
 
     // ── Coupled Q-learning (AI planning) ────────────────────────────────────────
@@ -226,16 +240,20 @@ export class QLearningTradingAgent {
     this.Q[stateIdx * this.nActions + actionIdx] = Math.max(-Q_VALUE_CLIP, Math.min(Q_VALUE_CLIP, value));
   }
 
-  /** Linear decay from epsilonStart to epsilonEnd over episodes 1..epsilonDecayEpisodes (inclusive). */
+  /**
+   * Exponential ε decay: ε(ep) = end + (start−end)·exp(−3·ep/span).
+   * Starts at epsilonStart (≈0.30), decays to epsilonEnd (≈0.05) over
+   * epsilonDecayEpisodes episodes, then stays at epsilonEnd.
+   * Much more exploration-efficient than the old linear 1→0.05/25k schedule.
+   */
   getEpsilonForTrainingEpisode(episode) {
-    const start = this.epsilonStart ?? 1;
+    const start = this.epsilonStart ?? 0.30;
     const end = this.epsilonEnd ?? 0.05;
     const span = Math.max(1, this.epsilonDecayEpisodes | 0);
-    const ep = Math.max(1, episode | 0);
-    if (span <= 1) return end;
+    const ep = Math.max(0, episode | 0);
     if (ep >= span) return end;
-    const t = (ep - 1) / (span - 1);
-    return start + t * (end - start);
+    const DECAY_RATE = 3.0;
+    return end + (start - end) * Math.exp(-DECAY_RATE * ep / span);
   }
 
   selectAction(stateIdx, forceExploit = false, options = {}) {
@@ -298,13 +316,22 @@ export class QLearningTradingAgent {
   }
 
   update(stateIdx, actionIdx, reward, nextStateIdx) {
+    const saIdx = stateIdx * this.nActions + actionIdx;
+
+    // Adaptive learning rate: α = 1/(1+n^0.7)
+    // Starts near 1.0 on first visit, decays as the state-action pair is seen more.
+    // Prevents high-variance early Q-values from persisting when visits are sparse.
+    this.visitCountsPerAction[saIdx]++;
+    const visits = this.visitCountsPerAction[saIdx];
+    const adaptiveAlpha = 1.0 / (1.0 + Math.pow(visits, 0.7));
+
     const currentQ = this.getQ(stateIdx, actionIdx);
     let maxNextQ = -Infinity;
     for (let a = 0; a < this.nActions; a++) {
       maxNextQ = Math.max(maxNextQ, this.getQ(nextStateIdx, a));
     }
     const target = reward + this.rho * maxNextQ;
-    const newQ = (1 - this.alpha) * currentQ + this.alpha * target;
+    const newQ = (1 - adaptiveAlpha) * currentQ + adaptiveAlpha * target;
     this.setQ(stateIdx, actionIdx, newQ);
     this.visitCounts[stateIdx]++;
     this.totalUpdates++;
@@ -460,7 +487,7 @@ export class QLearningTradingAgent {
   serialize() {
     this.recomputeStatesVisitedFromQ();
     return {
-      version: 1,
+      version: 3,
       alpha: this.alpha,
       beta: this.beta,
       rho: this.rho,
@@ -475,8 +502,12 @@ export class QLearningTradingAgent {
         ? { Q_h: this.Q_h.map((t) => Array.from(t)) }
         : {}),
       visitCounts: Array.from(this.visitCounts),
+      visitCountsPerAction: Array.from(this.visitCountsPerAction),
       totalUpdates: this.totalUpdates,
-      statesVisited: this.statesVisited
+      statesVisited: this.statesVisited,
+      ...(this.trainingMeta && typeof this.trainingMeta === 'object'
+        ? { trainingMeta: this.trainingMeta }
+        : {})
     };
   }
 
@@ -489,10 +520,15 @@ export class QLearningTradingAgent {
       nActions: data.nActions,
       epsilonStart: data.epsilonStart,
       epsilonEnd: data.epsilonEnd,
-      epsilonDecayEpisodes: data.epsilonDecayEpisodes
+      epsilonDecayEpisodes: data.epsilonDecayEpisodes,
+      trainingMeta:
+        data.trainingMeta && typeof data.trainingMeta === 'object' ? data.trainingMeta : null
     });
     if (Array.isArray(data.visitCounts) && data.visitCounts.length === agent.visitCounts.length) {
       agent.visitCounts = new Uint32Array(data.visitCounts);
+    }
+    if (Array.isArray(data.visitCountsPerAction) && data.visitCountsPerAction.length === agent.visitCountsPerAction.length) {
+      agent.visitCountsPerAction = new Uint32Array(data.visitCountsPerAction);
     }
     agent.totalUpdates = data.totalUpdates ?? 0;
     if (Array.isArray(data.Q) && data.Q.length === agent.Q.length) {

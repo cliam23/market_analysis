@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { apiFetch, safeJson } from "../lib/api.js";
+import { apiFetch, apiFetchBypassBrowserCache, safeJson } from "../lib/api.js";
 import { fmtDate } from "../lib/formatters.js";
+import { CongressSignalInline } from "./shared.jsx";
 
 /** Must match PaperTradeTab (`PAPER_TRADE_NAV_UNIVERSE_KEY`). */
 const PAPER_TRADE_NAV_UNIVERSE_KEY = "ma-paper-trade-nav-universe";
@@ -140,7 +141,7 @@ export default function DashboardTab({ setTab }) {
     let cancelled = false;
     const loadIndices = async () => {
       try {
-        const iRes = await apiFetch("/api/market/indices");
+        const iRes = await apiFetchBypassBrowserCache("/api/market/indices");
         const iData = await safeJson(iRes);
         if (!cancelled) setIndices(iData);
       } catch {
@@ -150,7 +151,7 @@ export default function DashboardTab({ setTab }) {
     const loadSummary = async () => {
       setErr(null);
       try {
-        const sRes = await apiFetch("/api/dashboard/summary");
+        const sRes = await apiFetchBypassBrowserCache("/api/dashboard/summary");
         const sData = await safeJson(sRes);
         if (!cancelled) setSummary(sData);
       } catch (e) {
@@ -162,9 +163,16 @@ export default function DashboardTab({ setTab }) {
     loadIndices();
     loadSummary();
     const id = setInterval(loadIndices, 60000);
+    const onVis = () => {
+      if (document.visibilityState !== "visible" || cancelled) return;
+      loadIndices();
+      loadSummary();
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       cancelled = true;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, []);
 
@@ -456,7 +464,16 @@ export default function DashboardTab({ setTab }) {
             <div className="ma-dash-pos-list">
               {holdingsSorted.winners.map((h) => (
                 <div key={h.ticker} className="ma-dash-pos-row">
-                  <span className="ma-dash-ticker ma-mono">{h.ticker}</span>
+                  <span className="ma-dash-ticker-wrap" style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span className="ma-dash-ticker ma-mono">{h.ticker}</span>
+                    <CongressSignalInline
+                      variant="mini"
+                      score={h.congressScore}
+                      sentiment={h.congressSentiment}
+                      politicians={h.congressPoliticians}
+                      netBuys={h.congressNetBuys}
+                    />
+                  </span>
                   <span className="ma-mono">
                     {h.currentPrice != null ? `$${Number(h.currentPrice).toFixed(2)}` : "—"}
                   </span>
@@ -468,7 +485,16 @@ export default function DashboardTab({ setTab }) {
               {holdingsSorted.losers.length > 0 && <div className="ma-dash-pos-divider" />}
               {holdingsSorted.losers.map((h) => (
                 <div key={h.ticker} className="ma-dash-pos-row">
-                  <span className="ma-dash-ticker ma-mono">{h.ticker}</span>
+                  <span className="ma-dash-ticker-wrap" style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span className="ma-dash-ticker ma-mono">{h.ticker}</span>
+                    <CongressSignalInline
+                      variant="mini"
+                      score={h.congressScore}
+                      sentiment={h.congressSentiment}
+                      politicians={h.congressPoliticians}
+                      netBuys={h.congressNetBuys}
+                    />
+                  </span>
                   <span className="ma-mono">
                     {h.currentPrice != null ? `$${Number(h.currentPrice).toFixed(2)}` : "—"}
                   </span>

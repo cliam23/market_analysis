@@ -7,7 +7,12 @@ export const PILLAR_LABELS = {
   value: "Value"
 };
 
-export const COMPOSITE_FAMILY = ["full_composite", "full_composite_aggressive", "full_composite_turbo"];
+export const COMPOSITE_FAMILY = [
+  "full_composite",
+  "full_composite_quality",
+  "full_composite_aggressive",
+  "full_composite_turbo"
+];
 export function isCompositeStrategy(s) { return COMPOSITE_FAMILY.includes(s); }
 
 export const UNIVERSE_OPTIONS = [
@@ -20,6 +25,7 @@ export const UNIVERSE_OPTIONS = [
 ];
 
 export const STRATEGY_OPTIONS = [
+  { id: "full_composite_quality", label: "Composite Quality" },
   { id: "full_composite", label: "Full Composite" },
   { id: "full_composite_aggressive", label: "Composite Aggressive" },
   { id: "full_composite_turbo", label: "Composite Turbo" },

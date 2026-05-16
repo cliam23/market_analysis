@@ -15,7 +15,7 @@ export const COMPS_CACHE_TTL = 30 * 60 * 1000;
 export const QUOTE_CACHE_TTL = 4 * 60 * 60 * 1000;
 export const BACKTEST_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 /** Bump when backtest sim inputs/outputs change (cache invalidation). */
-export const BACKTEST_CACHE_VERSION = 'v59';
+export const BACKTEST_CACHE_VERSION = 'v61';
 
 /** Only treat financials as knowable this many days after quarter-end (SEC filing lag heuristic). */
 export const FILING_LAG_DAYS = 45;

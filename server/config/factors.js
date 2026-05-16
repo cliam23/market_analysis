@@ -26,6 +26,18 @@ export const TURBO_COMPOSITE_WEIGHTS = {
   value: 0.3,
   earningsMomentum: 0
 };
+/**
+ * Sharpe-optimised mix from the 3y sweep: quality-led with a small earnings tilt.
+ * Used as a pillarOverride default when the UI selects `full_composite_quality`.
+ */
+export const QUALITY_COMPOSITE_WEIGHTS = {
+  fundamental: 0.40,
+  dcf: 0.0,
+  valuation: 0.0,
+  momentum: 0.25,
+  value: 0.25,
+  earningsMomentum: 0.10
+};
 export const FACTOR_NAMES = ['fundamental', 'dcf', 'valuation', 'momentum', 'value', 'earningsMomentum'];
 export const FACTOR_LABELS = {
   fundamental: 'Quality',

@@ -43,5 +43,7 @@ export const LOCAL_UI_SNAPSHOTS_DIR = path.join(REPO_ROOT, 'data', 'local-snapsh
 export const PAPER_PORTFOLIO_PATH = dataPath('paper-portfolio.json');
 export const PAPER_PORTFOLIO_TOP50_PATH = dataPath('paper-portfolio-top50.json');
 export const PAPER_PORTFOLIO_TOP150_PATH = dataPath('paper-portfolio-top150.json');
+/** Shadow book that mirrors sp500_top50 tickers but runs the new defaults (quarterly + quality weights + fixed). */
+export const PAPER_PORTFOLIO_TOP50_SHADOW_PATH = dataPath('paper-portfolio-top50-shadow.json');
 
 export const CONGRESS_SIGNAL_PATH = dataPath('congress-signal.json');
