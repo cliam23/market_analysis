@@ -1,0 +1,34 @@
+{
+  "config": {
+    "initialCapital": 100000,
+    "strategy": "full_composite",
+    "universe": "sp500_top150_shadow",
+    "universeId": "sp500_top150_shadow",
+    "topN": 15,
+    "weights": {
+      "momentum": 0.20,
+      "value": 0.20,
+      "fundamental": 0.15,
+      "earningsMomentum": 0.45,
+      "dcf": 0,
+      "valuation": 0
+    },
+    "_weightsVersion": 1,
+    "adaptiveMode": "fixed",
+    "rebalanceFreq": "quarterly",
+    "rlAgent": false,
+    "rlOnlineLearning": false,
+    "positionSizing": "invVol",
+    "regimeEnabled": true,
+    "notes": "Shadow book for sp500_top150: quarterly cadence + earnings-heavy weights (M0.20/V0.20/Q0.15/E0.45) + fixed mode. Same tickers as sp500_top150; A/B against the production bimonthly book. Backtest 1y alpha +21.6%/Sharpe 2.11; 3y alpha +11.85%/Sharpe 1.17. Initialised 2026-05-15."
+  },
+  "initialCapital": 100000,
+  "cash": 100000,
+  "holdings": [],
+  "navHistory": [],
+  "rebalanceHistory": [],
+  "recentSells": {},
+  "createdAt": "2026-05-15",
+  "lastRebalance": null,
+  "lastNavUpdate": null
+}

@@ -310,10 +310,9 @@ function buildBacktestQuery(settings, rlAgentOn) {
     _t: String(Date.now())
   });
   const strat = (settings.strategy || "").toLowerCase().trim();
-  const comp =
-    strat === "full_composite" || strat === "full_composite_aggressive" || strat === "full_composite_turbo";
-  if (comp) {
+  if (isCompositeStrategy(strat)) {
     params.set("rlAgent", rlAgentOn ? "true" : "false");
+    params.set("rlMode", rlAgentOn ? "eval" : "off");
   }
   if (settings.adaptiveMode && settings.adaptiveMode !== SERVER_DEFAULT_ADAPTIVE_MODE) {
     params.set("adaptiveMode", settings.adaptiveMode);
@@ -506,8 +505,8 @@ export default function BacktestTab() {
     adaptiveMode: "fixed",
     positionSizing: "invVol"
   });
-  /** Composite strategies: must match GET query rlAgent (Advanced → RL AGENT). */
-  const [rlAgentOn, setRlAgentOn] = useState(false);
+  /** Composite strategies: must match GET query rlAgent (Advanced → RL AGENT). Default on; toggle still sends explicit rlAgent=true|false. */
+  const [rlAgentOn, setRlAgentOn] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedWrapRef = useRef(null);
 
