@@ -46,7 +46,7 @@ import {
 } from './options-service.js';
 import { loadWheelPortfolio, saveWheelPortfolio, selectWheelTargets, getWheelSummary, WHEEL_CONFIG } from './wheel-portfolio-service.js';
 
-import { REPO_ROOT, dataPath, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH, PAPER_PORTFOLIO_TOP50_SHADOW_PATH, CONGRESS_SIGNAL_PATH } from './server/config/paths.js';
+import { REPO_ROOT, dataPath, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH, PAPER_PORTFOLIO_TOP50_SHADOW_PATH, PAPER_PORTFOLIO_TOP150_SHADOW_PATH, CONGRESS_SIGNAL_PATH } from './server/config/paths.js';
 import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
 import {
   YAHOO_QUOTE_SUMMARY_MODULE_OPTS,
@@ -12128,6 +12128,7 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
 function getPortfolioPathForUniverse(universeId) {
   const u = String(universeId || '').trim();
   if (u === 'sp500_top150') return PAPER_PORTFOLIO_TOP150_PATH;
+  if (u === 'sp500_top150_shadow') return PAPER_PORTFOLIO_TOP150_SHADOW_PATH;
   if (u === 'sp500_top50_shadow') return PAPER_PORTFOLIO_TOP50_SHADOW_PATH;
   if (u === 'sp500_top50') return PAPER_PORTFOLIO_TOP50_PATH;
   return PAPER_PORTFOLIO_PATH;
