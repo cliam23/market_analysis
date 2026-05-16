@@ -45,6 +45,17 @@ export function apiFetchNoStore(path, init = {}) {
   return apiFetch(busted, { ...init, headers: h });
 }
 
+/**
+ * Skip browser HTTP cache without `?_t=` (so the server can still serve `LOCAL_UI_SNAPSHOTS` files).
+ * Use for dashboard KPI strips that looked stale after `npm run snapshot:ui` or a backend refresh.
+ */
+export function apiFetchBypassBrowserCache(path, init = {}) {
+  const h = new Headers(init.headers || {});
+  if (!h.has("Cache-Control")) h.set("Cache-Control", NO_CACHE_CLIENT_HEADERS["Cache-Control"]);
+  if (!h.has("Pragma")) h.set("Pragma", NO_CACHE_CLIENT_HEADERS.Pragma);
+  return apiFetch(path, { ...init, cache: "no-store", headers: h });
+}
+
 export async function safeJson(res) {
   const text = await res.text();
   if (!res.ok) {

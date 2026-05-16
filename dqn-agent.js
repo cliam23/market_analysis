@@ -1,5 +1,5 @@
 /**
- * Deep Q-Network portfolio policy (same action space as q-learning-agent.js: 96 discrete actions).
+ * Deep Q-Network portfolio policy. Tabular Q-learning (`q-learning-agent.js`) uses 60 actions / 1920 states; this file also defines shared reward + discrete helpers for the server.
  *
  * Prefers `@tensorflow/tfjs-node` (native libtensorflow) when installed — see
  * https://github.com/tensorflow/tfjs-node . Falls back to `@tensorflow/tfjs` CPU.
@@ -145,28 +145,13 @@ export function encodeAction(exposureIdx, posCountIdx, sizingIdx, waitIdx = 0) {
   return (sizingIdx + 3 * (posCountIdx + 4 * (exposureIdx + 4 * w))) | 0;
 }
 
-/**
- * MV-inspired reward with explicit risk aversion parameter γ (gamma).
- *
- * Combines Sharpe-alpha signal with a mean-variance penalty term:
- *   base = sharpeAlpha * 0.7 + ddPenalty
- *   varPenalty = (gamma / 2) * portfolioVol²
- *
- * At gamma=0 the function is identical to the original.
- * Higher gamma shifts the agent toward lower-variance actions in
- * volatile regimes, directly analogous to MV utility R = r_p - (γ/2)·r_p².
- *
- * Recommended sweep: gamma = 0, 1, 3, 5, 10.
- * Default gamma = 3 — meaningful penalty without dominating Sharpe signal.
- */
-export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown, gamma = 3) {
+/** Aligned with `q-learning-agent.js` — Sharpe-alpha + DD penalty, 3× scale (server sim uses this for step rewards). */
+export function computeRlReward(portfolioReturn, benchmarkReturn, portfolioVol, maxDrawdown, _gamma = 3) {
   const alpha = portfolioReturn - benchmarkReturn;
   const vol = portfolioVol > 0 ? portfolioVol : 0.15;
   const sharpeAlpha = alpha / vol;
   const ddPenalty = maxDrawdown < -0.15 ? (maxDrawdown + 0.15) * 1.0 : 0;
-  // Explicit variance penalty — annualized vol², scaled by γ/2
-  const varPenalty = (gamma / 2) * (vol * vol);
-  return (sharpeAlpha * 0.7 - varPenalty + ddPenalty) * 3.0;
+  return (sharpeAlpha * 0.7 + ddPenalty) * 3.0;
 }
 
 /** Continuous 5-vector in [0,1] for the DQN (not the legacy discrete index). */

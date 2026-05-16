@@ -2562,12 +2562,16 @@ body {
   margin-bottom: 16px;
   min-height: 60px;
   box-sizing: border-box;
+  width: 100%;
 }
 
 .ma-dash-indices__grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: clamp(8px, 2.5vw, 24px);
+  width: 100%;
 }
 
 .ma-dash-index-cell {
@@ -2576,6 +2580,9 @@ body {
   flex-direction: column;
   gap: 4px;
   min-height: 88px;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .ma-dash-index-cell__top {
@@ -3025,7 +3032,14 @@ body {
 
 @media (max-width: 768px) {
   .ma-dash-indices__grid {
-    grid-template-columns: repeat(2, 1fr);
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .ma-dash-index-cell {
+    flex: unset;
+    width: auto;
   }
 
   .ma-dash-perf-grid {
@@ -3616,11 +3630,12 @@ body {
 
 .ma-bt-controls__filters {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
-  gap: 8px 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr));
+  gap: 8px 12px;
   align-items: end;
-  flex: 1 1 14rem;
+  flex: 1 1 26rem;
   min-width: 0;
+  max-width: 100%;
 }
 
 .ma-bt-controls .ma-select {

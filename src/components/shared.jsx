@@ -170,6 +170,9 @@ export function Select({ value, onChange, options, label, style, compact }) {
   const labelMb = compact ? 2 : 4;
   const pad = compact ? "5px 8px" : "8px 10px";
   const fontSize = compact ? 11 : 12;
+  const selectedLabel =
+    (Array.isArray(options) ? options.find((o) => String(o.id) === String(value)) : null)?.label ??
+    String(value ?? "");
   return (
     <div style={{ minWidth: 0, width: "100%", ...style }}>
       {label && (
@@ -190,6 +193,8 @@ export function Select({ value, onChange, options, label, style, compact }) {
       <select
         className="ma-select"
         value={value}
+        title={selectedLabel}
+        aria-label={label ? `${label}: ${selectedLabel}` : selectedLabel}
         onChange={(e) => onChange(e.target.value)}
         style={{
           padding: pad,
@@ -302,6 +307,40 @@ export function InfoTip({ title, children, placement = "start" }) {
           </div>
         </div>
       )}
+    </span>
+  );
+}
+
+/** STOCK Act (FMP) signal — table cell or dashboard mini chip. */
+export function CongressSignalInline({
+  score = 0,
+  sentiment = "neutral",
+  politicians = [],
+  netBuys = 0,
+  variant = "cell"
+}) {
+  const s = Number(score) || 0;
+  if (s <= 0) {
+    return variant === "mini" ? null : (
+      <span style={{ color: "var(--color-text-muted)", fontSize: variant === "cell" ? 12 : 10 }}>—</span>
+    );
+  }
+  const color =
+    sentiment === "bullish"
+      ? "var(--green)"
+      : sentiment === "mild"
+        ? "#38bdf8"
+        : sentiment === "bearish"
+          ? "var(--red)"
+          : "var(--color-text-muted)";
+  const icon = sentiment === "bullish" ? "▲" : sentiment === "bearish" ? "▼" : "●";
+  const tip = `Congress: ${s}/10 · ${sentiment}\nNet buys: ${netBuys}\n${(politicians || []).slice(0, 5).join(", ")}`;
+  const fs = variant === "mini" ? 10 : 12;
+  return (
+    <span title={tip} style={{ color, fontSize: fs, fontWeight: 600, cursor: "help", whiteSpace: "nowrap" }}>
+      {icon}
+      {variant === "mini" ? "" : " "}
+      {s.toFixed(1)}
     </span>
   );
 }

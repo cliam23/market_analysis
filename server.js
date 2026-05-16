@@ -26,9 +26,12 @@ import {
   encodeState,
   encodeAction,
   decodeAction,
+  decodeState,
   regimeStringToBucket,
   computeConvergenceMetrics,
   detectOverPruning,
+  ACTION_SPACE,
+  SIGNAL_BINS,
   TOTAL_ACTIONS,
   TOTAL_STATES
 } from './q-learning-agent.js';
@@ -43,7 +46,7 @@ import {
 } from './options-service.js';
 import { loadWheelPortfolio, saveWheelPortfolio, selectWheelTargets, getWheelSummary, WHEEL_CONFIG } from './wheel-portfolio-service.js';
 
-import { REPO_ROOT, dataPath, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH, CONGRESS_SIGNAL_PATH } from './server/config/paths.js';
+import { REPO_ROOT, dataPath, OPTIONS_PORTFOLIO_PATH, RL_AGENT_JSON_PATH, RL_AGENT_TOP50_PATH, RL_AGENT_TOP150_PATH, DQN_AGENT_JSON_PATH, DQN_AGENT_BEST_JSON_PATH, ML_PREDICT_SCRIPT, ML_WORKER_SCRIPT, PAPER_PORTFOLIO_PATH, PAPER_PORTFOLIO_TOP50_PATH, PAPER_PORTFOLIO_TOP150_PATH, PAPER_PORTFOLIO_TOP50_SHADOW_PATH, CONGRESS_SIGNAL_PATH } from './server/config/paths.js';
 import { readFile as fsReadFile, writeFile as fsWriteFile } from 'fs/promises';
 import {
   YAHOO_QUOTE_SUMMARY_MODULE_OPTS,
@@ -81,6 +84,7 @@ import {
   DEFAULT_COMPOSITE_WEIGHTS,
   AGGRESSIVE_COMPOSITE_WEIGHTS,
   TURBO_COMPOSITE_WEIGHTS,
+  QUALITY_COMPOSITE_WEIGHTS,
   FACTOR_NAMES,
   FACTOR_LABELS,
   MAX_OPTIMIZATION_ROUNDS,
@@ -109,7 +113,7 @@ import {
   rawRevenueAcceleration,
   hasUsableEarningsRaw
 } from './server/scoring/earnings-signals.js';
-import { validateDailyChartRows, validationStrictEnabled } from './server/data/bar-validation.js';
+import { validateDailyChartRows, validationStrictEnabled, splitAdjustChartRows } from './server/data/bar-validation.js';
 import {
   readGoldBarsForRange,
   goldLayerReadEnabled,
@@ -273,6 +277,16 @@ function loadRlAgentFromDisk(agentTypeOverride, universeId = null) {
     if (!existsSync(fp)) return new QLearningTradingAgent();
     const raw = JSON.parse(readFileSync(fp, 'utf8'));
     if (!raw || raw.version == null || !Array.isArray(raw.Q)) return new QLearningTradingAgent();
+    if (raw.nStates != null && raw.nStates !== TOTAL_STATES) {
+      console.log(`[RL] Fresh agent: ${path.basename(fp)} has nStates=${raw.nStates} but current TOTAL_STATES=${TOTAL_STATES} — state encoding changed, retraining from scratch`);
+      return new QLearningTradingAgent();
+    }
+    if (raw.nActions != null && raw.nActions !== TOTAL_ACTIONS) {
+      console.log(
+        `[RL] Fresh agent: ${path.basename(fp)} has nActions=${raw.nActions} but expected ${TOTAL_ACTIONS} — action space changed, retraining from scratch`
+      );
+      return new QLearningTradingAgent();
+    }
     return QLearningTradingAgent.deserialize(raw);
   } catch {
     return new QLearningTradingAgent();
@@ -297,6 +311,16 @@ function loadQlAgentFromFileAbs(fp) {
   try {
     const raw = JSON.parse(readFileSync(fp, 'utf8'));
     if (!raw || raw.version == null || !Array.isArray(raw.Q)) return null;
+    if (raw.nStates != null && raw.nStates !== TOTAL_STATES) {
+      console.log(`[RL] Skipping ${path.basename(fp)}: nStates=${raw.nStates} ≠ current TOTAL_STATES=${TOTAL_STATES} — state encoding changed, need retrain`);
+      return null;
+    }
+    if (raw.nActions != null && raw.nActions !== TOTAL_ACTIONS) {
+      console.log(
+        `[RL] Skipping ${path.basename(fp)}: nActions=${raw.nActions} ≠ ${TOTAL_ACTIONS} — action space changed, need retrain`
+      );
+      return null;
+    }
     const agent = QLearningTradingAgent.deserialize(raw);
     return trainedRlAgentReadyForInference(agent) ? agent : null;
   } catch {
@@ -413,6 +437,66 @@ function saveRlAgentToDisk(agent, universeId = null) {
   } else {
     TRAINED_RL_AGENT = agent;
   }
+}
+
+/**
+ * Actions with exposure ≥ 0.8 AND position count ≥ 13 (names).
+ * With 5-tier exposure [0.5, 0.65, 0.8, 0.85, 1.0], eligible exposureIdx are 2, 3, 4 — not only the old
+ * 4-tier “top two slots” (which would miss full 1.0). Built dynamically from ACTION_SPACE.
+ */
+function buildRlStrongBullFloorActionIdxs() {
+  const ids = [];
+  const levels = ACTION_SPACE.exposure.levels;
+  const nS = ACTION_SPACE.sizingMethod.n;
+  const nP = ACTION_SPACE.positionCount.n;
+  const posLevels = ACTION_SPACE.positionCount.levels;
+  const minExpIdx = levels.findIndex((lv) => lv >= 0.8);
+  const e0 = minExpIdx >= 0 ? minExpIdx : 2;
+  const candidateExposureIdxs = [];
+  for (let eIdx = e0; eIdx < levels.length; eIdx++) {
+    if (levels[eIdx] >= 0.8) candidateExposureIdxs.push(eIdx);
+  }
+  const minPosIdx = posLevels.findIndex((n) => n >= 13);
+  const p0 = minPosIdx >= 0 ? minPosIdx : 2;
+  for (const expIdx of candidateExposureIdxs) {
+    for (let posIdx = p0; posIdx < nP; posIdx++) {
+      for (let sIdx = 0; sIdx < nS; sIdx++) {
+        ids.push(encodeAction(expIdx, posIdx, sIdx));
+      }
+    }
+  }
+  return ids;
+}
+
+/** Actions with exposure ≤ 0.65 (first two exposure tiers). */
+function buildRlBearCapActionIdxs() {
+  const ids = [];
+  const nS = ACTION_SPACE.sizingMethod.n;
+  const nP = ACTION_SPACE.positionCount.n;
+  const maxBearExpIdx = Math.min(1, ACTION_SPACE.exposure.n - 1);
+  for (let eIdx = 0; eIdx <= maxBearExpIdx; eIdx++) {
+    for (let pIdx = 0; pIdx < nP; pIdx++) {
+      for (let sIdx = 0; sIdx < nS; sIdx++) {
+        ids.push(encodeAction(eIdx, pIdx, sIdx));
+      }
+    }
+  }
+  return ids;
+}
+
+function rlArgmaxQAmong(agent, stateIdx, actionIdxList) {
+  if (!actionIdxList.length) return 0;
+  let best = actionIdxList[0];
+  let bestQ = agent.getQ(stateIdx, best);
+  for (let i = 1; i < actionIdxList.length; i++) {
+    const a = actionIdxList[i];
+    const q = agent.getQ(stateIdx, a);
+    if (q > bestQ) {
+      bestQ = q;
+      best = a;
+    }
+  }
+  return best;
 }
 
 refreshTrainedRlAgentFromDisk({ logLoad: true });
@@ -588,7 +672,13 @@ function backtestSimConfigCacheTag(extra = {}) {
   const hd =
     extra.hedging === true || extra.hedging === 'true' || extra.hedging === 1 ? '1' : '0';
   const rlev = rlEvalEnvEnabled() ? '1' : '0';
-  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}-cf${cf}-mxc${mxc}-clb${clb}-hd${hd}-rlev${rlev}`;
+  const rlskip =
+    extra.rlTrainSkipEarningsFetch === true ||
+    extra.rlTrainSkipEarningsFetch === 'true' ||
+    extra.rlTrainSkipEarningsFetch === 1
+      ? '1'
+      : '0';
+  return `ic${icp}-rdg${ridge}-${rl}-mla${mla}-mlc${mlc}-mlw${mlw}-am${am}-ps${ps}-tr${tr}-pit${pit}-re${re}-po${po}-skml${skml}-cf${cf}-mxc${mxc}-clb${clb}-hd${hd}-rlev${rlev}-rlskip${rlskip}`;
 }
 
 /**
@@ -3398,6 +3488,8 @@ function calculateDynamicValuation(currentPrice, fundData, priceData, asOfDate) 
 
 const FUNDAMENTALS_CACHE = new Map();
 const FUNDAMENTALS_CACHE_TTL = 4 * 60 * 60 * 1000;
+/** In-flight coalescing: parallel backtest runs share the same fetch promise per ticker. */
+const _fundamentalsInflight = new Map();
 
 async function fetchFundamentals(ticker) {
   const upper = String(ticker).toUpperCase();
@@ -3415,25 +3507,33 @@ async function fetchFundamentals(ticker) {
     FUNDAMENTALS_CACHE.set(upper, { data: quoteMem.data.rankingFundamentals, timestamp: Date.now() });
     return quoteMem.data.rankingFundamentals;
   }
-  try {
-    const result = await fetchYahooOp(
-      () =>
-        yahooFinance.quoteSummary(
-          yahooApiSymbol(ticker),
-          { modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData', 'summaryProfile'] },
-          YAHOO_QUOTE_SUMMARY_MODULE_OPTS
-        ),
-      8000
-    );
-    const fund = calculateFundamentalScore(result, upper);
-    if (fund) {
-      FUNDAMENTALS_CACHE.set(upper, { data: fund, timestamp: Date.now() });
+  // Coalesce: if another concurrent caller is already fetching this ticker, share the promise.
+  if (_fundamentalsInflight.has(upper)) return _fundamentalsInflight.get(upper);
+  const promise = (async () => {
+    try {
+      const result = await fetchYahooOp(
+        () =>
+          yahooFinance.quoteSummary(
+            yahooApiSymbol(ticker),
+            { modules: ['price', 'summaryDetail', 'defaultKeyStatistics', 'financialData', 'summaryProfile'] },
+            YAHOO_QUOTE_SUMMARY_MODULE_OPTS
+          ),
+        8000
+      );
+      const fund = calculateFundamentalScore(result, upper);
+      if (fund) {
+        FUNDAMENTALS_CACHE.set(upper, { data: fund, timestamp: Date.now() });
+      }
+      return fund;
+    } catch (e) {
+      console.warn(`[Yahoo] fundamentals fetch failed ${upper}: ${e.message}`);
+      return null;
+    } finally {
+      _fundamentalsInflight.delete(upper);
     }
-    return fund;
-  } catch (e) {
-    console.warn(`[Yahoo] fundamentals fetch failed ${upper}: ${e.message}`);
-    return null;
-  }
+  })();
+  _fundamentalsInflight.set(upper, promise);
+  return promise;
 }
 
 /** Yahoo quoteSummary modules including statement histories (point-in-time fundamentals). */
@@ -3457,26 +3557,37 @@ const _pitQuoteSummaryFailWarned = new Set();
 /** Raw Yahoo quoteSummary per ticker for PIT (prefetch once per request; value `null` = fetch failed). */
 const YAHOO_RAW_PIT_CACHE = new Map();
 
+/** In-flight coalescing for PIT quoteSummary prefetch. */
+const _pitPrefetchInflight = new Map();
+
 async function prefetchPitYahooQuoteSummary(ticker) {
   const upper = String(ticker).toUpperCase();
   if (YAHOO_RAW_PIT_CACHE.has(upper)) return;
+  // Coalesce concurrent prefetch calls for the same ticker.
+  if (_pitPrefetchInflight.has(upper)) return _pitPrefetchInflight.get(upper);
   const apiSym = yahooApiSymbol(ticker);
-  try {
-    const raw = await fetchYahooOp(
-      () =>
-        yahooFinance.quoteSummary(apiSym, { modules: YAHOO_QUOTE_SUMMARY_PIT_MODULES }, YAHOO_QUOTE_SUMMARY_MODULE_OPTS),
-      8000
-    );
-    YAHOO_RAW_PIT_CACHE.set(upper, raw);
-  } catch (e) {
-    if (fetchDebugLogEnabled()) {
-      console.warn(`[PIT] quoteSummary failed ${upper} (${apiSym}): ${e.message}`);
-    } else if (!_pitQuoteSummaryFailWarned.has(upper)) {
-      _pitQuoteSummaryFailWarned.add(upper);
-      console.warn(`[PIT] quoteSummary failed ${upper}: ${e.message}`);
+  const promise = (async () => {
+    try {
+      const raw = await fetchYahooOp(
+        () =>
+          yahooFinance.quoteSummary(apiSym, { modules: YAHOO_QUOTE_SUMMARY_PIT_MODULES }, YAHOO_QUOTE_SUMMARY_MODULE_OPTS),
+        8000
+      );
+      YAHOO_RAW_PIT_CACHE.set(upper, raw);
+    } catch (e) {
+      if (fetchDebugLogEnabled()) {
+        console.warn(`[PIT] quoteSummary failed ${upper} (${apiSym}): ${e.message}`);
+      } else if (!_pitQuoteSummaryFailWarned.has(upper)) {
+        _pitQuoteSummaryFailWarned.add(upper);
+        console.warn(`[PIT] quoteSummary failed ${upper}: ${e.message}`);
+      }
+      YAHOO_RAW_PIT_CACHE.set(upper, null);
+    } finally {
+      _pitPrefetchInflight.delete(upper);
     }
-    YAHOO_RAW_PIT_CACHE.set(upper, null);
-  }
+  })();
+  _pitPrefetchInflight.set(upper, promise);
+  return promise;
 }
 
 /** Normalize Yahoo date fields (ISO string, {raw,fmt}, unix sec or ms). */
@@ -4242,6 +4353,20 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
   let rlPeakSinceRebal = null;
   let rlMaxDdSinceRebal = 0;
   let rlDailyReturns = [];
+  /**
+   * RL override divergence probe. Captures the rules-only baseline at each rebalance
+   * (exposure / position count / sizing method) and counts how often the RL agent's
+   * action actually deviated. Helps answer "is the agent doing anything?" without
+   * rerunning two separate sims.
+   */
+  const rlOverrideStats = {
+    totalRebalancesWithRl: 0,
+    divergedExposure: 0,
+    divergedPositionCount: 0,
+    divergedSizing: 0,
+    divergedAny: 0,
+    sampleDivergences: []
+  };
 
   for (let dayIdx = 0; dayIdx < allTradingDays.length; dayIdx++) {
     const date = allTradingDays[dayIdx];
@@ -4611,6 +4736,13 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
       let rlSkipThisRebalance = false;
 
       let effectiveSizing = positionSizing;
+      /** Rules-only baseline captured before any RL override fires, for the divergence probe. */
+      const rulesBaselineExposure = regimeExposureBaseline;
+      const rulesBaselineSizing = positionSizing;
+      const rulesBaselinePositionCount = Math.max(
+        3,
+        Math.min(adjustedTopN, Math.min(topN, REGIME_MAX_POSITIONS[regimeMeta.regime] ?? 13), rankings.length)
+      );
       if (rlCompositeActive && rlAgentInstance) {
         const fcRaw = simOptions.forceConstantAction;
         const forceActionIdx =
@@ -4657,11 +4789,27 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
         }
 
         if (forceActionIdx !== null) {
-          const actionIdxUse = forceActionIdx;
+          let actionIdxUse = forceActionIdx;
           const exploredUse = false;
           const trainForcedRandom = false;
           const sel = { actionIdx: forceActionIdx, explored: false, epsilon: 0, fallback: false };
-          const decFinal = decodeAction(actionIdxUse);
+          let decFinal = decodeAction(actionIdxUse);
+          let bullFloorForced = false;
+          let bearCapForced = false;
+          if (
+            rlCompositeActive &&
+            regimeMeta.regime === 'strong_bull' &&
+            (decFinal.exposure < 0.8 || decFinal.positionCount < 13)
+          ) {
+            actionIdxUse = rlArgmaxQAmong(rlAgentInstance, stateIdx, buildRlStrongBullFloorActionIdxs());
+            decFinal = decodeAction(actionIdxUse);
+            bullFloorForced = true;
+          }
+          if (rlCompositeActive && regimeMeta.regime === 'bear' && decFinal.exposure > 0.65) {
+            actionIdxUse = rlArgmaxQAmong(rlAgentInstance, stateIdx, buildRlBearCapActionIdxs());
+            decFinal = decodeAction(actionIdxUse);
+            bearCapForced = true;
+          }
           exposure = decFinal.exposure;
           adjustedTopN = Math.max(3, Math.min(decFinal.positionCount, rankings.length));
           effectiveSizing = decFinal.sizingMethod;
@@ -4674,11 +4822,15 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
             sizingMethod: decFinal.sizingMethod,
             rebalanceWait: decFinal.rebalanceWait,
             stateIdx,
+            avgTopScore: parseFloat(Number(avgTop).toFixed(2)),
+            stateBins: decodeState(stateIdx),
             actionIdx: actionIdxUse,
             explored: exploredUse,
             fallback: false,
             reward: rlLastReward,
-            oracleConstantAction: true
+            oracleConstantAction: true,
+            ...(bullFloorForced ? { bullFloorApplied: true } : {}),
+            ...(bearCapForced ? { bearCapApplied: true } : {})
           };
           rlLog.push({
             date,
@@ -4716,33 +4868,35 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
               sel = { ...sel, actionIdx: actionIdxUse, explored: true, epsilon: 1 };
             }
           }
-          const dec = decodeAction(actionIdxUse);
+          let dec = decodeAction(actionIdxUse);
           let bullFloorApplied = false;
-          if (rlCompositeActive && regimeMeta.regime === 'strong_bull' && dec.exposure < 0.8) {
-            const bullActionIdxs = [];
-            for (let eIdx = 2; eIdx <= 3; eIdx++) {
-              for (let pIdx = 0; pIdx <= 3; pIdx++) {
-                for (let sIdx = 0; sIdx <= 2; sIdx++) {
-                  bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
-                }
-              }
-            }
-            const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
-              rlAgentInstance.getQ(stateIdx, aIdx) > rlAgentInstance.getQ(stateIdx, best) ? aIdx : best,
-              bullActionIdxs[0]
-            );
-            actionIdxUse = bestBullAction;
-            const decBull = decodeAction(bestBullAction);
-            exposure = decBull.exposure;
-            adjustedTopN = Math.max(3, Math.min(decBull.positionCount, rankings.length));
-            effectiveSizing = decBull.sizingMethod;
+          let bearCapApplied = false;
+          if (
+            rlCompositeActive &&
+            regimeMeta.regime === 'strong_bull' &&
+            (dec.exposure < 0.8 || dec.positionCount < 13)
+          ) {
+            const exp0 = dec.exposure;
+            const pos0 = dec.positionCount;
+            const bullActionIdxs = buildRlStrongBullFloorActionIdxs();
+            actionIdxUse = rlArgmaxQAmong(rlAgentInstance, stateIdx, bullActionIdxs);
+            dec = decodeAction(actionIdxUse);
             bullFloorApplied = true;
-            console.log(`[RL] strong_bull floor applied: ${date} overrode exp=${dec.exposure} → ${decBull.exposure}`);
-          } else {
-            exposure = dec.exposure;
-            adjustedTopN = Math.max(3, Math.min(dec.positionCount, rankings.length));
-            effectiveSizing = dec.sizingMethod;
+            console.log(
+              `[RL] strong_bull floor: ${date} exp ${exp0}→${dec.exposure} pos ${pos0}→${dec.positionCount}`
+            );
           }
+          if (rlCompositeActive && regimeMeta.regime === 'bear' && dec.exposure > 0.65) {
+            const bearIdxs = buildRlBearCapActionIdxs();
+            const prevExp = dec.exposure;
+            actionIdxUse = rlArgmaxQAmong(rlAgentInstance, stateIdx, bearIdxs);
+            dec = decodeAction(actionIdxUse);
+            bearCapApplied = true;
+            console.log(`[RL] bear exposure cap: ${date} → exp=${dec.exposure} (was ${prevExp})`);
+          }
+          exposure = dec.exposure;
+          adjustedTopN = Math.max(3, Math.min(dec.positionCount, rankings.length));
+          effectiveSizing = dec.sizingMethod;
           prevRlStateIdx = stateIdx;
           prevRlActionIdx = actionIdxUse;
           const decFinal = decodeAction(actionIdxUse);
@@ -4753,11 +4907,14 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
             sizingMethod: decFinal.sizingMethod,
             rebalanceWait: decFinal.rebalanceWait,
             stateIdx,
+            avgTopScore: parseFloat(Number(avgTop).toFixed(2)),
+            stateBins: decodeState(stateIdx),
             actionIdx: actionIdxUse,
             explored: exploredUse,
             fallback: sel.fallback && !trainForcedRandom,
             reward: rlLastReward,
-            ...(bullFloorApplied ? { bullFloorApplied: true } : {})
+            ...(bullFloorApplied ? { bullFloorApplied: true } : {}),
+            ...(bearCapApplied ? { bearCapApplied: true } : {})
           };
           rlLog.push({
             date,
@@ -4782,6 +4939,35 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
           adjustedTopN = Math.max(3, Math.min(adjustedTopN, hardMaxPositions, rankings.length));
         } else {
           adjustedTopN = Math.max(3, Math.min(adjustedTopN, Math.min(topN, hardMaxPositions), rankings.length));
+        }
+      }
+
+      if (rlCompositeActive && rlAgentInstance) {
+        rlOverrideStats.totalRebalancesWithRl += 1;
+        const diffExposure = Math.abs((exposure ?? 0) - (rulesBaselineExposure ?? 0)) > 1e-6;
+        const diffPositionCount = adjustedTopN !== rulesBaselinePositionCount;
+        const diffSizing = effectiveSizing !== rulesBaselineSizing;
+        if (diffExposure) rlOverrideStats.divergedExposure += 1;
+        if (diffPositionCount) rlOverrideStats.divergedPositionCount += 1;
+        if (diffSizing) rlOverrideStats.divergedSizing += 1;
+        if (diffExposure || diffPositionCount || diffSizing) {
+          rlOverrideStats.divergedAny += 1;
+          if (rlOverrideStats.sampleDivergences.length < 6) {
+            rlOverrideStats.sampleDivergences.push({
+              date,
+              regime: regimeMeta.regime,
+              rules: {
+                exposure: rulesBaselineExposure,
+                positionCount: rulesBaselinePositionCount,
+                sizing: rulesBaselineSizing
+              },
+              rl: {
+                exposure,
+                positionCount: adjustedTopN,
+                sizing: effectiveSizing
+              }
+            });
+          }
         }
       }
 
@@ -5216,7 +5402,19 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     });
   }
 
-  const finalPillarWeights = initialPillarWeights ? { ...weights } : null;
+  /**
+   * When fixed-mode pillar override is supplied (e.g. `full_composite_quality`), expose
+   * the override as the effective initial/final mix in the response — the merged
+   * `weights` would otherwise show the unused composite anchor and mislead the UI.
+   */
+  if (pillarOverrideNorm && adaptiveMode === 'fixed') {
+    initialPillarWeights = { ...pillarOverrideNorm };
+  }
+  const finalPillarWeights = initialPillarWeights
+    ? pillarOverrideNorm && adaptiveMode === 'fixed'
+      ? { ...pillarOverrideNorm }
+      : { ...weights }
+    : null;
 
   return {
     dailyValues,
@@ -5238,6 +5436,7 @@ async function runBacktestSimulation(universe, priceHistory, fundamentals, spyPr
     adaptiveMode,
     positionSizing,
     rlLog,
+    rlOverrideStats,
     rlAgentInstance: rlCompositeActive ? rlAgentInstance : null,
     hedgeStats: hedgingEnabled
       ? {
@@ -6200,7 +6399,13 @@ function bt_calculateMomentum(priceData, asOfDate, lookbackMonths = 6, spyPrices
   for (let i = 1; i < lookbackPrices.length; i++) {
     dailyReturns.push(Math.log(lookbackPrices[i].close / lookbackPrices[i - 1].close));
   }
-  const stddev = standardDeviation(dailyReturns);
+  /**
+   * Winsorize log returns at ±20% for vol calc. A single split-day or special-dividend
+   * day otherwise inflates annualizedVol by 3–5x and corrupts riskAdjustedMomentum. The
+   * raw end-to-end momentum is unaffected — only the dispersion measure is robustified.
+   */
+  const clipDailyReturns = dailyReturns.map((r) => Math.max(-0.2, Math.min(0.2, r)));
+  const stddev = standardDeviation(clipDailyReturns);
   const annualizedVol = stddev * Math.sqrt(252);
   
   const annualizedReturn = Math.pow(1 + rawMomentum, 12 / lbMonths) - 1;
@@ -7797,7 +8002,12 @@ function finalizeChartRows(rows, ticker, source) {
     return null;
   }
   bumpChartSource(source);
-  return rows;
+  /**
+   * Conservative retroactive split adjustment: only triggers on clean ratio + persistence;
+   * leaves real one-off moves (crashes, earnings gaps) untouched. See bar-validation.js.
+   */
+  const adjusted = splitAdjustChartRows(rows, { ticker });
+  return adjusted?.rows || rows;
 }
 
 async function bt_fetchPriceHistory(ticker, startDate, endDate) {
@@ -8976,12 +9186,12 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const { universeId } = req.params;
   const {
     period = '3y',
-    rebalanceFreq: rebalanceFreqRaw = 'monthly',
+    rebalanceFreq: rebalanceFreqRaw = 'quarterly',
     topN = 10,
     strategy = 'momentum_value',
     initialCapital = 10000,
     optimize = 'false',
-    adaptiveMode: adaptiveModeRaw = 'adaptive',
+    adaptiveMode: adaptiveModeRaw = 'fixed',
     positionSizing: positionSizingRaw,
     pillarOverride: pillarOverrideQuery,
     regimeEnabled: regimeEnabledQuery,
@@ -9010,7 +9220,19 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const adaptiveRaw = String(adaptiveModeRaw ?? 'fixed').toLowerCase().trim();
   const adaptiveMode =
     adaptiveRaw === 'adaptive' || adaptiveRaw === 'conservative' ? adaptiveRaw : 'fixed';
-  const strategyClean = (strategy || 'momentum_value').toLowerCase().trim();
+  /**
+   * `full_composite_quality` is a UI preset: alias to `full_composite` for the sim engine and
+   * inject the quality-led pillar mix unless the caller already supplied an explicit override.
+   * Cache key still distinguishes runs because pillarOverrideKey changes.
+   */
+  const strategyLabelRequested = String(strategy || 'momentum_value').toLowerCase().trim();
+  let pillarOverrideFromAlias = null;
+  let strategyForSim = strategyLabelRequested;
+  if (strategyLabelRequested === 'full_composite_quality') {
+    strategyForSim = 'full_composite';
+    pillarOverrideFromAlias = { ...QUALITY_COMPOSITE_WEIGHTS };
+  }
+  const strategyClean = strategyForSim;
   const psQ = positionSizingRaw != null && String(positionSizingRaw).trim() !== '' ? String(positionSizingRaw).toLowerCase().trim() : null;
   const positionSizing =
     psQ && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psQ)
@@ -9025,7 +9247,9 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     strategyClean === 'quality_momentum';
   const capital = parseFloat(initialCapital) || 10000;
   const regimeEnabled = regimeEnabledQuery !== 'false' && regimeEnabledQuery !== false;
-  const pillarOverrideNormalized = parsePillarOverrideQuery(pillarOverrideQuery);
+  const pillarOverrideExplicit = parsePillarOverrideQuery(pillarOverrideQuery);
+  const pillarOverrideNormalized =
+    pillarOverrideExplicit || (pillarOverrideFromAlias ? normalizePillarOverride(pillarOverrideFromAlias) : null);
   const pillarOverrideKey = pillarOverrideNormalized ? JSON.stringify(pillarOverrideNormalized) : 'none';
   const usePaperWeights =
     usePaperWeightsQuery === 'true' ||
@@ -9070,6 +9294,10 @@ app.get('/api/backtest/:universeId', async (req, res) => {
   const hedgingQuery = req.query.hedging;
   const hedgingBacktest =
     hedgingQuery === 'true' || hedgingQuery === true || hedgingQuery === '1';
+
+  const rlSkipEarnQuery = req.query.rlTrainSkipEarningsFetch;
+  const rlTrainSkipEarningsFetchBacktest =
+    rlSkipEarnQuery === 'true' || rlSkipEarnQuery === true || rlSkipEarnQuery === '1';
 
   let tradingWeights = null;
   if (strategyClean === 'full_composite') {
@@ -9141,7 +9369,8 @@ app.get('/api/backtest/:universeId', async (req, res) => {
     correlationFilter: correlationFilterBacktest,
     maxCorrelated: maxCorrelatedBacktest,
     correlationLookbackDays: correlationLookbackBacktest,
-    hedging: hedgingBacktest
+    hedging: hedgingBacktest,
+    rlTrainSkipEarningsFetch: rlTrainSkipEarningsFetchBacktest
   });
 
   const rlAgentForResponse = rlAgentTypeEffective() === 'dqn' ? TRAINED_RL_AGENT : getQlAgentForUniverse(universeId);
@@ -9301,7 +9530,8 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         correlationFilter: correlationFilterBacktest,
         maxCorrelated: maxCorrelatedBacktest,
         correlationLookbackDays: correlationLookbackBacktest,
-        hedging: hedgingBacktest
+        hedging: hedgingBacktest,
+        rlTrainSkipEarningsFetch: rlTrainSkipEarningsFetchBacktest
       }
     );
 
@@ -9321,6 +9551,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       pitDetail,
       nameSwapCount,
       rlLog,
+      rlOverrideStats,
       hedgeStats
     } = sim;
 
@@ -9435,6 +9666,34 @@ app.get('/api/backtest/:universeId', async (req, res) => {
         currentHoldings.push({ ticker, shares: holding.shares, entryPrice: holding.entryPrice, currentPrice: price, return: ((price - holding.entryPrice) / holding.entryPrice) * 100 });
       }
     }
+    for (const row of currentHoldings) {
+      const cs = getCongressScore(row.ticker);
+      row.congressScore = cs.score;
+      row.congressSentiment = cs.sentiment;
+      row.congressPoliticians = cs.politicians ?? [];
+      row.congressNetBuys = cs.netBuys ?? 0;
+    }
+
+    const congressTickerSet = new Set();
+    for (const h of currentHoldings) congressTickerSet.add(h.ticker);
+    for (const t of tradeLog) {
+      if (t?.ticker) congressTickerSet.add(t.ticker);
+    }
+    for (const s of stops) {
+      if (s?.ticker) congressTickerSet.add(s.ticker);
+    }
+    const congressByTicker = {};
+    for (const tk of congressTickerSet) {
+      const cs = getCongressScore(tk);
+      congressByTicker[tk] = {
+        score: cs.score,
+        sentiment: cs.sentiment,
+        hasSignal: cs.hasSignal,
+        netBuys: cs.netBuys,
+        netSells: cs.netSells,
+        politicians: cs.politicians ?? [],
+      };
+    }
 
     let factorAttribution = null;
     if ((strategyClean === 'full_composite' || strategyClean === 'full_composite_aggressive' || strategyClean === 'full_composite_turbo') && factorSnapshots.length >= 2) {
@@ -9487,8 +9746,27 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       return best?.regime ?? null;
     };
 
+    const stopsDetailForResponse =
+      stops.length > 0
+        ? stops.slice(0, 20).map((s) => {
+            const lossPct = Number(((s.holdingReturn || 0) * 100).toFixed(2));
+            const cs = getCongressScore(s.ticker);
+            return {
+              date: s.date,
+              ticker: s.ticker,
+              return: `${lossPct >= 0 ? "+" : ""}${lossPct.toFixed(1)}%`,
+              lossPct,
+              daysHeld: s.holdingDays ?? null,
+              regimeAtExit: regimeForStopDate(s.date),
+              congressScore: cs.score,
+              congressSentiment: cs.sentiment,
+            };
+          })
+        : [];
+
     const responseData = {
-      strategy,
+      strategy: strategyLabelRequested,
+      strategyEngine: strategyClean,
       benchmark: benchmarkMeta,
       universe: universeId,
       period,
@@ -9507,6 +9785,7 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       rlEvalGloballyEnabled: rlEvalEnvEnabled(),
       rlAgent: rlAgentBacktest,
       rlEnabled: rlAgentBacktest,
+      rlOverrideStats: rlOverrideStats || undefined,
       rlAgentLoaded: trainedRlAvailable,
       rlUniverse: universeId,
       rlAgentKind: rlAgentForResponse ? rlAgentTypeEffective() : null,
@@ -9523,6 +9802,15 @@ app.get('/api/backtest/:universeId', async (req, res) => {
           : undefined,
       rlMode: rlAgentBacktest ? rlModeBacktest : 'off',
       rlRandomAgent: rlRandomAgentBacktest,
+      rlTrainSkipEarningsFetchApplied: needsFundamentals ? rlTrainSkipEarningsFetchBacktest : undefined,
+      rlTrainEvalMismatchWarning:
+        rlAgentBacktest &&
+        rlAgentTypeEffective() === 'qlearning' &&
+        rlAgentForResponse?.trainingMeta?.rlTrainSkipEarningsFetch === true &&
+        !rlTrainSkipEarningsFetchBacktest &&
+        needsFundamentals
+          ? 'Saved agent trained with rlTrainSkipEarningsFetch:true; this run uses full earnings in composite. Add &rlTrainSkipEarningsFetch=true for apples-to-apples scoring, or retrain with earnings enabled (omit skip).'
+          : undefined,
       rlLog: rlAgentBacktest && Array.isArray(rlLog) ? rlLog : undefined,
       pillarOverride: pillarOverrideNormalized || undefined,
       activeWeights: tradingWeights || (strategyClean === 'full_composite_aggressive' ? AGGRESSIVE_COMPOSITE_WEIGHTS : strategyClean === 'full_composite_turbo' ? TURBO_COMPOSITE_WEIGHTS : DEFAULT_COMPOSITE_WEIGHTS),
@@ -9535,20 +9823,16 @@ app.get('/api/backtest/:universeId', async (req, res) => {
       riskManagement: {
         regimeSummary,
         totalStopsTriggered,
-        stopsDetail:
-          stops.length > 0
-            ? stops.slice(0, 20).map((s) => {
-                const lossPct = Number(((s.holdingReturn || 0) * 100).toFixed(2));
-                return {
-                  date: s.date,
-                  ticker: s.ticker,
-                  return: `${lossPct >= 0 ? "+" : ""}${lossPct.toFixed(1)}%`,
-                  lossPct,
-                  daysHeld: s.holdingDays ?? null,
-                  regimeAtExit: regimeForStopDate(s.date)
-                };
-              })
-            : []
+        stopsDetail: stopsDetailForResponse
+      },
+
+      /** Current FMP disclosure snapshot keyed by ticker (trade log + final book + stops). Not historical to sim dates. */
+      congressByTicker,
+      congressMeta: {
+        hasApiKey: !!fmpApiKey(),
+        source: 'FMP (Senate STOCK Act)',
+        note:
+          'Scores reflect recent public disclosures as of this response, not the simulated calendar date. The ranking nudge in-backtest applies only when the simulated rebalance is near “today” (see server).',
       },
 
       regimeSplit,
@@ -10044,7 +10328,7 @@ app.get('/api/rl/policy', (req, res) => {
 /**
  * GET /api/rl/oracle
  *
- * Exhaustively evaluates all 48 constant policies (one fixed action every rebalance)
+ * Exhaustively evaluates all discrete Tabular RL actions as constant policies (one fixed action every rebalance)
  * on the full backtest window, ranks by alpha, and compares the trained agent's greedy
  * tabular/DQN policy to the best single-action oracle.
  *
@@ -10730,8 +11014,10 @@ app.post('/api/rl/train', async (req, res) => {
       body.correlationFilter === 1 ||
       String(body.correlationFilter || '').toLowerCase() === 'true';
 
-    let holdoutFraction = Number(body.holdoutFraction ?? 0.2);
-    if (!Number.isFinite(holdoutFraction)) holdoutFraction = 0.2;
+    // 33% holdout (≈ year 3 of a 3-year window) for walk-forward validation.
+    // Previous default of 20% left too little held-out data to detect overfitting.
+    let holdoutFraction = Number(body.holdoutFraction ?? 0.33);
+    if (!Number.isFinite(holdoutFraction)) holdoutFraction = 0.33;
     holdoutFraction = Math.min(0.45, Math.max(0.05, holdoutFraction));
     const trainCutoffIdx = Math.floor(rebalanceDates.length * (1 - holdoutFraction));
     let trainRebalancePool = rebalanceDates.slice(0, trainCutoffIdx);
@@ -10779,10 +11065,15 @@ app.post('/api/rl/train', async (req, res) => {
     const dqnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '1')) || 1));
     const dqnEpsEnd = Math.min(dqnEpsStart, Math.max(0.01, parseFloat(String(body.epsilonEnd ?? '0.05')) || 0.05));
     const dqnEpsDecayEp = Math.max(100, parseInt(String(body.epsilonDecayEpisodes ?? '10000'), 10) || 10000);
-    /** Tabular Q-learning: linear ε decay vs episode (used when currentTrainingEpisode > 0). Defaults: 1.0 → 0.05 over 25k episodes. */
-    const qLearnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '1')) || 1));
+    /**
+     * Tabular Q-learning: exponential ε decay vs episode.
+     * Defaults: 0.30 → 0.05 over 80% of the training run.
+     * The old defaults (1.0/25k) kept ε≈0.98 throughout a 500-episode run,
+     * meaning the agent was almost always exploring and never converged.
+     */
+    const qLearnEpsStart = Math.min(1, Math.max(0.05, parseFloat(String(body.epsilonStart ?? '0.30')) || 0.30));
     const qLearnEpsEnd = Math.min(qLearnEpsStart, Math.max(0.01, parseFloat(String(body.epsilonEnd ?? '0.05')) || 0.05));
-    const qLearnEpsDecayEp = Math.max(1, parseInt(String(body.epsilonDecayEpisodes ?? '25000'), 10) || 25000);
+    const qLearnEpsDecayEp = Math.max(1, parseInt(String(body.epsilonDecayEpisodes ?? String(Math.round(userEpisodes * 0.8))), 10) || Math.round(userEpisodes * 0.8));
 
     if (isDqnAgentInstance(agent)) {
       agent.batchSize = dqnBatchSize;
@@ -10836,6 +11127,14 @@ app.post('/api/rl/train', async (req, res) => {
     const trainingDurationSec = parseFloat((trainingDurationMs / 1000).toFixed(2));
     const avgEpisodeMs = episodesRun > 0 ? trainingDurationMs / episodesRun : null;
 
+    if (!isDqnAgentInstance(agent)) {
+      agent.trainingMeta = {
+        rlTrainSkipEarningsFetch,
+        signalBins: [...SIGNAL_BINS],
+        exposureLevels: [...ACTION_SPACE.exposure.levels],
+        trainedAt: new Date().toISOString()
+      };
+    }
     saveRlAgentToDisk(agent, isDqnAgentInstance(agent) ? null : universeId);
     console.log(
       `[RL/train] ✓ COMPLETE — episodes=${episodesRun}, statesVisited=${agent.statesVisited}, totalUpdates=${agent.totalUpdates}, duration=${((Date.now() - startTime) / 1000).toFixed(1)}s`
@@ -11055,10 +11354,25 @@ app.post('/api/rl/train', async (req, res) => {
       period,
       totalUpdates: agent.totalUpdates,
       statesVisited: countRlStatesVisited(agent),
+      uniqueStates: agent.statesVisited,
+      isOverfit: evaluationBlock?.overfitRatio != null ? evaluationBlock.overfitRatio > 1.5 : null,
+      visitCountStats: (() => {
+        const counts = Array.from(agent.visitCountsPerAction ?? []).filter((v) => v > 0);
+        if (!counts.length) return null;
+        counts.sort((a, b) => a - b);
+        return {
+          min: counts[0],
+          median: counts[Math.floor(counts.length / 2)],
+          max: counts[counts.length - 1],
+          total: counts.reduce((a, b) => a + b, 0)
+        };
+      })(),
       convergence: conv,
       overPruning: over,
       agentType: trainAgentType,
-      savedPath: isDqnAgentInstance(agent) ? 'dqn-agent.json' : 'rl-agent.json',
+      savedPath: path.basename(
+        isDqnAgentInstance(agent) ? DQN_AGENT_JSON_PATH : getRlAgentPathForUniverse(universeId)
+      ),
       episodeLog,
       simConfig: {
         ...sharedTrainSimOptions,
@@ -11814,6 +12128,7 @@ app.get('/api/backtest/diagnostic/:universeId', async (req, res) => {
 function getPortfolioPathForUniverse(universeId) {
   const u = String(universeId || '').trim();
   if (u === 'sp500_top150') return PAPER_PORTFOLIO_TOP150_PATH;
+  if (u === 'sp500_top50_shadow') return PAPER_PORTFOLIO_TOP50_SHADOW_PATH;
   if (u === 'sp500_top50') return PAPER_PORTFOLIO_TOP50_PATH;
   return PAPER_PORTFOLIO_PATH;
 }
@@ -11896,7 +12211,7 @@ function ensureDualPaperPortfoliosInitialized() {
       universe: uid,
       topN: 15,
       weights: { ...wNorm },
-      adaptiveMode: 'adaptive',
+      adaptiveMode: 'fixed',
       rebalanceFreq: 'monthly',
       rlAgent: true,
       rlOnlineLearning: true,
@@ -12428,7 +12743,8 @@ app.get('/api/market/indices', async (req, res) => {
     }
     const ttl = 90000;
     const now = Date.now();
-    if (marketIndicesCache.data && now - marketIndicesCache.ts < ttl) {
+    // `_t` / `fresh` bypass disk snapshots but must also skip RAM cache or refresh never updates the strip.
+    if (!bypassSnap && marketIndicesCache.data && now - marketIndicesCache.ts < ttl) {
       return res.json(marketIndicesCache.data);
     }
     const payload = await buildMarketIndicesPayload();
@@ -12569,7 +12885,7 @@ app.post('/api/paper-trade/init', (req, res) => {
     if (Number.isFinite(v)) mlRankWeight = Math.max(0, Math.min(1, v));
   }
   const amInitRaw = initAdaptive != null && initAdaptive !== '' ? String(initAdaptive).toLowerCase().trim() : '';
-  const amInit = amInitRaw === 'fixed' ? 'fixed' : amInitRaw === 'conservative' ? 'conservative' : 'adaptive';
+  const amInit = amInitRaw === 'adaptive' ? 'adaptive' : amInitRaw === 'conservative' ? 'conservative' : 'fixed';
   const psInitRaw = initPosSize != null && String(initPosSize).trim() !== '' ? String(initPosSize).toLowerCase().trim() : null;
   const psInit =
     psInitRaw && ['equal', 'invVol', 'score', 'invVolBlend'].includes(psInitRaw)
@@ -13654,25 +13970,28 @@ async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
           let actionIdxPaper = sel.actionIdx;
           let dec = decodeAction(actionIdxPaper);
           let bullFloorAppliedPaper = false;
-          if (regimeMetaPaper.regime === 'strong_bull' && dec.exposure < 0.8) {
-            const bullActionIdxs = [];
-            for (let eIdx = 2; eIdx <= 3; eIdx++) {
-              for (let pIdx = 0; pIdx <= 3; pIdx++) {
-                for (let sIdx = 0; sIdx <= 2; sIdx++) {
-                  bullActionIdxs.push(encodeAction(eIdx, pIdx, sIdx));
-                }
-              }
-            }
-            const bestBullAction = bullActionIdxs.reduce((best, aIdx) =>
-              agent.getQ(stateIdx, aIdx) > agent.getQ(stateIdx, best) ? aIdx : best,
-              bullActionIdxs[0]
-            );
-            const origExp = dec.exposure;
-            actionIdxPaper = bestBullAction;
-            const decBull = decodeAction(bestBullAction);
-            dec = decBull;
+          let bearCapAppliedPaper = false;
+          if (
+            regimeMetaPaper.regime === 'strong_bull' &&
+            (dec.exposure < 0.8 || dec.positionCount < 13)
+          ) {
+            const exp0 = dec.exposure;
+            const pos0 = dec.positionCount;
+            const bullActionIdxs = buildRlStrongBullFloorActionIdxs();
+            actionIdxPaper = rlArgmaxQAmong(agent, stateIdx, bullActionIdxs);
+            dec = decodeAction(actionIdxPaper);
             bullFloorAppliedPaper = true;
-            console.log(`[RL-PAPER] strong_bull floor: overrode exp=${origExp} → ${decBull.exposure} on ${today}`);
+            console.log(
+              `[RL-PAPER] strong_bull floor: ${today} exp ${exp0}→${dec.exposure} pos ${pos0}→${dec.positionCount}`
+            );
+          }
+          if (regimeMetaPaper.regime === 'bear' && dec.exposure > 0.65) {
+            const prevExp = dec.exposure;
+            const bearIdxs = buildRlBearCapActionIdxs();
+            actionIdxPaper = rlArgmaxQAmong(agent, stateIdx, bearIdxs);
+            dec = decodeAction(actionIdxPaper);
+            bearCapAppliedPaper = true;
+            console.log(`[RL-PAPER] bear exposure cap: ${today} exp ${prevExp}→${dec.exposure}`);
           }
           rlPaperSkipRebalance = (dec.rebalanceWait ?? 'standard') === 'skip';
           portfolio._rlPrevState = stateIdx;
@@ -13690,13 +14009,16 @@ async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
           positionSizingPaper = dec.sizingMethod;
           rlPaperMeta = {
             stateIdx,
+            avgTopScore: parseFloat(Number(stateFeatures.avgTopScore).toFixed(2)),
+            stateBins: decodeState(stateIdx),
             actionIdx: actionIdxPaper,
             exposure: dec.exposure,
             positionCount: dec.positionCount,
             sizingMethod: dec.sizingMethod,
             rebalanceWait: dec.rebalanceWait ?? 'standard',
             fallback: sel.fallback,
-            bullFloorApplied: bullFloorAppliedPaper
+            bullFloorApplied: bullFloorAppliedPaper,
+            bearCapApplied: bearCapAppliedPaper
           };
           rlPaperDecisionForReport = {
             stateIdx,
@@ -13707,6 +14029,7 @@ async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
             rebalanceWait: dec.rebalanceWait ?? 'standard',
             fallback: sel.fallback,
             bullFloorApplied: bullFloorAppliedPaper,
+            bearCapApplied: bearCapAppliedPaper,
             stateFeatures: {
               regime: regimeMetaPaper.regime,
               regimeBucket: stateFeatures.regimeBucket,
@@ -14133,7 +14456,8 @@ async function paperRebalanceExecute(portfolio, persist, execOpts = {}) {
           sizingMethod: rlPaperMeta.sizingMethod,
           rebalanceWait: rlPaperMeta.rebalanceWait ?? 'standard',
           stateIdx: rlPaperMeta.stateIdx,
-          bullFloorApplied: !!rlPaperMeta.bullFloorApplied
+          bullFloorApplied: !!rlPaperMeta.bullFloorApplied,
+          bearCapApplied: !!rlPaperMeta.bearCapApplied
         }
       : null;
     const buysHoisted = buys.map((b) => ({

@@ -62,12 +62,16 @@ const SP500_TOP150_TIER3 = [
   UNIVERSE_TICKERS.sp500_top150 = out;
 })();
 
+/** Same tickers as `sp500_top50`; separate paper book under different defaults (see paths.PAPER_PORTFOLIO_TOP50_SHADOW_PATH). */
+UNIVERSE_TICKERS.sp500_top50_shadow = UNIVERSE_TICKERS.sp500_top50;
+
 /** Same ticker list as backtest `sp500_top150` for /api/universe and momentum. */
 UNIVERSES.sp500_top150 = UNIVERSE_TICKERS.sp500_top150;
 
 /** UI + chart names for equal-weight universe benchmark (must match `universeId` route param). */
 export const UNIVERSE_BENCHMARK_LABELS = {
   sp500_top50: { shortLabel: 'S&P Top 50', chartLabel: 'Equal-weight S&P Top 50' },
+  sp500_top50_shadow: { shortLabel: 'S&P Top 50 (shadow)', chartLabel: 'Equal-weight S&P Top 50' },
   sp500_top150: { shortLabel: 'S&P Top 150', chartLabel: 'Equal-weight S&P Top 150' },
   vgt: { shortLabel: 'VGT', chartLabel: 'VGT universe (equal-weight)' },
   mag7: { shortLabel: 'Mag 7', chartLabel: 'Mag 7 (equal-weight)' },

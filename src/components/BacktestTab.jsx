@@ -4,7 +4,7 @@ import { Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart } from 
 import { MONO, SANS } from "../lib/theme.js";
 import { apiFetch, apiUrl } from "../lib/api.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
-import { Box, Select } from "./shared.jsx";
+import { Box, Select, CongressSignalInline } from "./shared.jsx";
 import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS, PERIOD_OPTIONS } from "../lib/constants.js";
 import { fmtWeightPct } from "../lib/formatters.js";
 
@@ -298,7 +298,7 @@ const isCompositeFamily = isCompositeStrategy;
 
 /** Omit query keys when they match server defaults so the browser request matches a minimal curl. See GET /api/backtest in server.js. */
 const SERVER_DEFAULT_INITIAL_CAPITAL = 10000;
-const SERVER_DEFAULT_ADAPTIVE_MODE = "adaptive";
+const SERVER_DEFAULT_ADAPTIVE_MODE = "fixed";
 
 function buildBacktestQuery(settings, rlAgentOn) {
   const params = new URLSearchParams({
@@ -327,33 +327,6 @@ function buildBacktestQuery(settings, rlAgentOn) {
     params.set("initialCapital", String(settings.initialCapital));
   }
   return params;
-}
-
-function parseBacktestPerfTriplet(data) {
-  const tr = parseFloat(data?.performance?.totalReturn);
-  const alpha = parseFloat(data?.performance?.alpha);
-  const sharpe = parseFloat(data?.performance?.sharpe);
-  return {
-    tr: Number.isFinite(tr) ? tr : -Infinity,
-    alpha: Number.isFinite(alpha) ? alpha : -Infinity,
-    sharpe: Number.isFinite(sharpe) ? sharpe : -Infinity
-  };
-}
-
-/**
- * After parallel rules vs RL runs, pick the stronger path for this search.
- * Order: total return → alpha → Sharpe; full tie → rules-only (RL off).
- */
-function pickBetterRlVariant(dataRules, dataRl) {
-  const a = parseBacktestPerfTriplet(dataRules);
-  const b = parseBacktestPerfTriplet(dataRl);
-  if (b.tr > a.tr) return { data: dataRl, rlAgentOn: true };
-  if (a.tr > b.tr) return { data: dataRules, rlAgentOn: false };
-  if (b.alpha > a.alpha) return { data: dataRl, rlAgentOn: true };
-  if (a.alpha > b.alpha) return { data: dataRules, rlAgentOn: false };
-  if (b.sharpe > a.sharpe) return { data: dataRl, rlAgentOn: true };
-  if (a.sharpe > b.sharpe) return { data: dataRules, rlAgentOn: false };
-  return { data: dataRules, rlAgentOn: false };
 }
 
 async function fetchBacktestJson(settings, rlAgentOn, signal) {
@@ -517,25 +490,23 @@ export default function BacktestTab() {
   const [showTrades, setShowTrades] = useState(false);
   const [showRL, setShowRL] = useState(false);
   const [showStops, setShowStops] = useState(false);
+  const [showFinalBook, setShowFinalBook] = useState(true);
   const [showFundamentalNote, setShowFundamentalNote] = useState(false);
   const [tradePage, setTradePage] = useState(0);
   const TRADES_PER_PAGE = 50;
   const [compareSnaps, setCompareSnaps] = useState({ full_composite: null, full_composite_aggressive: null });
-  
+
   const [settings, setSettings] = useState({
-    universe: "sp500_top150",
+    universe: "sp500_top50",
     period: "3y",
-    rebalanceFreq: "bimonthly",
+    rebalanceFreq: "quarterly",
     topN: "15",
-    strategy: "full_composite",
+    strategy: "full_composite_quality",
     initialCapital: "10000",
-    adaptiveMode: "adaptive",
+    adaptiveMode: "fixed",
     positionSizing: "invVol"
   });
-  /**
-   * Composite family: each Run compares rules vs RL in parallel and syncs this to the winner.
-   * User can still toggle after a run to re-fetch a single variant.
-   */
+  /** Composite strategies: must match GET query rlAgent (Advanced → RL AGENT). */
   const [rlAgentOn, setRlAgentOn] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const advancedWrapRef = useRef(null);
@@ -581,8 +552,8 @@ export default function BacktestTab() {
   ];
 
   const adaptiveModeOptions = [
-    { id: "adaptive", label: "Adaptive" },
     { id: "fixed", label: "Fixed (server defaults)" },
+    { id: "adaptive", label: "Adaptive" },
     { id: "conservative", label: "Conservative blend" }
   ];
 
@@ -629,63 +600,13 @@ export default function BacktestTab() {
     setResults(null);
     setLoading(true);
     setError(null);
-    
+
     try {
-      const strat = (settings.strategy || "").toLowerCase().trim();
-      let data;
-
-      if (isCompositeStrategy(strat)) {
-        const relativeOff = `/api/backtest/${settings.universe}?${buildBacktestQuery(settings, false).toString()}`;
-        const relativeOn = `/api/backtest/${settings.universe}?${buildBacktestQuery(settings, true).toString()}`;
-        console.log("[BACKTEST] RL compare (parallel):", apiUrl(relativeOff), "|", apiUrl(relativeOn));
-
-        const [settledOff, settledOn] = await Promise.allSettled([
-          fetchBacktestJson(settings, false, signal),
-          fetchBacktestJson(settings, true, signal)
-        ]);
-
-        if (signal.aborted) return;
-
-        const off = settledOff.status === "fulfilled" ? settledOff.value : null;
-        const on = settledOn.status === "fulfilled" ? settledOn.value : null;
-
-        if (!off && !on) {
-          const msg =
-            settledOff.status === "rejected"
-              ? settledOff.reason?.message
-              : settledOn.status === "rejected"
-                ? settledOn.reason?.message
-                : "Backtest failed";
-          throw new Error(msg || "Backtest failed");
-        }
-        if (off && !on) {
-          data = off;
-          setRlAgentOn(false);
-          console.warn("[BACKTEST] RL path failed, showing rules-only:", settledOn.reason?.message);
-        } else if (!off && on) {
-          data = on;
-          setRlAgentOn(true);
-          console.warn("[BACKTEST] Rules path failed, showing RL request:", settledOff.reason?.message);
-        } else {
-          const pick = pickBetterRlVariant(off, on);
-          data = pick.data;
-          setRlAgentOn(pick.rlAgentOn);
-          console.log(
-            "[BACKTEST] Auto-pick RL:",
-            pick.rlAgentOn,
-            "| returns % rules=",
-            off.performance?.totalReturn,
-            "rl=",
-            on.performance?.totalReturn
-          );
-        }
-      } else {
-        const params = buildBacktestQuery(settings, rlAgentOn);
-        const relativeUrl = `/api/backtest/${settings.universe}?${params.toString()}`;
-        console.log("[BACKTEST] Fetching:", apiUrl(relativeUrl));
-        data = await fetchBacktestJson(settings, rlAgentOn, signal);
-        console.log("[BACKTEST] URL:", apiUrl(relativeUrl), "| Response return:", data.performance?.totalReturn);
-      }
+      const params = buildBacktestQuery(settings, rlAgentOn);
+      const relativeUrl = `/api/backtest/${settings.universe}?${params.toString()}`;
+      console.log("[BACKTEST] Fetching:", apiUrl(relativeUrl));
+      const data = await fetchBacktestJson(settings, rlAgentOn, signal);
+      console.log("[BACKTEST] URL:", apiUrl(relativeUrl), "| Response return:", data.performance?.totalReturn);
 
       setResults(data);
       const stratOut = (data.strategy || "").toLowerCase().trim();
@@ -770,14 +691,17 @@ export default function BacktestTab() {
 
   const btFilterGridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(6.75rem, 1fr))",
-    gap: "6px 8px",
-    alignItems: "end"
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr))",
+    gap: "8px 12px",
+    alignItems: "end",
+    flex: "1 1 26rem",
+    minWidth: 0,
+    maxWidth: "100%"
   };
 
   const btAdvancedPopoverGridStyle = {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fill, minmax(8.25rem, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 11.5rem), 1fr))",
     gap: "8px 10px",
     alignItems: "end"
   };
@@ -814,6 +738,12 @@ export default function BacktestTab() {
     const start = tradePage * TRADES_PER_PAGE;
     return sortedTradesDesc.slice(start, start + TRADES_PER_PAGE);
   }, [sortedTradesDesc, tradePage]);
+
+  const finalHoldingsSorted = useMemo(() => {
+    const rows = results?.currentHoldings;
+    if (!Array.isArray(rows) || rows.length === 0) return [];
+    return [...rows].sort((a, b) => (Number(b.return) || 0) - (Number(a.return) || 0));
+  }, [results?.currentHoldings]);
 
   useEffect(() => {
     setTradePage((p) => Math.min(p, Math.max(0, tradePageCount - 1)));
@@ -881,8 +811,8 @@ export default function BacktestTab() {
                     right: 0,
                     marginTop: 6,
                     zIndex: 50,
-                    minWidth: "min(92vw, 17.5rem)",
-                    maxWidth: "min(92vw, 34rem)",
+                    minWidth: "min(92vw, 22rem)",
+                    maxWidth: "min(92vw, 38rem)",
                     maxHeight: "min(72vh, 28rem)",
                     overflow: "auto",
                     padding: 12,
@@ -974,8 +904,25 @@ export default function BacktestTab() {
           <div style={{ textAlign: "center", color: "var(--text-secondary)", fontFamily: MONO, fontSize: 13 }}>
             Fetching historical data and running simulation…
             {loadSec > 0 ? (
-              <span style={{ display: "block", marginTop: 10, fontSize: 12 }}>
-                {loadSec}s elapsed — large universes can take 30–90s on a cold run.
+              <span
+                style={{
+                  display: "block",
+                  marginTop: 10,
+                  fontSize: 12,
+                  maxWidth: 560,
+                  marginLeft: "auto",
+                  marginRight: "auto",
+                  lineHeight: 1.5
+                }}
+              >
+                {loadSec}s elapsed —{" "}
+                {settings.universe === "sp500_top150"
+                  ? "S&P Top 150 pulls ~150 price histories per cold run."
+                  : "Large universes pull many Yahoo charts when cache is cold."}{" "}
+                Full Composite + <strong>fresh=true</strong>
+                {isCompositeFamily(settings.strategy) && rlAgentOn ? " + RL policy" : ""} often needs{" "}
+                <strong>1–6 min</strong> (server allows up to ~5 min). Charts reuse disk cache after the first run, so
+                repeats are faster. Still spinning past ~6 min? Check the API terminal for errors / rate limits.
               </span>
             ) : null}
           </div>
@@ -1347,19 +1294,30 @@ export default function BacktestTab() {
                     {showStops && (
                       <div className="ma-bt-table-wrap" style={{ marginTop: 8 }}>
                         <table className="ma-bt-table">
-                          <thead>
-                            <tr>
-                              <th>Ticker</th>
-                              <th>Exit date</th>
-                              <th style={{ textAlign: "right" }}>Loss %</th>
-                              <th style={{ textAlign: "right" }}>Days held</th>
-                              <th>Regime at exit</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {results.riskManagement.stopsDetail.map((s, si) => (
+                    <thead>
+                      <tr>
+                        <th>Ticker</th>
+                        <th>Congress</th>
+                        <th>Exit date</th>
+                        <th style={{ textAlign: "right" }}>Loss %</th>
+                        <th style={{ textAlign: "right" }}>Days held</th>
+                        <th>Regime at exit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.riskManagement.stopsDetail.map((s, si) => {
+                            const cMap = results.congressByTicker?.[s.ticker];
+                            return (
                               <tr key={si}>
                                 <td className="ma-mono">{s.ticker}</td>
+                                <td>
+                                  <CongressSignalInline
+                                    score={s.congressScore ?? cMap?.score}
+                                    sentiment={s.congressSentiment ?? cMap?.sentiment}
+                                    politicians={cMap?.politicians}
+                                    netBuys={cMap?.netBuys}
+                                  />
+                                </td>
                                 <td>{s.date}</td>
                                 <td style={{ textAlign: "right", color: "var(--red)" }}>{s.return}</td>
                                 <td style={{ textAlign: "right" }}>{s.daysHeld != null ? s.daysHeld : "—"}</td>
@@ -1373,7 +1331,8 @@ export default function BacktestTab() {
                                   )}
                                 </td>
                               </tr>
-                            ))}
+                            );
+                          })}
                           </tbody>
                         </table>
                       </div>
@@ -1804,6 +1763,89 @@ export default function BacktestTab() {
               )}
             </div>
           )}
+
+          {finalHoldingsSorted.length > 0 && (
+            <div className="ma-bt-card">
+              <button
+                type="button"
+                className="ma-bt-collapsible__hdr"
+                onClick={() => setShowFinalBook((s) => !s)}
+                style={{ marginBottom: showFinalBook ? 12 : 0 }}
+              >
+                <span className="ma-mono" style={{ fontSize: 11 }}>
+                  FINAL BOOK (end of simulation) · {finalHoldingsSorted.length} positions
+                </span>
+                <span>{showFinalBook ? "▲" : "▼"}</span>
+              </button>
+              {showFinalBook && (
+                <>
+                  {results.congressMeta?.note && (
+                    <p
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-secondary)",
+                        lineHeight: 1.5,
+                        margin: "0 0 10px 0",
+                        maxWidth: 720
+                      }}
+                    >
+                      STOCK Act: {results.congressMeta.note}
+                    </p>
+                  )}
+                  <div className="ma-bt-table-wrap">
+                    <table className="ma-bt-table">
+                      <thead>
+                        <tr>
+                          <th>Ticker</th>
+                          <th style={{ textAlign: "right" }}>Return</th>
+                          <th style={{ textAlign: "right" }}>Entry</th>
+                          <th style={{ textAlign: "right" }}>Last (sim)</th>
+                          <th style={{ textAlign: "right" }}>Shares</th>
+                          <th>Congress</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {finalHoldingsSorted.map((h) => (
+                          <tr key={h.ticker}>
+                            <td className="ma-mono" style={{ fontWeight: 600 }}>
+                              {h.ticker}
+                            </td>
+                            <td
+                              className="ma-mono"
+                              style={{
+                                textAlign: "right",
+                                color:
+                                  (h.return ?? 0) >= 0 ? "var(--green)" : "var(--red)"
+                              }}
+                            >
+                              {h.return != null ? `${(h.return >= 0 ? "+" : "")}${Number(h.return).toFixed(1)}%` : "—"}
+                            </td>
+                            <td className="ma-mono" style={{ textAlign: "right" }}>
+                              {h.entryPrice != null ? `$${Number(h.entryPrice).toFixed(2)}` : "—"}
+                            </td>
+                            <td className="ma-mono" style={{ textAlign: "right" }}>
+                              {h.currentPrice != null ? `$${Number(h.currentPrice).toFixed(2)}` : "—"}
+                            </td>
+                            <td className="ma-mono" style={{ textAlign: "right" }}>
+                              {h.shares != null ? h.shares : "—"}
+                            </td>
+                            <td>
+                              <CongressSignalInline
+                                score={h.congressScore}
+                                sentiment={h.congressSentiment}
+                                politicians={h.congressPoliticians}
+                                netBuys={h.congressNetBuys}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           
           <div className="ma-bt-card">
             <button
@@ -1831,6 +1873,7 @@ export default function BacktestTab() {
                       <tr>
                         <th>Date</th>
                         <th>Ticker</th>
+                        <th>Congress</th>
                         <th>Action</th>
                         <th style={{ textAlign: "right" }}>Price</th>
                         <th style={{ textAlign: "right" }}>Shares</th>
@@ -1839,11 +1882,21 @@ export default function BacktestTab() {
                       </tr>
                     </thead>
                     <tbody>
-                      {tradesPageSlice.map((t, i) => (
+                      {tradesPageSlice.map((t, i) => {
+                        const cTr = results.congressByTicker?.[t.ticker];
+                        return (
                         <tr key={`${t.date}-${t.type}-${t.ticker}-${tradePage}-${i}`}>
                           <td>{t.date}</td>
                           <td className="ma-mono" style={{ fontWeight: 600 }}>
                             {t.ticker}
+                          </td>
+                          <td>
+                            <CongressSignalInline
+                              score={cTr?.score}
+                              sentiment={cTr?.sentiment}
+                              politicians={cTr?.politicians}
+                              netBuys={cTr?.netBuys}
+                            />
                           </td>
                           <td>
                             <span className={tradeActionClass(t.type)}>{t.type}</span>
@@ -1865,7 +1918,8 @@ export default function BacktestTab() {
                           </td>
                           <td style={{ color: "var(--text-secondary)" }}>{t.regime ?? "—"}</td>
                         </tr>
-                      ))}
+                      );
+                      })}
                     </tbody>
                   </table>
                 </div>
