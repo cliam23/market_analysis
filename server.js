@@ -12439,6 +12439,7 @@ function computeDashboardPortfolioCard(portfolio) {
   if (sum && Number.isFinite(Number(sum.totalValue))) {
     totalValue = Number(sum.totalValue);
   }
+  
   if (totalValue == null || !Number.isFinite(Number(totalValue))) {
     let tv = nav?.portfolioValue;
     if (tv == null || !Number.isFinite(Number(tv))) {
@@ -15707,6 +15708,8 @@ app.post('/api/wheel/run', async (req, res) => {
       wheel
     );
 
+    const manageErrors = Array.isArray(mgmt.actions?.errors) ? mgmt.actions.errors : [];
+
     res.json({
       success: true,
       universeId,
@@ -15716,7 +15719,7 @@ app.post('/api/wheel/run', async (req, res) => {
       actions: {
         closed,
         opened,
-        errors
+        errors: [...errors, ...manageErrors]
       },
       optionsLegs: wheel.optionsLegs
     });

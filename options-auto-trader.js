@@ -154,16 +154,27 @@ async function tradierPost(p, params) {
   return res.json();
 }
 
+// Sandbox account IDs look like VA######## (2 letters + 8-10 digits). Reject obvious garbage.
+const ACCT_ID_RE = /^[A-Z]{2}\d{6,12}$/;
+let _cachedAccountId = null;
 async function getSandboxAccountId() {
-  const envAcct = process.env.TRADIER_ACCOUNT_ID || process.env.TRADIER_SANDBOX_ACCOUNT;
-  if (envAcct != null && String(envAcct).trim() !== '') return String(envAcct).trim();
+  if (_cachedAccountId) return _cachedAccountId;
+  const envAcct = (process.env.TRADIER_ACCOUNT_ID || process.env.TRADIER_SANDBOX_ACCOUNT || '').trim();
+  if (envAcct && ACCT_ID_RE.test(envAcct)) {
+    _cachedAccountId = envAcct;
+    return _cachedAccountId;
+  }
+  if (envAcct) {
+    console.warn(`[tradier] ignoring malformed TRADIER_ACCOUNT_ID="${envAcct}" (expected ${ACCT_ID_RE}); falling back to /user/profile`);
+  }
   const data = await tradierGet('/user/profile');
   const accounts = data?.profile?.account;
   if (!accounts) throw new Error('No accounts found in Tradier profile');
   const acct = Array.isArray(accounts) ? accounts[0] : accounts;
   const id = acct?.account_number ?? acct?.accountNumber ?? acct?.number ?? null;
   if (!id) throw new Error('Tradier profile missing account_number');
-  return String(id);
+  _cachedAccountId = String(id);
+  return _cachedAccountId;
 }
 
 async function getOptionQuote(optionSymbol) {
@@ -245,44 +256,67 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
   const remaining = [];
 
   for (const pos of legs) {
+    // Always try to refresh MTM first. Even if close submission fails later we want
+    // the leg's currentMark/currentDTE/currentPnL to reflect the latest quote.
+    let mark = null;
+    let dte = null;
+    let pnl = null;
+    let pnlPct = null;
+    let mtmOk = false;
     try {
       const q = await getOptionQuote(pos.optionSymbol);
-      const mark = quoteMid(q);
-      const dte = computeDte(pos.expiration) ?? pos.dte ?? null;
-
+      mark = quoteMid(q);
+      dte = computeDte(pos.expiration) ?? pos.dte ?? null;
       const entry = Number(pos.entryCredit) || 0;
       const qty = Number(pos.quantity) || 1;
       const isSeller = pos.strategy !== 'REGIME_HEDGE';
-      const pnl = isSeller ? (entry - mark) * 100 * qty : (mark - entry) * 100 * qty;
-      const pnlPct = entry > 0 ? pnl / (entry * 100 * qty) : 0;
+      pnl = isSeller ? (entry - mark) * 100 * qty : (mark - entry) * 100 * qty;
+      pnlPct = entry > 0 ? pnl / (entry * 100 * qty) : 0;
+      mtmOk = Number.isFinite(mark) && mark > 0;
+    } catch (qe) {
+      actions.errors.push({ symbol: pos?.optionSymbol ?? 'unknown', stage: 'quote', error: qe.message || String(qe) });
+    }
 
-      const activeTarget =
-        currentRegime === 'pullback' ? AUTO_CONFIG.pullbackProfitTarget : AUTO_CONFIG.profitTarget;
-      const closeAtProfit = isSeller && mark <= entry * (1 - activeTarget);
-      const closeAtDte = dte != null && dte <= AUTO_CONFIG.dteCloseThreshold;
-      const closeAtBear =
-        AUTO_CONFIG.bearRegimeClose === true && currentRegime === 'bear' && pos.strategy !== 'REGIME_HEDGE';
-      const closeAtCautionStop =
-        currentRegime === 'caution' && isSeller && pnlPct < -AUTO_CONFIG.cautionStopPct;
+    const enriched = mtmOk
+      ? { ...pos, currentMark: mark, currentDTE: dte, currentPnL: pnl, currentPnLPct: pnlPct }
+      : { ...pos };
 
-      const shouldClose = closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop;
-      if (!shouldClose) {
-        remaining.push({ ...pos, currentMark: mark, currentDTE: dte, currentPnL: pnl, currentPnLPct: pnlPct });
-        actions.kept.push(pos);
-        continue;
-      }
+    if (!mtmOk) {
+      remaining.push(enriched);
+      actions.kept.push(enriched);
+      continue;
+    }
 
-      const reason = closeAtBear
-        ? 'bear regime override'
-        : closeAtCautionStop
-          ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
-          : closeAtProfit
-            ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
-            : '21 DTE threshold';
+    const entry = Number(pos.entryCredit) || 0;
+    const qty = Number(pos.quantity) || 1;
+    const isSeller = pos.strategy !== 'REGIME_HEDGE';
+    const activeTarget =
+      currentRegime === 'pullback' ? AUTO_CONFIG.pullbackProfitTarget : AUTO_CONFIG.profitTarget;
+    const closeAtProfit = isSeller && mark <= entry * (1 - activeTarget);
+    const closeAtDte = dte != null && dte <= AUTO_CONFIG.dteCloseThreshold;
+    const closeAtBear =
+      AUTO_CONFIG.bearRegimeClose === true && currentRegime === 'bear' && pos.strategy !== 'REGIME_HEDGE';
+    const closeAtCautionStop =
+      currentRegime === 'caution' && isSeller && pnlPct < -AUTO_CONFIG.cautionStopPct;
 
+    const shouldClose = closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop;
+    if (!shouldClose) {
+      remaining.push(enriched);
+      actions.kept.push(enriched);
+      continue;
+    }
+
+    const reason = closeAtBear
+      ? 'bear regime override'
+      : closeAtCautionStop
+        ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
+        : closeAtProfit
+          ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
+          : '21 DTE threshold';
+
+    try {
       const limit = Math.max(0.01, mark + 0.05);
       const order = await submitBuyToClose(accountId, pos.ticker, pos.optionSymbol, qty, limit);
-
       actions.closed.push({
         symbol: pos.optionSymbol,
         ticker: pos.ticker,
@@ -291,9 +325,16 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
         pnl,
         closedAt: nowIso
       });
-    } catch (e) {
-      remaining.push(pos);
-      actions.errors.push({ symbol: pos?.optionSymbol ?? 'unknown', error: e.message || String(e) });
+    } catch (ce) {
+      // Close failed — keep the leg with FRESH MTM so it's visible & retried next run.
+      remaining.push(enriched);
+      actions.kept.push(enriched);
+      actions.errors.push({
+        symbol: pos?.optionSymbol ?? 'unknown',
+        stage: 'close',
+        intendedReason: reason,
+        error: ce.message || String(ce)
+      });
     }
   }
 
