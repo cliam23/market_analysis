@@ -6,14 +6,14 @@
     "universeId": "sp500_top150_shadow",
     "topN": 15,
     "weights": {
-      "momentum": 0.20,
-      "value": 0.20,
+      "momentum": 0.2,
+      "value": 0.2,
       "fundamental": 0.15,
       "earningsMomentum": 0.45,
       "dcf": 0,
       "valuation": 0
     },
-    "_weightsVersion": 1,
+    "_weightsVersion": 4,
     "adaptiveMode": "fixed",
     "rebalanceFreq": "quarterly",
     "rlAgent": false,
@@ -23,12 +23,857 @@
     "notes": "Shadow book for sp500_top150: quarterly cadence + earnings-heavy weights (M0.20/V0.20/Q0.15/E0.45) + fixed mode. Same tickers as sp500_top150; A/B against the production bimonthly book. Backtest 1y alpha +21.6%/Sharpe 2.11; 3y alpha +11.85%/Sharpe 1.17. Initialised 2026-05-15."
   },
   "initialCapital": 100000,
-  "cash": 100000,
-  "holdings": [],
-  "navHistory": [],
-  "rebalanceHistory": [],
+  "cash": 16536.33090209961,
+  "holdings": [
+    {
+      "ticker": "AMD",
+      "shares": 9,
+      "entryPrice": 424.1000061035156,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 100,
+        "fundamental": 39.2,
+        "momentum": 100,
+        "valuation": 23.38,
+        "value": 100
+      }
+    },
+    {
+      "ticker": "ON",
+      "shares": 44,
+      "entryPrice": 113.11000061035156,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 100,
+        "fundamental": 37,
+        "momentum": 100,
+        "valuation": 26.383333333333333,
+        "value": 100
+      }
+    },
+    {
+      "ticker": "CSCO",
+      "shares": 68,
+      "entryPrice": 118.20999908447266,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 100,
+        "fundamental": 49.6,
+        "momentum": 100,
+        "valuation": 28.273333333333333,
+        "value": 93
+      }
+    },
+    {
+      "ticker": "UNH",
+      "shares": 21,
+      "entryPrice": 393.8500061035156,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 89.62369479023508,
+        "fundamental": 45,
+        "momentum": 87.17876002028447,
+        "valuation": 30.916666666666668,
+        "value": 83
+      }
+    },
+    {
+      "ticker": "EW",
+      "shares": 104,
+      "entryPrice": 81.37999725341797,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 87.85515640226937,
+        "fundamental": 48.3,
+        "momentum": 82.67036277765484,
+        "valuation": 41.41166666666666,
+        "value": 45
+      }
+    },
+    {
+      "ticker": "MSCI",
+      "shares": 15,
+      "entryPrice": 561.719970703125,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 87.62881300097796,
+        "fundamental": 44.8,
+        "momentum": 0,
+        "valuation": 44.22,
+        "value": 18
+      }
+    },
+    {
+      "ticker": "V",
+      "shares": 26,
+      "entryPrice": 325.75,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 85.72170095034578,
+        "fundamental": 57.4,
+        "momentum": 24.016925784114047,
+        "valuation": 46.11,
+        "value": 43
+      }
+    },
+    {
+      "ticker": "EQIX",
+      "shares": 8,
+      "entryPrice": 1059.43994140625,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 80.07401198244973,
+        "fundamental": 29.2,
+        "momentum": 100,
+        "valuation": 35.21333333333334,
+        "value": 70
+      }
+    },
+    {
+      "ticker": "WST",
+      "shares": 26,
+      "entryPrice": 302.8900146484375,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 78.58437950017525,
+        "fundamental": 50.9,
+        "momentum": 100,
+        "valuation": 40.135,
+        "value": 85
+      }
+    },
+    {
+      "ticker": "COST",
+      "shares": 8,
+      "entryPrice": 1048.949951171875,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 78.4200591708619,
+        "fundamental": 50.6,
+        "momentum": 100,
+        "valuation": 53.42333333333334,
+        "value": 83
+      }
+    },
+    {
+      "ticker": "GOOG",
+      "shares": 21,
+      "entryPrice": 393.32000732421875,
+      "entryDate": "2026-05-16",
+      "scores": {
+        "composite": 78.22013785132616,
+        "fundamental": 54.1,
+        "momentum": 100,
+        "valuation": 32.281666666666666,
+        "value": 93
+      }
+    }
+  ],
+  "navHistory": [
+    {
+      "date": "2026-05-16",
+      "portfolioValue": 100000,
+      "spyValue": 100000
+    }
+  ],
+  "rebalanceHistory": [
+    {
+      "date": "2026-05-16",
+      "regime": "pullback",
+      "adjustedTopN": 11,
+      "effectiveTargetN": 11,
+      "compositeScoreFloor": 55,
+      "hedgeRecommendation": {
+        "action": "HOLD"
+      },
+      "sells": [],
+      "buys": [
+        {
+          "ticker": "AMD",
+          "shares": 9,
+          "buyPrice": 424.1000061035156,
+          "cost": 3816.9,
+          "scores": {
+            "composite": 100,
+            "fundamental": 39.2,
+            "momentum": 100,
+            "valuation": 23.38,
+            "value": 100
+          }
+        },
+        {
+          "ticker": "ON",
+          "shares": 44,
+          "buyPrice": 113.11000061035156,
+          "cost": 4976.84,
+          "scores": {
+            "composite": 100,
+            "fundamental": 37,
+            "momentum": 100,
+            "valuation": 26.383333333333333,
+            "value": 100
+          }
+        },
+        {
+          "ticker": "CSCO",
+          "shares": 68,
+          "buyPrice": 118.20999908447266,
+          "cost": 8038.28,
+          "scores": {
+            "composite": 100,
+            "fundamental": 49.6,
+            "momentum": 100,
+            "valuation": 28.273333333333333,
+            "value": 93
+          }
+        },
+        {
+          "ticker": "UNH",
+          "shares": 21,
+          "buyPrice": 393.8500061035156,
+          "cost": 8270.85,
+          "scores": {
+            "composite": 89.62369479023508,
+            "fundamental": 45,
+            "momentum": 87.17876002028447,
+            "valuation": 30.916666666666668,
+            "value": 83
+          }
+        },
+        {
+          "ticker": "EW",
+          "shares": 104,
+          "buyPrice": 81.37999725341797,
+          "cost": 8463.52,
+          "scores": {
+            "composite": 87.85515640226937,
+            "fundamental": 48.3,
+            "momentum": 82.67036277765484,
+            "valuation": 41.41166666666666,
+            "value": 45
+          }
+        },
+        {
+          "ticker": "MSCI",
+          "shares": 15,
+          "buyPrice": 561.719970703125,
+          "cost": 8425.8,
+          "scores": {
+            "composite": 87.62881300097796,
+            "fundamental": 44.8,
+            "momentum": 0,
+            "valuation": 44.22,
+            "value": 18
+          }
+        },
+        {
+          "ticker": "V",
+          "shares": 26,
+          "buyPrice": 325.75,
+          "cost": 8469.5,
+          "scores": {
+            "composite": 85.72170095034578,
+            "fundamental": 57.4,
+            "momentum": 24.016925784114047,
+            "valuation": 46.11,
+            "value": 43
+          }
+        },
+        {
+          "ticker": "EQIX",
+          "shares": 8,
+          "buyPrice": 1059.43994140625,
+          "cost": 8475.52,
+          "scores": {
+            "composite": 80.07401198244973,
+            "fundamental": 29.2,
+            "momentum": 100,
+            "valuation": 35.21333333333334,
+            "value": 70
+          }
+        },
+        {
+          "ticker": "WST",
+          "shares": 26,
+          "buyPrice": 302.8900146484375,
+          "cost": 7875.14,
+          "scores": {
+            "composite": 78.58437950017525,
+            "fundamental": 50.9,
+            "momentum": 100,
+            "valuation": 40.135,
+            "value": 85
+          }
+        },
+        {
+          "ticker": "COST",
+          "shares": 8,
+          "buyPrice": 1048.949951171875,
+          "cost": 8391.6,
+          "scores": {
+            "composite": 78.4200591708619,
+            "fundamental": 50.6,
+            "momentum": 100,
+            "valuation": 53.42333333333334,
+            "value": 83
+          }
+        },
+        {
+          "ticker": "GOOG",
+          "shares": 21,
+          "buyPrice": 393.32000732421875,
+          "cost": 8259.72,
+          "scores": {
+            "composite": 78.22013785132616,
+            "fundamental": 54.1,
+            "momentum": 100,
+            "valuation": 32.281666666666666,
+            "value": 93
+          }
+        }
+      ],
+      "allRankings": [
+        {
+          "ticker": "AMD",
+          "compositeScore": 100,
+          "fundamentalScore": 39.2,
+          "momentumScore": 100,
+          "valuationScore": 23.38,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 69.2414037575328
+        },
+        {
+          "ticker": "ON",
+          "compositeScore": 100,
+          "fundamentalScore": 37,
+          "momentumScore": 100,
+          "valuationScore": 26.383333333333333,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 52.325416518964914
+        },
+        {
+          "ticker": "CSCO",
+          "compositeScore": 100,
+          "fundamentalScore": 49.6,
+          "momentumScore": 100,
+          "valuationScore": 28.273333333333333,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 36.58631690889755
+        },
+        {
+          "ticker": "UNH",
+          "compositeScore": 89.62369479023508,
+          "fundamentalScore": 45,
+          "momentumScore": 87.17876002028447,
+          "valuationScore": 30.916666666666668,
+          "valueScore": 83,
+          "dcfScore": 25,
+          "earningsMomentum": 47.25865532317145
+        },
+        {
+          "ticker": "EW",
+          "compositeScore": 87.85515640226937,
+          "fundamentalScore": 48.3,
+          "momentumScore": 82.67036277765484,
+          "valuationScore": 41.41166666666666,
+          "valueScore": 45,
+          "dcfScore": 10,
+          "earningsMomentum": 47.75965969514357
+        },
+        {
+          "ticker": "MSCI",
+          "compositeScore": 87.62881300097796,
+          "fundamentalScore": 44.8,
+          "momentumScore": 0,
+          "valuationScore": 44.22,
+          "valueScore": 18,
+          "dcfScore": 10,
+          "earningsMomentum": 37.569419827484346
+        },
+        {
+          "ticker": "V",
+          "compositeScore": 85.72170095034578,
+          "fundamentalScore": 57.4,
+          "momentumScore": 24.016925784114047,
+          "valuationScore": 46.11,
+          "valueScore": 43,
+          "dcfScore": 10,
+          "earningsMomentum": 44.441687344913156
+        },
+        {
+          "ticker": "EQIX",
+          "compositeScore": 80.07401198244973,
+          "fundamentalScore": 29.2,
+          "momentumScore": 100,
+          "valuationScore": 35.21333333333334,
+          "valueScore": 70,
+          "dcfScore": 10,
+          "earningsMomentum": 52.944582299421015
+        },
+        {
+          "ticker": "WST",
+          "compositeScore": 78.58437950017525,
+          "fundamentalScore": 50.9,
+          "momentumScore": 100,
+          "valuationScore": 40.135,
+          "valueScore": 85,
+          "dcfScore": 10,
+          "earningsMomentum": 77.29055890346213
+        },
+        {
+          "ticker": "COST",
+          "compositeScore": 78.4200591708619,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 53.42333333333334,
+          "valueScore": 83,
+          "dcfScore": 10,
+          "earningsMomentum": 35.75446059317027
+        },
+        {
+          "ticker": "GOOG",
+          "compositeScore": 78.22013785132616,
+          "fundamentalScore": 54.1,
+          "momentumScore": 100,
+          "valuationScore": 32.281666666666666,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 77.26220016542598
+        }
+      ],
+      "portfolioValue": 100000,
+      "cashAfter": 16536.33,
+      "report": {
+        "periodReturn": 0,
+        "spyReturn": 0,
+        "alpha": 0,
+        "soldPerformance": [],
+        "missedOpportunities": [],
+        "factorPerformance": [],
+        "weightChanges": {
+          "previous": {
+            "momentum": 0.35294117647058826,
+            "value": 0.35294117647058826,
+            "fundamental": 0.11764705882352942,
+            "earningsMomentum": 0.17647058823529413,
+            "dcf": 0,
+            "valuation": 0
+          },
+          "new": {
+            "momentum": 0.35294117647058826,
+            "value": 0.35294117647058826,
+            "fundamental": 0.11764705882352942,
+            "earningsMomentum": 0.17647058823529413,
+            "dcf": 0,
+            "valuation": 0
+          },
+          "changes": []
+        },
+        "narrative": "Initial rebalance — no prior data to analyze. Weights set to defaults."
+      }
+    },
+    {
+      "date": "2026-05-16",
+      "regime": "pullback",
+      "adjustedTopN": 11,
+      "effectiveTargetN": 11,
+      "compositeScoreFloor": 55,
+      "hedgeRecommendation": {
+        "action": "HOLD"
+      },
+      "sells": [],
+      "buys": [],
+      "allRankings": [
+        {
+          "ticker": "AMD",
+          "compositeScore": 100,
+          "fundamentalScore": 39.2,
+          "momentumScore": 100,
+          "valuationScore": 23.38,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 69.2414037575328
+        },
+        {
+          "ticker": "KEYS",
+          "compositeScore": 100,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 28.423333333333332,
+          "valueScore": 75,
+          "dcfScore": 10,
+          "earningsMomentum": 65.40824766631219
+        },
+        {
+          "ticker": "ON",
+          "compositeScore": 100,
+          "fundamentalScore": 37,
+          "momentumScore": 100,
+          "valuationScore": 26.383333333333333,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 52.325416518964914
+        },
+        {
+          "ticker": "UNH",
+          "compositeScore": 89.62369479023508,
+          "fundamentalScore": 45,
+          "momentumScore": 87.17876002028447,
+          "valuationScore": 30.916666666666668,
+          "valueScore": 83,
+          "dcfScore": 25,
+          "earningsMomentum": 47.25865532317145
+        },
+        {
+          "ticker": "EW",
+          "compositeScore": 87.85515640226939,
+          "fundamentalScore": 48.3,
+          "momentumScore": 82.67036277765484,
+          "valuationScore": 41.41166666666666,
+          "valueScore": 45,
+          "dcfScore": 10,
+          "earningsMomentum": 47.75965969514357
+        },
+        {
+          "ticker": "MSCI",
+          "compositeScore": 87.62881300097794,
+          "fundamentalScore": 44.8,
+          "momentumScore": 0,
+          "valuationScore": 44.22,
+          "valueScore": 18,
+          "dcfScore": 10,
+          "earningsMomentum": 37.569419827484346
+        },
+        {
+          "ticker": "V",
+          "compositeScore": 85.72170095034579,
+          "fundamentalScore": 57.4,
+          "momentumScore": 24.016925784114047,
+          "valuationScore": 46.11,
+          "valueScore": 43,
+          "dcfScore": 10,
+          "earningsMomentum": 44.441687344913156
+        },
+        {
+          "ticker": "EQIX",
+          "compositeScore": 80.07401198244972,
+          "fundamentalScore": 29.2,
+          "momentumScore": 100,
+          "valuationScore": 35.21333333333334,
+          "valueScore": 70,
+          "dcfScore": 10,
+          "earningsMomentum": 52.944582299421015
+        },
+        {
+          "ticker": "WST",
+          "compositeScore": 78.58437950017525,
+          "fundamentalScore": 50.9,
+          "momentumScore": 100,
+          "valuationScore": 40.135,
+          "valueScore": 85,
+          "dcfScore": 10,
+          "earningsMomentum": 77.29055890346213
+        },
+        {
+          "ticker": "COST",
+          "compositeScore": 78.42005917086193,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 53.42333333333334,
+          "valueScore": 83,
+          "dcfScore": 10,
+          "earningsMomentum": 35.75446059317027
+        },
+        {
+          "ticker": "GOOG",
+          "compositeScore": 78.22013785132617,
+          "fundamentalScore": 54.1,
+          "momentumScore": 100,
+          "valuationScore": 32.281666666666666,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 77.26220016542598
+        }
+      ],
+      "portfolioValue": 100000,
+      "cashAfter": 16536.33,
+      "report": {
+        "periodReturn": 0,
+        "spyReturn": 0,
+        "alpha": 0,
+        "soldPerformance": [],
+        "missedOpportunities": [],
+        "factorPerformance": [],
+        "weightChanges": {
+          "previous": {
+            "fundamental": 15,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 20,
+            "value": 20,
+            "earningsMomentum": 45
+          },
+          "new": {
+            "fundamental": 8.1,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 21.6,
+            "value": 21.6,
+            "earningsMomentum": 48.6
+          },
+          "changes": [
+            {
+              "factor": "fundamental",
+              "label": "Quality",
+              "from": 15,
+              "to": 8.1,
+              "direction": "decreased"
+            },
+            {
+              "factor": "dcf",
+              "label": "DCF",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "valuation",
+              "label": "Valuation",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "momentum",
+              "label": "Momentum",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "value",
+              "label": "Value",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "earningsMomentum",
+              "label": "Earnings momentum",
+              "from": 45,
+              "to": 48.6,
+              "direction": "increased"
+            }
+          ]
+        },
+        "narrative": "Portfolio returned +0.0% vs S&P +0.0% (alpha: +0.0%). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%)."
+      }
+    },
+    {
+      "date": "2026-05-16",
+      "regime": "pullback",
+      "adjustedTopN": 11,
+      "effectiveTargetN": 11,
+      "compositeScoreFloor": 55,
+      "hedgeRecommendation": {
+        "action": "HOLD"
+      },
+      "sells": [],
+      "buys": [],
+      "allRankings": [
+        {
+          "ticker": "AMD",
+          "compositeScore": 100,
+          "fundamentalScore": 39.2,
+          "momentumScore": 100,
+          "valuationScore": 23.38,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 69.2414037575328
+        },
+        {
+          "ticker": "KEYS",
+          "compositeScore": 100,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 28.423333333333332,
+          "valueScore": 75,
+          "dcfScore": 10,
+          "earningsMomentum": 65.40824766631219
+        },
+        {
+          "ticker": "ON",
+          "compositeScore": 100,
+          "fundamentalScore": 37,
+          "momentumScore": 100,
+          "valuationScore": 26.383333333333333,
+          "valueScore": 100,
+          "dcfScore": 10,
+          "earningsMomentum": 52.325416518964914
+        },
+        {
+          "ticker": "UNH",
+          "compositeScore": 89.62369479023508,
+          "fundamentalScore": 45,
+          "momentumScore": 87.17876002028447,
+          "valuationScore": 30.916666666666668,
+          "valueScore": 83,
+          "dcfScore": 25,
+          "earningsMomentum": 47.25865532317145
+        },
+        {
+          "ticker": "EW",
+          "compositeScore": 87.85515640226937,
+          "fundamentalScore": 48.3,
+          "momentumScore": 82.67036277765484,
+          "valuationScore": 41.41166666666666,
+          "valueScore": 45,
+          "dcfScore": 10,
+          "earningsMomentum": 47.75965969514357
+        },
+        {
+          "ticker": "MSCI",
+          "compositeScore": 87.62881300097796,
+          "fundamentalScore": 44.8,
+          "momentumScore": 0,
+          "valuationScore": 44.22,
+          "valueScore": 18,
+          "dcfScore": 10,
+          "earningsMomentum": 37.569419827484346
+        },
+        {
+          "ticker": "V",
+          "compositeScore": 85.72170095034579,
+          "fundamentalScore": 57.4,
+          "momentumScore": 24.016925784114047,
+          "valuationScore": 46.11,
+          "valueScore": 43,
+          "dcfScore": 10,
+          "earningsMomentum": 44.441687344913156
+        },
+        {
+          "ticker": "EQIX",
+          "compositeScore": 80.0740119824497,
+          "fundamentalScore": 29.2,
+          "momentumScore": 100,
+          "valuationScore": 35.21333333333334,
+          "valueScore": 70,
+          "dcfScore": 10,
+          "earningsMomentum": 52.944582299421015
+        },
+        {
+          "ticker": "WST",
+          "compositeScore": 78.58437950017525,
+          "fundamentalScore": 50.9,
+          "momentumScore": 100,
+          "valuationScore": 40.135,
+          "valueScore": 85,
+          "dcfScore": 10,
+          "earningsMomentum": 77.29055890346213
+        },
+        {
+          "ticker": "COST",
+          "compositeScore": 78.42005917086189,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 53.42333333333334,
+          "valueScore": 83,
+          "dcfScore": 10,
+          "earningsMomentum": 35.75446059317027
+        },
+        {
+          "ticker": "GOOG",
+          "compositeScore": 78.22013785132616,
+          "fundamentalScore": 54.1,
+          "momentumScore": 100,
+          "valuationScore": 32.281666666666666,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 77.26220016542598
+        }
+      ],
+      "portfolioValue": 100000,
+      "cashAfter": 16536.33,
+      "report": {
+        "periodReturn": 0,
+        "spyReturn": 0,
+        "alpha": 0,
+        "soldPerformance": [],
+        "missedOpportunities": [],
+        "factorPerformance": [],
+        "weightChanges": {
+          "previous": {
+            "fundamental": 15,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 20,
+            "value": 20,
+            "earningsMomentum": 45
+          },
+          "new": {
+            "fundamental": 8.1,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 21.6,
+            "value": 21.6,
+            "earningsMomentum": 48.6
+          },
+          "changes": [
+            {
+              "factor": "fundamental",
+              "label": "Quality",
+              "from": 15,
+              "to": 8.1,
+              "direction": "decreased"
+            },
+            {
+              "factor": "dcf",
+              "label": "DCF",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "valuation",
+              "label": "Valuation",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "momentum",
+              "label": "Momentum",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "value",
+              "label": "Value",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "earningsMomentum",
+              "label": "Earnings momentum",
+              "from": 45,
+              "to": 48.6,
+              "direction": "increased"
+            }
+          ]
+        },
+        "narrative": "Portfolio returned +0.0% vs S&P +0.0% (alpha: +0.0%). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%)."
+      }
+    }
+  ],
   "recentSells": {},
   "createdAt": "2026-05-15",
-  "lastRebalance": null,
-  "lastNavUpdate": null
+  "lastRebalance": "2026-05-16",
+  "lastNavUpdate": "2026-05-16",
+  "_spyStartPrice": 739.17,
+  "lastRebalanceRegime": "pullback"
 }
