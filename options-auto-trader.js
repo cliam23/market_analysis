@@ -230,6 +230,24 @@ async function submitBuyToClose(accountId, underlying, optionSymbol, quantity, l
   });
 }
 
+/**
+ * Buy-to-close an open short option leg. Returns mock order if TOKEN missing.
+ */
+export async function closeShortOptionLeg({ ticker, optionSymbol, quantity = 1, limitPrice }) {
+  const t = String(ticker || '').trim().toUpperCase();
+  const sym = String(optionSymbol || '').trim();
+  const qty = Math.max(1, parseInt(String(quantity), 10) || 1);
+  const px = Number(limitPrice);
+  if (!t || !sym || !Number.isFinite(px)) throw new Error('Invalid closeShortOptionLeg args');
+
+  if (!TOKEN) {
+    return { mode: 'mock', order: { id: 'DRY_RUN', status: 'dry_run' }, limitPrice: px };
+  }
+  const accountId = await getSandboxAccountId();
+  const order = await submitBuyToClose(accountId, t, sym, qty, px);
+  return { mode: 'sandbox', accountId, order, limitPrice: px };
+}
+
 export async function openShortOptionLeg({ ticker, optionSymbol, quantity = 1, limitPrice }) {
   const t = String(ticker || '').toUpperCase();
   const sym = String(optionSymbol || '').trim();
