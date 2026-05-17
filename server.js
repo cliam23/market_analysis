@@ -6900,27 +6900,43 @@ function getCongressScore(ticker) {
  * @param {string} asOfDate  - ISO date string "YYYY-MM-DD"
  * @param {number} window    - trading days to use (default 30)
  */
-function getRollingHV(ticker, asOfDate, window = 30) {
-  try {
-    const root = String(ticker || '').trim().toUpperCase();
-    if (!root || !asOfDate) return null;
-    const cachePath = path.join(REPO_ROOT, '.cache', 'yahoo', `${root}.json`);
-    if (!existsSync(cachePath)) return null;
+// Shared helper: load the daily closing-price series for a ticker from disk cache.
+// Returns null if no usable cache exists.
+//
+// The Yahoo chart cache is stored as `.cache/yahoo/{TICKER}-chart.json` with shape
+// `{ data: [{date, open, high, low, close}, ...], fetchedAt }`.
+// We also fall back to the legacy `{TICKER}.json` shape (which may carry `.prices`,
+// `.history`, or just `.data` as the rows).
+function _loadCachedDailyCloses(ticker) {
+  const root = String(ticker || '').trim().toUpperCase();
+  if (!root) return [];
 
-    const raw = JSON.parse(readFileSync(cachePath, 'utf8'));
+  const candidates = [
+    path.join(REPO_ROOT, '.cache', 'yahoo', `${root}-chart.json`),
+    path.join(REPO_ROOT, '.cache', 'yahoo', `${root}.json`)
+  ];
 
-    // Normalize to array of {date, close} sorted ascending
+  for (const fp of candidates) {
+    if (!existsSync(fp)) continue;
+    let raw;
+    try { raw = JSON.parse(readFileSync(fp, 'utf8')); } catch { continue; }
+
+    // Inner array can live at .data, .prices, or .history; .data can also be a
+    // fundamentals object (legacy bare .json) — we ignore those.
+    const inner = raw?.data ?? raw?.prices ?? raw?.history ?? null;
     let prices = [];
-    if (Array.isArray(raw.prices)) {
-      prices = raw.prices
+    if (Array.isArray(inner)) {
+      prices = inner
         .filter((p) => p && p.date && (p.close ?? p.adjClose ?? p.price) != null)
         .map((p) => ({
           date: String(p.date).split('T')[0],
           close: Number(p.close ?? p.adjClose ?? p.price)
         }))
         .filter((p) => Number.isFinite(p.close) && p.close > 0);
-    } else if (raw.history && typeof raw.history === 'object') {
-      prices = Object.entries(raw.history)
+    } else if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      // history-as-map: { "2024-01-02": {close: 188.4, ...}, ... }
+      prices = Object.entries(inner)
+        .filter(([k, v]) => /^\d{4}-\d{2}-\d{2}/.test(k) && v != null)
         .map(([date, data]) => ({
           date,
           close:
@@ -6930,10 +6946,19 @@ function getRollingHV(ticker, asOfDate, window = 30) {
         }))
         .filter((p) => Number.isFinite(p.close) && p.close > 0);
     }
+    if (prices.length > 0) return prices.sort((a, b) => a.date.localeCompare(b.date));
+  }
+  return [];
+}
+
+function getRollingHV(ticker, asOfDate, window = 30) {
+  try {
+    if (!asOfDate) return null;
+    let prices = _loadCachedDailyCloses(ticker);
+    if (prices.length === 0) return null;
 
     prices = prices
       .filter((p) => p.date <= asOfDate)
-      .sort((a, b) => a.date.localeCompare(b.date))
       .slice(-(window + 1)); // need window+1 prices to compute window returns
 
     if (prices.length < window + 1) return null;
@@ -6974,32 +6999,11 @@ function getRollingHV(ticker, asOfDate, window = 30) {
  */
 function getPriceArray(ticker, asOf, n) {
   try {
-    const root = String(ticker || '').trim().toUpperCase();
-    if (!root || !asOf) return null;
-    const cachePath = path.join(REPO_ROOT, '.cache', 'yahoo', `${root}.json`);
-    if (!existsSync(cachePath)) return null;
+    if (!asOf) return null;
+    let prices = _loadCachedDailyCloses(ticker);
+    if (prices.length === 0) return null;
 
-    const raw = JSON.parse(readFileSync(cachePath, 'utf8'));
-    let prices = [];
-    if (Array.isArray(raw.prices)) {
-      prices = raw.prices
-        .filter((p) => p && p.date && (p.close ?? p.adjClose ?? p.price) != null)
-        .map((p) => ({ date: String(p.date).split('T')[0], close: Number(p.close ?? p.adjClose ?? p.price) }))
-        .filter((p) => Number.isFinite(p.close) && p.close > 0);
-    } else if (raw.history && typeof raw.history === 'object') {
-      prices = Object.entries(raw.history)
-        .map(([date, data]) => ({
-          date,
-          close: typeof data === 'number' ? Number(data) : Number(data?.close ?? data?.adjClose ?? data?.price)
-        }))
-        .filter((p) => Number.isFinite(p.close) && p.close > 0);
-    }
-
-    prices = prices
-      .filter((p) => p.date <= asOf)
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .slice(-n);
-
+    prices = prices.filter((p) => p.date <= asOf).slice(-n);
     return prices.length >= Math.floor(n * 0.8) ? prices.map((p) => p.close) : null;
   } catch { return null; }
 }
@@ -12439,7 +12443,7 @@ function computeDashboardPortfolioCard(portfolio) {
   if (sum && Number.isFinite(Number(sum.totalValue))) {
     totalValue = Number(sum.totalValue);
   }
-  
+
   if (totalValue == null || !Number.isFinite(Number(totalValue))) {
     let tv = nav?.portfolioValue;
     if (tv == null || !Number.isFinite(Number(tv))) {

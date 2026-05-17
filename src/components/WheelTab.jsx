@@ -719,7 +719,7 @@ export default function WheelTab({
               <div className="ma-pro-stat" style={{ "--pro-stat-accent": "var(--text-secondary)" }}>
                 <div className="ma-pro-stat__label">Open legs</div>
                 <div className="ma-pro-stat__val">{String(summary.optionsOpenLegs ?? 0)}</div>
-                <div className="ma-pro-stat__sub">of 5 slots</div>
+                <div className="ma-pro-stat__sub">of {status?.config?.maxWheelPositions ?? 8} slots</div>
               </div>
               <div className="ma-pro-stat" style={{ "--pro-stat-accent": openPnl >= 0 ? "var(--green)" : "var(--red)" }}>
                 <div className="ma-pro-stat__label">Open P&L</div>
