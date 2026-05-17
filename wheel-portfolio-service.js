@@ -37,7 +37,12 @@ export const WHEEL_CONFIG = {
   // Soft caps: select up to maxWheelPositions, but blend CC/CSP rather than fill CCs first.
   // After blending by score, reserve at most maxCCFrac of slots for CCs (so CSPs always
   // compete on the merits of their EV/sellScore in non-bearish regimes).
-  maxCCFrac:         0.625
+  maxCCFrac:         0.625,
+  // Reject any opp with EV worse than this (post-credit, in dollars). Set to null to
+  // disable the gate. Defaults to 0 so we never knowingly open a negative-EV trade.
+  minEV:             0,
+  // Require IV rank ≥ this to avoid selling vol when it's too cheap.
+  minIVRank:         35
 };
 
 function portfolioPath() {
@@ -158,6 +163,10 @@ export function selectWheelTargets(paperHoldings, opportunities, existingLegs, r
     if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) continue;
     if (WHEEL_CONFIG.minSellScore > 0 && o.sellScore != null && o.sellScore < WHEEL_CONFIG.minSellScore) continue;
     if (WHEEL_CONFIG.minSignalCount > 1 && o.signalCount != null && o.signalCount < WHEEL_CONFIG.minSignalCount) continue;
+    // EV gate: reject knowingly negative-EV trades when the scanner has produced a number.
+    if (WHEEL_CONFIG.minEV != null && o.ev != null && Number(o.ev) < WHEEL_CONFIG.minEV) continue;
+    // IV-rank floor: don't sell premium when implied vol is too cheap.
+    if (WHEEL_CONFIG.minIVRank > 0 && o.ivRank != null && Number(o.ivRank) < WHEEL_CONFIG.minIVRank) continue;
 
     if (o.strategy === 'COVERED_CALL') {
       if (!regimeAllowsCC) continue;
