@@ -28,12 +28,17 @@ export const WHEEL_CONFIG = {
   regimeAllowsCC: ['strong_bull', 'normal', 'pullback'],
   regimeClosesAll: ['bear'],
   // ── Three-paper academic signal thresholds ──────────────────────────────
-  // Lower than auto-trader (wheel uses longer horizons, equity quality matters too)
-  minSellScore:      0.30,
+  // Use real signal values now that the cache is wired. 0.35 keeps us off
+  // the "all-fallback 0.49" floor and demands at least a real positive read.
+  minSellScore:      0.35,
   // Never sell CCs/CSPs when realized vol > implied vol (Goyal & Saretto)
   blockCheapOptions: true,
-  // Require at least 1 positive paper signal (relaxed vs auto-trader's 2)
-  minSignalCount:    1,
+  // Require at least 2 of 3 papers aligned (G&S, C&H, B&K). Single-signal
+  // entries were the bulk of the prior losing trades.
+  minSignalCount:    2,
+  // CSP quality floor: only sell puts on names we'd actually want to own if
+  // assigned. compositeScore must be ≥ this. (CC floor stays at scoreFloor.)
+  cspCompositeFloor: 70,
   // Soft caps: select up to maxWheelPositions, but blend CC/CSP rather than fill CCs first.
   // After blending by score, reserve at most maxCCFrac of slots for CCs (so CSPs always
   // compete on the merits of their EV/sellScore in non-bearish regimes).
@@ -184,7 +189,10 @@ export function selectWheelTargets(paperHoldings, opportunities, existingLegs, r
       // CSP only on tickers we DON'T already own
       if (held.has(t)) continue;
       const eqScore = Number(o.compositeScore ?? 0) || 0;
-      if (eqScore > 0 && eqScore < WHEEL_CONFIG.scoreFloor) continue;
+      // CSP has its own higher quality floor: we MUST be happy owning this name
+      // if assigned. Wheel philosophy = "sell puts on stocks you want to own."
+      const cspFloor = Math.max(WHEEL_CONFIG.scoreFloor, WHEEL_CONFIG.cspCompositeFloor || 0);
+      if (eqScore > 0 && eqScore < cspFloor) continue;
       cspCandidates.push({ t, opp: o, score: rankWheelOpp(o, eqScore), eqScore });
     }
   }
