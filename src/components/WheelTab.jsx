@@ -577,6 +577,14 @@ export default function WheelTab({
     return legs.reduce((s, l) => s + (Number(l.currentPnL) || 0), 0);
   }, [legs]);
 
+  // Total NAV = equity book + realized options P&L + open options MTM.
+  // This is the true "money I have" including everything.
+  const totalNav = useMemo(() => {
+    const eq = Number(summary?.equityTotalValue) || 0;
+    const opt = Number(summary?.optionsPnl) || 0;
+    return eq + opt + (Number(openPnl) || 0);
+  }, [summary?.equityTotalValue, summary?.optionsPnl, openPnl]);
+
   // Derive the most-recently-seen bkRegimeBoost from open legs (set at entry time)
   const bkBoostDisplay = useMemo(() => {
     const fromLeg = legs.map((l) => l.bkRegimeBoost).find((v) => v != null);
@@ -688,9 +696,9 @@ export default function WheelTab({
             >
               {/* Row 1 */}
               <div className="ma-pro-stat" style={{ "--pro-stat-accent": "var(--blue)" }}>
-                <div className="ma-pro-stat__label">Paper NAV</div>
-                <div className="ma-pro-stat__val" style={{ color: "var(--blue)" }}>{fmtMoney(summary.equityTotalValue)}</div>
-                <div className="ma-pro-stat__sub">{book.label}</div>
+                <div className="ma-pro-stat__label">Total NAV</div>
+                <div className="ma-pro-stat__val" style={{ color: "var(--blue)" }}>{fmtMoney(totalNav)}</div>
+                <div className="ma-pro-stat__sub">{book.label} · stocks + options</div>
               </div>
               <div className="ma-pro-stat" style={{ "--pro-stat-accent": "#38bdf8" }}>
                 <div className="ma-pro-stat__label">Portfolio return</div>
@@ -785,18 +793,21 @@ export default function WheelTab({
             <span>9:35 AM + 2:45 PM ET schedule</span>
           </div>
         )}
-        <div className="ma-wheel-explainer" role="region" aria-label="Equity value vs wheel profits">
-          <p className="ma-wheel-explainer__title">Equity value is not your wheel "take-home"</p>
+        <div className="ma-wheel-explainer" role="region" aria-label="Total NAV breakdown">
+          <p className="ma-wheel-explainer__title">How "Total NAV" is calculated</p>
           <p style={{ margin: "0 0 8px" }}>
-            <strong style={{ color: "var(--text-primary)" }}>Paper NAV</strong> is the total market value of stocks + cash. It moves with the market and rebalances —{" "}
-            <strong style={{ color: "var(--text-primary)" }}>not cumulative options profit</strong>.
+            <strong style={{ color: "var(--text-primary)" }}>Total NAV</strong> = equity book value{" "}
+            <span className="ma-mono">+</span> realized options P&L{" "}
+            <span className="ma-mono">+</span> open-option mark-to-market. It's the real "money I have right now" including everything.
           </p>
           <p style={{ margin: "0 0 8px" }}>
-            Wheel income shows in <span className="ma-mono">Premium collected</span>,{" "}
-            <span className="ma-mono">Options P&L</span>, and <span className="ma-mono">Open P&L</span>.
+            Wheel activity is broken out in <span className="ma-mono">Premium collected</span>{" "}
+            (lifetime gross sales — does not decrease on buybacks),{" "}
+            <span className="ma-mono">Options P&L</span> (net realized on closed legs), and{" "}
+            <span className="ma-mono">Open P&L</span> (theta + IV move on currently held legs).
           </p>
           <p style={{ margin: 0 }}>
-            <strong style={{ color: "var(--text-primary)" }}>Combined P&L</strong> blends equity performance with options overlay; use the options lines to isolate premium selling results.
+            <strong style={{ color: "var(--text-primary)" }}>Combined P&L</strong> = equity gain since inception + options P&L, isolating the dollar performance of the strategy.
           </p>
         </div>
         <p className="ma-opt-footnote">Educational tool · Not financial advice</p>
