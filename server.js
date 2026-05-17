@@ -14870,10 +14870,16 @@ async function computeOptionsScan(universeIdRaw) {
         const ccPrem = ccMid;
         const ccStrike = Number(cc.strike) || 0;
         const ccCp = Number(price) || ccStrike;
+        // Covered-call EV: if assigned, we forfeit upside above strike. Expected upside
+        // truncation ≈ premium × 1.0 for a delta-30 call (≈ break-even on tail-driven
+        // outcomes). Net:
+        //   EV = premium × 100 × (1 − 2 × probITM)
+        // Same shape as CSP but with a smaller multiplier because keeping the share
+        // value up to strike is already a partial recovery.
+        const ccLossMult = 1.0;
         const ccEv =
-          ccPrem > 0
-            ? (ccProbOTM * (ccPrem * 100)) -
-              (ccProbITM * (Math.max(0, ccCp - ccStrike) * 100))
+          ccPrem > 0 && Number.isFinite(ccProbITM)
+            ? ccPrem * 100 * (1 - (1 + ccLossMult) * ccProbITM)
             : null;
         const ccHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
         const ccIvNum = cc.iv != null && Number.isFinite(Number(cc.iv)) ? Number(cc.iv) : null;
@@ -14981,13 +14987,19 @@ async function computeOptionsScan(universeIdRaw) {
         const discount = ((Number(price) - effectiveCost) / Number(price)) * 100;
         const cspDeltaAbs = Math.abs(Number(csp.delta) || 0.25);
         const cspProbITM = cspDeltaAbs;
-        const cspProbOTM = 1 - cspProbITM;
         const cspPrem = cspMid;
         const cspStrike = Number(csp.strike) || 0;
+        // Correct short-put EV: breakeven = strike − premium. If assigned, expected
+        // drawdown below breakeven ≈ 1.5× premium for a delta-25 put (typical 27-DTE
+        // log-normal tail). So
+        //   EV = premium × 100 × (1 − 2.5 × probITM)
+        // which yields realistic numbers (positive for selective trades, negative for
+        // deep / over-priced strikes). The old formula treated strike − premium as
+        // the total loss which produced absurd −$26k EVs.
+        const cspLossMult = 1.5;
         const cspEv =
-          cspPrem > 0
-            ? (cspProbOTM * (cspPrem * 100)) -
-              (cspProbITM * (Math.max(0, cspStrike - cspPrem) * 100))
+          cspPrem > 0 && Number.isFinite(cspProbITM)
+            ? cspPrem * 100 * (1 - (1 + cspLossMult) * cspProbITM)
             : null;
         const cspHv30 = getRollingHV(ticker, today, 30) ?? bt_volatilityFromPrices((priceHistory[ticker] || []).slice(-31));
         const cspIvNum = csp.iv != null && Number.isFinite(Number(csp.iv)) ? Number(csp.iv) : null;
@@ -15621,11 +15633,24 @@ app.post('/api/wheel/run', async (req, res) => {
     const snap = await paperPortfolioSnapshot(universeId);
     const regime = String(req.body?.regime ?? snap.regime ?? 'normal').toLowerCase();
 
+    // Pre-scan so we can refresh academic signals on EXISTING legs (not just
+    // entries) — the UI grade tracks live G&S/IVOL/VRP instead of stale snapshots.
+    const scan = await computeOptionsScan(universeId);
+    const signalMap = new Map();
+    for (const o of scan.opportunities || []) {
+      const t = String(o.ticker || '').toUpperCase();
+      if (!t) continue;
+      const prev = signalMap.get(t);
+      if (!prev || (Number(o.sellScore) || 0) > (Number(prev.sellScore) || 0)) {
+        signalMap.set(t, o);
+      }
+    }
+
     // ── Phase 1: manage existing legs ─────────────────────────────────────
     if (WHEEL_CONFIG.regimeClosesAll.includes(regime)) {
       // still let manageOptionLegsOnce handle closing logic (bear override included)
     }
-    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime);
+    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime, { signalMap });
     const remaining = mgmt.positions || [];
     const closed = mgmt.actions?.closed || [];
     wheel.optionsLegs = remaining;
@@ -15646,7 +15671,7 @@ app.post('/api/wheel/run', async (req, res) => {
     }
 
     // ── Phase 2: open new legs from scanner targets ───────────────────────
-    const scan = await computeOptionsScan(universeId);
+    // (scan computed above for signal refresh; reuse it here.)
     const targets = selectWheelTargets(snap.holdings || [], scan.opportunities || [], wheel.optionsLegs || [], regime);
 
     const opened = [];
@@ -15748,8 +15773,21 @@ app.post('/api/wheel/optimize', async (req, res) => {
     const nowIso = new Date().toISOString();
     const actions = { closed: [], replaced: [], opened: [], errors: [] };
 
-    // ── Phase 1: standard management (profit target / DTE / bear) ─────────
-    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime);
+    // Compute scan FIRST so manageOptionLegsOnce can refresh academic signals
+    // on currently-held legs (UI grade reflects live signal state, not entry-time).
+    const scan = await computeOptionsScan(universeId);
+    const signalMap = new Map();
+    for (const o of scan.opportunities || []) {
+      const t = String(o.ticker || '').toUpperCase();
+      if (!t) continue;
+      const prev = signalMap.get(t);
+      if (!prev || (Number(o.sellScore) || 0) > (Number(prev.sellScore) || 0)) {
+        signalMap.set(t, o);
+      }
+    }
+
+    // ── Phase 1: standard management (profit target / DTE / bear / stop-loss / signal-reversal) ─────────
+    const mgmt = await manageOptionLegsOnce(wheel.optionsLegs || [], regime, { signalMap });
     let remaining = mgmt.positions || [];
     for (const c of (mgmt.actions?.closed || [])) {
       const pnl = Number(c.pnl) || 0;
@@ -15762,7 +15800,7 @@ app.post('/api/wheel/optimize', async (req, res) => {
     wheel.optionsLegs = remaining;
 
     // ── Phase 2: fresh scan ────────────────────────────────────────────────
-    const scan = await computeOptionsScan(universeId);
+    // (scan computed above for signal refresh; reuse it here.)
     const scanOpps = scan.opportunities || [];
 
     // Build a quick lookup: best-EV scan opportunity per ticker

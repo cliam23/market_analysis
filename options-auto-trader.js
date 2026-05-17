@@ -33,6 +33,10 @@ const AUTO_CONFIG = {
   profitTarget: 0.5,
   dteCloseThreshold: 21,
   bearRegimeClose: true,
+  // Stop-loss: close if mark goes above this multiple of entry credit. Capping
+  // losses at ≈2.5× premium has the largest single impact on long-run wheel
+  // outcomes — without it a COST-style runaway costs months of premium.
+  stopLossMult: 2.5,
   // Which regimes allow opening NEW positions per strategy
   regimeAllowOpen: {
     COVERED_CALL: ['strong_bull', 'normal', 'pullback'],
@@ -241,10 +245,51 @@ export async function openShortOptionLeg({ ticker, optionSymbol, quantity = 1, l
   return { mode: 'sandbox', accountId, order, limitPrice: px };
 }
 
-export async function manageOptionLegsOnce(openLegs, currentRegime) {
+/**
+ * Manage open option legs: refresh quotes & academic signals, then decide close vs. keep.
+ *
+ * @param {Array<object>} openLegs    - persisted open positions
+ * @param {string}        currentRegime
+ * @param {object} [opts]
+ * @param {Map<string,object>} [opts.signalMap]
+ *        Map of ticker → live opportunity row (from latest computeOptionsScan).
+ *        When supplied, every leg's academic fields (sellScore, signalCount,
+ *        gsSignal, gsSellEdge, ivolPct, vrpIntensity, ivPremium, regimeBoost,
+ *        bkRegimeBoost) are rewritten on the kept leg so the UI grade tracks
+ *        current truth instead of entry-time snapshots.
+ */
+export async function manageOptionLegsOnce(openLegs, currentRegime, opts = {}) {
   const legs = Array.isArray(openLegs) ? openLegs : [];
   const nowIso = new Date().toISOString();
   const actions = { closed: [], errors: [], kept: [] };
+  const sigMap = opts.signalMap instanceof Map ? opts.signalMap : null;
+
+  // Pull live academic signals onto the kept leg so persisted snapshots refresh.
+  const applyLiveSignals = (leg) => {
+    if (!sigMap) return leg;
+    const t = String(leg?.ticker || '').toUpperCase();
+    const live = sigMap.get(t);
+    if (!live) return leg;
+    return {
+      ...leg,
+      // EV refreshes too — old broken formula left -$26k snapshots that distort
+      // every UI panel that aggregates EV.
+      ev:               (live.ev != null) ? live.ev : leg.ev,
+      sellScore:        live.sellScore        ?? leg.sellScore        ?? null,
+      signalCount:      live.signalCount      ?? leg.signalCount      ?? null,
+      academicSellEdge: live.academicSellEdge ?? leg.academicSellEdge ?? null,
+      gsSignal:         live.gsSignal         ?? leg.gsSignal         ?? null,
+      gsNorm:           live.gsNorm           ?? leg.gsNorm           ?? null,
+      gsSellEdge:       live.gsSellEdge       ?? leg.gsSellEdge       ?? null,
+      gsInterpretation: live.gsInterpretation ?? leg.gsInterpretation ?? null,
+      vrpIntensity:     live.vrpIntensity     ?? leg.vrpIntensity     ?? null,
+      ivPremium:        live.ivPremium        ?? leg.ivPremium        ?? null,
+      regimeBoost:      live.regimeBoost      ?? leg.regimeBoost      ?? null,
+      bkRegimeBoost:    live.bkRegimeBoost    ?? leg.bkRegimeBoost    ?? null,
+      ivolPct:          live.ivolPct          ?? leg.ivolPct          ?? null,
+      ivolRaw:          live.ivolRaw          ?? leg.ivolRaw          ?? null
+    };
+  };
 
   if (!TOKEN) {
     // In dry-run, just compute what would close based on existing mark/currentPremium if present.
@@ -277,9 +322,10 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
       actions.errors.push({ symbol: pos?.optionSymbol ?? 'unknown', stage: 'quote', error: qe.message || String(qe) });
     }
 
-    const enriched = mtmOk
+    const baseEnriched = mtmOk
       ? { ...pos, currentMark: mark, currentDTE: dte, currentPnL: pnl, currentPnLPct: pnlPct }
       : { ...pos };
+    const enriched = applyLiveSignals(baseEnriched);
 
     if (!mtmOk) {
       remaining.push(enriched);
@@ -298,8 +344,20 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
       AUTO_CONFIG.bearRegimeClose === true && currentRegime === 'bear' && pos.strategy !== 'REGIME_HEDGE';
     const closeAtCautionStop =
       currentRegime === 'caution' && isSeller && pnlPct < -AUTO_CONFIG.cautionStopPct;
+    // Hard stop-loss for sellers: mark above stopLossMult × entry credit.
+    const closeAtStopLoss =
+      isSeller && AUTO_CONFIG.stopLossMult > 0 && entry > 0 &&
+      mark >= entry * AUTO_CONFIG.stopLossMult;
+    // Academic-signal kill switch: live G&S says don't sell this name anymore
+    // (realized vol now exceeds implied → options are cheap), and we're past
+    // the half-life of the trade. Lock in whatever premium decay we got.
+    const liveGsBad = enriched.gsSellEdge === false;
+    const halfLifeReached = dte != null && pos.dte && dte <= Math.max(7, pos.dte / 2);
+    const closeAtSignalReversal = isSeller && liveGsBad && halfLifeReached && pnl > 0;
 
-    const shouldClose = closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop;
+    const shouldClose =
+      closeAtProfit || closeAtDte || closeAtBear || closeAtCautionStop ||
+      closeAtStopLoss || closeAtSignalReversal;
     if (!shouldClose) {
       remaining.push(enriched);
       actions.kept.push(enriched);
@@ -308,11 +366,15 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
 
     const reason = closeAtBear
       ? 'bear regime override'
-      : closeAtCautionStop
-        ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
-        : closeAtProfit
-          ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
-          : '21 DTE threshold';
+      : closeAtStopLoss
+        ? `stop-loss: mark ${mark.toFixed(2)} ≥ ${AUTO_CONFIG.stopLossMult}× entry (${entry.toFixed(2)})`
+        : closeAtCautionStop
+          ? `caution regime stop: position down ${(pnlPct * 100).toFixed(1)}%`
+          : closeAtSignalReversal
+            ? `G&S signal reversal: realized vol > implied (locking +${(pnlPct*100).toFixed(1)}%)`
+            : closeAtProfit
+              ? `${Math.round(activeTarget * 100)}% profit target (regime: ${currentRegime})`
+              : '21 DTE threshold';
 
     try {
       const limit = Math.max(0.01, mark + 0.05);
@@ -326,7 +388,8 @@ export async function manageOptionLegsOnce(openLegs, currentRegime) {
         closedAt: nowIso
       });
     } catch (ce) {
-      // Close failed — keep the leg with FRESH MTM so it's visible & retried next run.
+      // Close failed — keep the leg with FRESH MTM + live signals so it's
+      // visible and retried next run.
       remaining.push(enriched);
       actions.kept.push(enriched);
       actions.errors.push({
