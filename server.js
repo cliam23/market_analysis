@@ -36,7 +36,7 @@ import {
   TOTAL_STATES
 } from './q-learning-agent.js';
 import { DQNAgent, computeRlReward as computeDqnReward } from './dqn-agent.js';
-import { runAutoTrader, getAutoPortfolio, openShortOptionLeg, manageOptionLegsOnce } from './options-auto-trader.js';
+import { runAutoTrader, getAutoPortfolio, openShortOptionLeg, closeShortOptionLeg, manageOptionLegsOnce } from './options-auto-trader.js';
 import {
   getOptionsChain,
   getIvRank,
@@ -14838,18 +14838,40 @@ async function computeOptionsScan(universeIdRaw) {
     const ivRank = await getIvRank(ticker);
     const chain = await getOptionsChain(ticker, Number(price), null, { liveChainMode: 'single' });
 
-    if (compositeScore >= 52 && compositeScore <= 78 && ivRank >= 40) {
+    // CC band widened: 52..85 (was 52..78). The upper bound of 78 was excluding
+    // strong-quality names (80-85 comp) on which we'd be perfectly happy to sell
+    // an OTM CC. Above 85 we still won't risk losing prime winners.
+    if (compositeScore >= 52 && compositeScore <= 85 && ivRank >= 40) {
       scanPassedCcScore++;
+      // Pick the BEST strike by expected dollars kept, not highest raw premium:
+      //   keepValue = mid × (1 − probITM) − costOfCapAdjustment
+      //   capRoc    = (mid / strike) × (365 / dte)   ← annualized return on capital
+      // Final score blends keepValue with capRoc to balance absolute $ vs efficiency.
       const ccCandidates = chain
         .filter(
           (o) =>
             o.type === 'call' &&
             o.dte >= 25 &&
             o.dte <= 50 &&
-            o.delta >= 0.2 &&
-            o.delta <= 0.35
+            o.delta >= 0.18 &&
+            o.delta <= 0.32
         )
-        .sort((a, b) => b.mid - a.mid);
+        .map((o) => {
+          const m = Number(o.bid) > 0 && Number(o.ask) > 0
+            ? (Number(o.bid) + Number(o.ask)) / 2
+            : Number(o.mid) || Number(o.last) || 0;
+          const probITM = Math.abs(Number(o.delta) || 0.25);
+          const strike = Number(o.strike) || 1;
+          const keepEV = m * (1 - 2 * probITM) * 100; // matches new ccEv formula
+          const capRoc = (m / strike) * (365 / Math.max(1, o.dte));
+          // Combined ranking score: dollar EV is primary, ROC is a tie-breaker.
+          // We also lightly penalize over-delta (>0.30) and under-delta (<0.20) which
+          // sit outside the academically-supported short-premium sweet spot.
+          const deltaSweetspot = probITM >= 0.20 && probITM <= 0.30 ? 1.0 : 0.85;
+          return { ...o, _mid: m, _score: keepEV * deltaSweetspot + capRoc * 100 };
+        })
+        .filter((o) => o._mid > 0 && o._score > 0)
+        .sort((a, b) => b._score - a._score);
       if (ccCandidates.length > 0) {
         scanPassedCcIvr++;
         const cc = ccCandidates[0];
@@ -14961,16 +14983,32 @@ async function computeOptionsScan(universeIdRaw) {
 
     if (compositeScore >= 68 && ivRank >= 35) {
       scanPassedCspScore++;
+      // Pick the BEST CSP strike using academic-edge-weighted EV instead of max mid.
+      // Sweet spot for short puts is delta -0.20 to -0.25 (high keep prob, decent premium).
       const cspCandidates = chain
         .filter(
           (o) =>
             o.type === 'put' &&
-            o.dte >= 20 &&
-            o.dte <= 45 &&
-            o.delta >= -0.3 &&
+            o.dte >= 22 &&
+            o.dte <= 42 &&
+            o.delta >= -0.28 &&
             o.delta <= -0.15
         )
-        .sort((a, b) => b.mid - a.mid);
+        .map((o) => {
+          const m = Number(o.bid) > 0 && Number(o.ask) > 0
+            ? (Number(o.bid) + Number(o.ask)) / 2
+            : Number(o.mid) || Number(o.last) || 0;
+          const probITM = Math.abs(Number(o.delta) || 0.25);
+          const strike = Number(o.strike) || 1;
+          const keepEV = m * (1 - 2.5 * probITM) * 100; // matches new cspEv formula
+          // Capital efficiency: a CSP needs (strike × 100) capital to be cash-secured.
+          const capRoc = (m / strike) * (365 / Math.max(1, o.dte));
+          // Sweet-spot bonus around delta -0.20 to -0.25
+          const deltaSweetspot = probITM >= 0.18 && probITM <= 0.26 ? 1.0 : 0.85;
+          return { ...o, _mid: m, _score: keepEV * deltaSweetspot + capRoc * 100 };
+        })
+        .filter((o) => o._mid > 0 && o._score > 0)
+        .sort((a, b) => b._score - a._score);
       if (cspCandidates.length > 0) {
         const csp = cspCandidates[0];
         const cspBid = Number(csp.bid) || 0;
@@ -15759,6 +15797,168 @@ app.post('/api/wheel/run', async (req, res) => {
 });
 
 
+// ── Wheel Reset ─────────────────────────────────────────────────────────────
+// Force-closes every open leg at the current market mark, books realized P&L,
+// and (optionally) immediately repopulates with high-conviction picks. Used
+// after algorithm upgrades to flush "broken-era" legs that no longer score well.
+app.post('/api/wheel/reset', async (req, res) => {
+  try {
+    const repopulate = req.body?.repopulate !== false; // default true
+    const universeId = String(req.body?.universeId ?? 'sp500_top50').trim();
+    const wheel = loadWheelPortfolio();
+    const initialOpenCount = (wheel.optionsLegs || []).length;
+    const closed = [];
+    const errors = [];
+    const nowIso = new Date().toISOString();
+
+    for (const leg of [...(wheel.optionsLegs || [])]) {
+      try {
+        // Mark-to-market at current bid/ask
+        let mark = Number(leg.currentMark ?? leg.entryCredit) || 0;
+        try {
+          const { getOptionQuote } = await import('./options-auto-trader.js');
+          const q = await getOptionQuote(leg.optionSymbol);
+          if (q && Number.isFinite(q.mid) && q.mid > 0) mark = q.mid;
+        } catch (_) {}
+        const closeLimit = Math.max(0.01, mark + 0.05);
+        const closeResp = await closeShortOptionLeg({
+          ticker: leg.ticker,
+          optionSymbol: leg.optionSymbol,
+          quantity: leg.quantity ?? 1,
+          limitPrice: closeLimit
+        }).catch((e) => { errors.push({ ticker: leg.ticker, error: String(e.message || e) }); return null; });
+
+        const qty = leg.quantity ?? 1;
+        const pnl = (Number(leg.entryCredit || 0) - mark) * 100 * qty;
+        wheel.closedLegs = wheel.closedLegs || [];
+        wheel.closedLegs.push({
+          symbol: leg.optionSymbol,
+          ticker: leg.ticker,
+          legType: leg.legType,
+          strike: leg.strike,
+          quantity: qty,
+          entryCredit: leg.entryCredit,
+          closePremium: mark,
+          openedAt: leg.openedAt,
+          closedAt: nowIso,
+          closeReason: 'reset: portfolio reset to upgraded algorithm',
+          realizedPnL: pnl,
+          orderId: closeResp?.order?.id ?? null,
+          orderStatus: closeResp?.order?.status ?? 'mock'
+        });
+        wheel.stats = wheel.stats || {};
+        wheel.stats.totalOptionsPnl = (Number(wheel.stats.totalOptionsPnl) || 0) + pnl;
+        wheel.stats.optionsClosedCount = (Number(wheel.stats.optionsClosedCount) || 0) + 1;
+        if (pnl > 0) wheel.stats.winningTrades = (Number(wheel.stats.winningTrades) || 0) + 1;
+
+        closed.push({ ticker: leg.ticker, optionSymbol: leg.optionSymbol, realizedPnL: pnl, closePremium: mark });
+      } catch (e) {
+        errors.push({ ticker: leg.ticker, error: String(e.message || e) });
+      }
+    }
+
+    wheel.optionsLegs = [];
+    saveWheelPortfolio(wheel);
+
+    let optimizeResult = null;
+    if (repopulate) {
+      try {
+        const snap = await paperPortfolioSnapshot(universeId);
+        const regime = String(snap.regime ?? 'normal').toLowerCase();
+        const scan = await computeOptionsScan(universeId);
+        const wheel2 = loadWheelPortfolio();
+        const targets = selectWheelTargets(
+          snap.holdings || [],
+          scan?.opportunities || [],
+          wheel2.optionsLegs || [],
+          regime
+        );
+        const opened = [];
+        for (const t of targets) {
+          if ((wheel2.optionsLegs?.length || 0) >= WHEEL_CONFIG.maxWheelPositions) break;
+          const opp = t.opp;
+          const credit = Number(opp.premium ?? opp.mid ?? opp.bid ?? 0) || 0;
+          if (credit <= 0) continue;
+          const limit = Math.max(0.01, parseFloat((credit - 0.02).toFixed(2)));
+          if (limit < 0.1) continue;
+          const resp = await openShortOptionLeg({
+            ticker: t.ticker,
+            optionSymbol: opp.optionSymbol,
+            quantity: 1,
+            limitPrice: limit
+          }).catch((e) => { errors.push({ phase: 'open', ticker: t.ticker, error: String(e.message || e) }); return null; });
+          if (!resp) continue;
+          wheel2.optionsLegs = wheel2.optionsLegs || [];
+          wheel2.optionsLegs.push({
+            ticker: t.ticker,
+            strategy: opp.strategy,
+            optionSymbol: opp.optionSymbol,
+            strike: opp.strike,
+            expiration: opp.expiration,
+            quantity: 1,
+            entryCredit: limit,
+            entryDate: new Date().toISOString(),
+            entryOrderId: resp?.order?.id ?? 'DRY_RUN',
+            ev: opp.ev,
+            delta: opp.delta,
+            dte: opp.dte,
+            ivRank: opp.ivRank,
+            currentPrice: opp.currentPrice,
+            compositeScore: opp.compositeScore,
+            reason: t.reason,
+            sellScore:        opp.sellScore        ?? null,
+            signalCount:      opp.signalCount      ?? null,
+            academicSellEdge: opp.academicSellEdge ?? null,
+            gsSignal:         opp.gsSignal         ?? null,
+            gsSellEdge:       opp.gsSellEdge       ?? null,
+            gsInterpretation: opp.gsInterpretation ?? null,
+            vrpIntensity:     opp.vrpIntensity     ?? null,
+            ivPremium:        opp.ivPremium        ?? null,
+            regimeBoost:      opp.regimeBoost      ?? null,
+            ivolPct:          opp.ivolPct          ?? null,
+            ivolRaw:          opp.ivolRaw          ?? null,
+            bkRegimeBoost:    opp.bkRegimeBoost    ?? null
+          });
+          wheel2.stats = wheel2.stats || {};
+          wheel2.stats.premiumCollected = (Number(wheel2.stats.premiumCollected) || 0) + limit * 100;
+          opened.push({
+            ticker: t.ticker,
+            strategy: opp.strategy,
+            symbol: opp.optionSymbol,
+            credit: limit,
+            sellScore: opp.sellScore,
+            signalCount: opp.signalCount,
+            ev: opp.ev,
+            ivRank: opp.ivRank
+          });
+        }
+        wheel2.lastRun = new Date().toISOString();
+        saveWheelPortfolio(wheel2);
+        optimizeResult = { opened, openedCount: opened.length, targetsConsidered: targets.length, regime };
+      } catch (e) {
+        errors.push({ phase: 'repopulate', error: String(e.message || e) });
+      }
+    }
+
+    res.json({
+      success: true,
+      initialOpenCount,
+      closedCount: closed.length,
+      closed,
+      errors,
+      repopulate,
+      optimizeResult,
+      finalPortfolio: {
+        openLegs: (loadWheelPortfolio().optionsLegs || []).length,
+        totalOptionsPnl: loadWheelPortfolio().stats?.totalOptionsPnl ?? 0
+      }
+    });
+  } catch (err) {
+    console.error('[wheel/reset]', err);
+    res.status(500).json({ success: false, error: err.message || String(err) });
+  }
+});
+
 // ── Wheel Optimizer ─────────────────────────────────────────────────────────
 // Smarter than /run: beyond standard profit/DTE closes, also identifies legs
 // that are significantly outclassed by a fresh scan opportunity (EV ratio ≥ 2×)
@@ -15834,12 +16034,11 @@ app.post('/api/wheel/optimize', async (req, res) => {
         try {
           const prem = Number(leg.currentMark ?? leg.entryCredit) || 0;
           const closeLimit = Math.max(0.01, prem + 0.05);
-          const closeResp = await openShortOptionLeg({
+          const closeResp = await closeShortOptionLeg({
             ticker: leg.ticker,
             optionSymbol: leg.optionSymbol,
             quantity: leg.quantity ?? 1,
-            limitPrice: closeLimit,
-            side: 'buy'
+            limitPrice: closeLimit
           }).catch(() => null);
           const pnl = (Number(leg.entryCredit) - prem) * 100 * (leg.quantity ?? 1);
           wheel.closedLegs.push({ symbol: leg.optionSymbol, ticker: leg.ticker, closedAt: nowIso, closeReason: `replaced: better opp ${bestAlt.ticker} (EV ${Number(bestAlt.ev).toFixed(0)} vs ${legEv.toFixed(0)})`, realizedPnL: pnl });

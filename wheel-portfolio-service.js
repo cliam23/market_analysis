@@ -27,15 +27,20 @@ export const WHEEL_CONFIG = {
   regimeAllowsCSP: ['strong_bull', 'normal'],
   regimeAllowsCC: ['strong_bull', 'normal', 'pullback'],
   regimeClosesAll: ['bear'],
-  // ── Three-paper academic signal thresholds ──────────────────────────────
-  // Use real signal values now that the cache is wired. 0.35 keeps us off
-  // the "all-fallback 0.49" floor and demands at least a real positive read.
-  minSellScore:      0.35,
-  // Never sell CCs/CSPs when realized vol > implied vol (Goyal & Saretto)
-  blockCheapOptions: true,
-  // Require at least 2 of 3 papers aligned (G&S, C&H, B&K). Single-signal
-  // entries were the bulk of the prior losing trades.
+  // ── Three-paper academic signal thresholds (TWO-TIER) ───────────────────
+  // STRICT tier: hard preference — opps passing these are always taken first.
+  minSellScore:      0.40,
   minSignalCount:    2,
+  // RELAXED tier: fallback floor — used to fill remaining slots when strict
+  // tier doesn't yield enough candidates (cheap-IV markets). Ensures the
+  // algorithm still picks the best-available rather than sitting in 100% cash.
+  relaxedSellScore:  0.32,
+  relaxedSignalCount: 1,
+  maxRelaxedPicks:   3,
+  // Never sell premium when realized vol > implied vol (Goyal & Saretto)
+  blockCheapOptions: true,
+  // Tie-breaker preference: when scoring, give bonus to 3-paper-aligned opps.
+  signalCountBonus:  { 3: 1.25, 2: 1.0, 1: 0.75 },
   // CSP quality floor: only sell puts on names we'd actually want to own if
   // assigned. compositeScore must be ≥ this. (CC floor stays at scoreFloor.)
   cspCompositeFloor: 70,
@@ -140,7 +145,11 @@ function rankWheelOpp(o, eqCompositeScore = 0) {
   // log-scaled EV: $50 EV ≈ 4 pts, $500 EV ≈ 6 pts, $5000 EV ≈ 8.5 pts
   const evPart   = Math.log(1 + Math.max(0, Number(o.ev) || 0)) * 1.0;
   const ivrPart  = Math.min(20, (Number(o.ivRank) || 0) * 0.10);
-  return sellPart + eqPart + evPart + ivrPart;
+  // Signal-count multiplier: 3-paper aligned opps get a 25% bonus, 1-signal opps a
+  // 25% penalty. Encodes the academic-consensus preference into the rank directly.
+  const sigBonus = (WHEEL_CONFIG.signalCountBonus || {})[Number(o.signalCount) || 0] ?? 1.0;
+  const base = sellPart + eqPart + evPart + ivrPart;
+  return base * sigBonus;
 }
 
 export function selectWheelTargets(paperHoldings, opportunities, existingLegs, regime) {
@@ -158,42 +167,66 @@ export function selectWheelTargets(paperHoldings, opportunities, existingLegs, r
   const opps = Array.isArray(opportunities) ? opportunities : [];
 
   // ── Gate every opportunity through shared filters, then assign a rank score ──
-  const ccCandidates = [];
-  const cspCandidates = [];
+  // We run gating TWICE: STRICT first (priority picks), then RELAXED to backfill.
+  // Both tiers always require gsSellEdge=true (don't sell when IV<RV per G&S),
+  // minEV ≥ 0 (don't take negative-EV trades), and minIVRank floor.
+  function buildCandidates(strictMode) {
+    const ccCands = [];
+    const cspCands = [];
+    const sellScoreFloor = strictMode ? WHEEL_CONFIG.minSellScore : (WHEEL_CONFIG.relaxedSellScore ?? 0.30);
+    const signalFloor    = strictMode ? WHEEL_CONFIG.minSignalCount : (WHEEL_CONFIG.relaxedSignalCount ?? 1);
 
-  for (const o of opps) {
-    if (!o || !o.optionSymbol) continue;
-    const t = String(o.ticker || '').toUpperCase();
-    if (!t || active.has(t)) continue;
-    if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) continue;
-    if (WHEEL_CONFIG.minSellScore > 0 && o.sellScore != null && o.sellScore < WHEEL_CONFIG.minSellScore) continue;
-    if (WHEEL_CONFIG.minSignalCount > 1 && o.signalCount != null && o.signalCount < WHEEL_CONFIG.minSignalCount) continue;
-    // EV gate: reject knowingly negative-EV trades when the scanner has produced a number.
-    if (WHEEL_CONFIG.minEV != null && o.ev != null && Number(o.ev) < WHEEL_CONFIG.minEV) continue;
-    // IV-rank floor: don't sell premium when implied vol is too cheap.
-    if (WHEEL_CONFIG.minIVRank > 0 && o.ivRank != null && Number(o.ivRank) < WHEEL_CONFIG.minIVRank) continue;
+    for (const o of opps) {
+      if (!o || !o.optionSymbol) continue;
+      const t = String(o.ticker || '').toUpperCase();
+      if (!t || active.has(t)) continue;
+      // Hard guards apply to BOTH tiers (these are paper-driven absolutes):
+      if (WHEEL_CONFIG.blockCheapOptions && o.gsSellEdge === false) continue;
+      if (WHEEL_CONFIG.minEV != null && o.ev != null && Number(o.ev) < WHEEL_CONFIG.minEV) continue;
+      if (WHEEL_CONFIG.minIVRank > 0 && o.ivRank != null && Number(o.ivRank) < WHEEL_CONFIG.minIVRank) continue;
+      // Tier-dependent floors:
+      if (sellScoreFloor > 0 && o.sellScore != null && o.sellScore < sellScoreFloor) continue;
+      if (signalFloor > 1 && o.signalCount != null && o.signalCount < signalFloor) continue;
 
-    if (o.strategy === 'COVERED_CALL') {
-      if (!regimeAllowsCC) continue;
-      // CC only on tickers we own
-      if (!held.has(t)) continue;
-      const h = heldByTicker.get(t);
-      const eqScore = Number(h?.compositeScore ?? h?.score ?? 0) || 0;
-      if (eqScore > 0 && eqScore < WHEEL_CONFIG.scoreFloor) continue;
-      const prem = Number(o.mid ?? o.premium ?? 0) || 0;
-      const px   = Number(o.currentPrice ?? h?.currentPrice ?? h?.entryPrice ?? 0) || 0;
-      if (px > 0 && prem / px < WHEEL_CONFIG.minPremiumPct) continue;
-      ccCandidates.push({ t, opp: o, score: rankWheelOpp(o, eqScore), eqScore });
-    } else if (o.strategy === 'CASH_SECURED_PUT') {
-      if (!regimeAllowsCSP) continue;
-      // CSP only on tickers we DON'T already own
-      if (held.has(t)) continue;
-      const eqScore = Number(o.compositeScore ?? 0) || 0;
-      // CSP has its own higher quality floor: we MUST be happy owning this name
-      // if assigned. Wheel philosophy = "sell puts on stocks you want to own."
-      const cspFloor = Math.max(WHEEL_CONFIG.scoreFloor, WHEEL_CONFIG.cspCompositeFloor || 0);
-      if (eqScore > 0 && eqScore < cspFloor) continue;
-      cspCandidates.push({ t, opp: o, score: rankWheelOpp(o, eqScore), eqScore });
+      if (o.strategy === 'COVERED_CALL') {
+        if (!regimeAllowsCC) continue;
+        if (!held.has(t)) continue;
+        const h = heldByTicker.get(t);
+        const eqScore = Number(h?.compositeScore ?? h?.score ?? 0) || 0;
+        if (eqScore > 0 && eqScore < WHEEL_CONFIG.scoreFloor) continue;
+        const prem = Number(o.mid ?? o.premium ?? 0) || 0;
+        const px   = Number(o.currentPrice ?? h?.currentPrice ?? h?.entryPrice ?? 0) || 0;
+        if (px > 0 && prem / px < WHEEL_CONFIG.minPremiumPct) continue;
+        ccCands.push({ t, opp: o, score: rankWheelOpp(o, eqScore), eqScore, tier: strictMode ? 'strict' : 'relaxed' });
+      } else if (o.strategy === 'CASH_SECURED_PUT') {
+        if (!regimeAllowsCSP) continue;
+        if (held.has(t)) continue;
+        const eqScore = Number(o.compositeScore ?? 0) || 0;
+        const cspFloor = Math.max(WHEEL_CONFIG.scoreFloor, WHEEL_CONFIG.cspCompositeFloor || 0);
+        if (eqScore > 0 && eqScore < cspFloor) continue;
+        cspCands.push({ t, opp: o, score: rankWheelOpp(o, eqScore), eqScore, tier: strictMode ? 'strict' : 'relaxed' });
+      }
+    }
+    return { ccCands, cspCands };
+  }
+
+  const strict = buildCandidates(true);
+  const ccCandidates = [...strict.ccCands];
+  const cspCandidates = [...strict.cspCands];
+  // If the strict tier produces fewer than slots/2 picks, augment with relaxed
+  // tier (up to maxRelaxedPicks), giving priority to strict picks.
+  const strictCount = ccCandidates.length + cspCandidates.length;
+  const maxRelaxed = Number(WHEEL_CONFIG.maxRelaxedPicks ?? 3);
+  if (strictCount < slots && maxRelaxed > 0) {
+    const relaxed = buildCandidates(false);
+    const seen = new Set([...ccCandidates, ...cspCandidates].map((c) => c.opp.optionSymbol));
+    const relaxedExtra = [...relaxed.ccCands, ...relaxed.cspCands]
+      .filter((c) => !seen.has(c.opp.optionSymbol))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxRelaxed);
+    for (const c of relaxedExtra) {
+      if (c.opp.strategy === 'COVERED_CALL') ccCandidates.push(c);
+      else cspCandidates.push(c);
     }
   }
 
