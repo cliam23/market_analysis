@@ -17406,6 +17406,35 @@ cron.schedule(
   { timezone: 'America/New_York' }
 );
 
+// Startup catch-up: if any portfolio's last rebalance is stale (>20 days),
+// run auto-optimize once after the warmup grace period. Cron jobs only fire
+// while the server is alive — without this, a laptop that sleeps through the
+// 9:50 AM ET window would never trigger a rebalance until manually invoked.
+setTimeout(async () => {
+  try {
+    const universes = ['sp500_top50', 'sp500_top150'];
+    let needsCatchUp = false;
+    for (const uid of universes) {
+      const p = loadPaperPortfolioForUniverse(uid);
+      if (!p || !p.holdings?.length) continue;
+      const last = p.lastRebalance ? new Date(p.lastRebalance) : null;
+      const days = last ? Math.floor((Date.now() - last) / 86400000) : Infinity;
+      if (days > 20) { needsCatchUp = true; break; }
+    }
+    if (!needsCatchUp) return;
+    console.log('[Startup] Stale paper portfolio detected (>20d) — running catch-up auto-optimize…');
+    const r = await fetch(`http://localhost:${PORT}/api/paper-trade/auto-optimize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const j = await r.json().catch(() => ({}));
+    console.log('[Startup] Catch-up auto-optimize result:', JSON.stringify(j.results ?? {}));
+  } catch (e) {
+    console.error('[Startup] Catch-up auto-optimize failed:', e?.message || e);
+  }
+}, 3 * 60 * 1000 + 5_000); // run ~3 min after boot (after cron warmup)
+
 // Congress signal weekly refresh — Sunday 6 AM ET
 cron.schedule('0 6 * * 0', async () => {
   if (!fmpApiKey()) return;
