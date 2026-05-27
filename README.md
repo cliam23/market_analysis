@@ -4,6 +4,8 @@ A local-first equity-research workbench: multi-factor composite ranking, walk-fo
 
 > Single repo, two processes: a **React + Vite** SPA on `:5173` talking to an **Express** JSON API on `:3001`. Data comes mostly from public Yahoo Finance with optional FRED, Tradier sandbox, and Anthropic / Alpha Vantage hooks.
 
+> **Disclaimer:** This project is for **education and research only**. It is **not financial advice**, not a recommendation to buy or sell any security, and not a live trading system unless you explicitly wire your own broker credentials. Paper portfolios, backtests, and RL agents are illustrative; past simulated performance does not guarantee future results. Use at your own risk.
+
 ---
 
 ## Highlights
@@ -301,4 +303,4 @@ This is a personal research project published for visibility. Issues and small P
 
 ## License
 
-Released as source-available for educational and research use. Not investment advice. See `package.json` for `"private": true` (no npm publishing) and treat any data, signals, or agent outputs as illustrative.
+[MIT](LICENSE) — see the license file for full terms. `"private": true` in `package.json` means this repo is not published to npm; GitHub visibility is separate.
