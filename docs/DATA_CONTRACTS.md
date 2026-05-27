@@ -14,7 +14,7 @@ Consumed by `runBacktestSimulation` and related paths. Each row:
 | `open`, `high`, `low`, `close` | number | `close` required; highs/lows may equal close if missing |
 | `volume` | number | optional |
 
-**Source:** Yahoo Finance `chart` via `yahoo-finance2`, normalized in [server.js](file:///Users/mochi/Documents/Market Analysis/server.js) (`mapQuotes` inside `bt_fetchPriceHistoryCore`). Validation: [server/data/bar-validation.js](../server/data/bar-validation.js).
+**Source:** Yahoo Finance `chart` via `yahoo-finance2`, normalized in [server.js](../server.js) (`mapQuotes` inside `bt_fetchPriceHistoryCore`). Validation: [server/data/bar-validation.js](../server/data/bar-validation.js).
 
 ### Quote snapshot (single-ticker UI)
 
@@ -53,7 +53,7 @@ flowchart TD
 
 | Variable | Effect |
 |----------|--------|
-| `DATA_GOLD_LAYER=1` | Prefer local files under `data/gold/bars/` when fresh (see [server/data/gold-bars-store.js](file:///Users/mochi/Documents/Market Analysis/server/data/gold-bars-store.js)) |
+| `DATA_GOLD_LAYER=1` | Prefer local files under `data/gold/bars/` when fresh (see [server/data/gold-bars-store.js](../server/data/gold-bars-store.js)) |
 | `DATA_GOLD_WRITE=1` | After a successful Yahoo fetch in backtest, persist rows to gold (optional automation) |
 | `DATA_GOLD_MAX_AGE_DAYS` | Max age for gold reads (default `7`) |
 | `DATA_VALIDATION_STRICT=true` | Invalid bar series fail the fetch path (simulation may error if data missing) |
