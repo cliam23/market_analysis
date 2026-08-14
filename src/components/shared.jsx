@@ -165,7 +165,7 @@ export function fmtPct(pct, signed = false) {
   return sign + val.toFixed(1) + "%";
 }
 
-export function Select({ value, onChange, options, label, style, compact }) {
+export function Select({ value, onChange, options, label, style, compact, disabled }) {
   const labelSize = compact ? 9 : 10;
   const labelMb = compact ? 2 : 4;
   const pad = compact ? "5px 8px" : "8px 10px";
@@ -196,10 +196,12 @@ export function Select({ value, onChange, options, label, style, compact }) {
         title={selectedLabel}
         aria-label={label ? `${label}: ${selectedLabel}` : selectedLabel}
         onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
         style={{
           padding: pad,
           fontSize,
-          cursor: "pointer",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.6 : 1,
           width: "100%",
           minWidth: 0,
           maxWidth: "100%",

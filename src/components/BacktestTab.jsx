@@ -7,6 +7,16 @@ import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { Box, Select, CongressSignalInline } from "./shared.jsx";
 import { PILLAR_ORDER, PILLAR_LABELS, isCompositeStrategy, UNIVERSE_OPTIONS, STRATEGY_OPTIONS, TOP_N_OPTIONS, PERIOD_OPTIONS } from "../lib/constants.js";
 import { fmtWeightPct } from "../lib/formatters.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
+
+/**
+ * Matches scripts/lib/backtest-mirror.mjs's fixed matrix — the only combos
+ * with pre-computed results on the Vercel-only ("lite") deploy. Keep in
+ * sync with that file if the mirrored matrix ever changes.
+ */
+const LITE_UNIVERSE_IDS = ["sp500_top50", "sp500_top150"];
+const LITE_PERIOD_IDS = ["3y", "5y"];
+const LITE_STRATEGY_ID = "full_composite";
 
 /** Factor colors aligned with Dashboard / spec */
 const BT_PILLAR_COLORS = {
@@ -495,6 +505,8 @@ export default function BacktestTab() {
   const [tradePage, setTradePage] = useState(0);
   const TRADES_PER_PAGE = 50;
   const [compareSnaps, setCompareSnaps] = useState({ full_composite: null, full_composite_aggressive: null });
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
 
   const [settings, setSettings] = useState({
     universe: "sp500_top50",
@@ -506,6 +518,19 @@ export default function BacktestTab() {
     adaptiveMode: "fixed",
     positionSizing: "invVol"
   });
+
+  // On the read-only deploy only S&P Top 50/150 x 3y/5y x Full Composite
+  // (default Advanced settings) has pre-computed results — see
+  // api/backtest/[universeId].js. Steer the form there instead of letting
+  // people pick a combo that's guaranteed to 404.
+  useEffect(() => {
+    if (!lite) return;
+    setSettings((s) => (s.strategy === LITE_STRATEGY_ID ? s : { ...s, strategy: LITE_STRATEGY_ID }));
+  }, [lite]);
+
+  const universeOptions = lite ? UNIVERSE_OPTIONS.filter((o) => LITE_UNIVERSE_IDS.includes(o.id)) : UNIVERSE_OPTIONS;
+  const periodOptions = lite ? PERIOD_OPTIONS.filter((o) => LITE_PERIOD_IDS.includes(o.id)) : PERIOD_OPTIONS;
+  const strategyOptions = lite ? STRATEGY_OPTIONS.filter((o) => o.id === LITE_STRATEGY_ID) : STRATEGY_OPTIONS;
   /** Composite strategies: must match GET query rlAgent (Advanced → RL AGENT). Default on; toggle still sends explicit rlAgent=true|false. */
   const [rlAgentOn, setRlAgentOn] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -764,21 +789,22 @@ export default function BacktestTab() {
               label="UNIVERSE"
               value={settings.universe}
               onChange={(v) => updateSetting('universe', v)}
-              options={UNIVERSE_OPTIONS}
+              options={universeOptions}
             />
             <Select
               compact
               label="PERIOD"
               value={settings.period}
               onChange={(v) => updateSetting('period', v)}
-              options={PERIOD_OPTIONS}
+              options={periodOptions}
             />
             <Select
               compact
               label="STRATEGY"
               value={settings.strategy}
               onChange={(v) => updateSetting('strategy', v)}
-              options={STRATEGY_OPTIONS}
+              options={strategyOptions}
+              disabled={lite}
             />
           </div>
           <div
@@ -822,35 +848,45 @@ export default function BacktestTab() {
                     boxShadow: "0 14px 48px rgba(0,0,0,0.5)"
                   }}
                 >
+                  {lite && (
+                    <p className="ma-dash-muted" style={{ marginBottom: 8, fontSize: 11 }}>
+                      Only RL Agent is adjustable on this read-only deploy — Rebalance/Hold Top/Adaptive Mode/Position
+                      Sizing are fixed at their defaults (the only combo with pre-computed results).
+                    </p>
+                  )}
                   <div style={btAdvancedPopoverGridStyle}>
-                    <Select
-                      compact
-                      label="REBALANCE"
-                      value={settings.rebalanceFreq}
-                      onChange={(v) => updateSetting('rebalanceFreq', v)}
-                      options={freqOptions}
-                    />
-                    <Select
-                      compact
-                      label="HOLD TOP"
-                      value={settings.topN}
-                      onChange={(v) => updateSetting('topN', v)}
-                      options={TOP_N_OPTIONS}
-                    />
-                    <Select
-                      compact
-                      label="ADAPTIVE MODE"
-                      value={settings.adaptiveMode}
-                      onChange={(v) => updateSetting("adaptiveMode", v)}
-                      options={adaptiveModeOptions}
-                    />
-                    <Select
-                      compact
-                      label="POSITION SIZING"
-                      value={settings.positionSizing}
-                      onChange={(v) => updateSetting("positionSizing", v)}
-                      options={positionSizingOptions}
-                    />
+                    {!lite && (
+                      <>
+                        <Select
+                          compact
+                          label="REBALANCE"
+                          value={settings.rebalanceFreq}
+                          onChange={(v) => updateSetting('rebalanceFreq', v)}
+                          options={freqOptions}
+                        />
+                        <Select
+                          compact
+                          label="HOLD TOP"
+                          value={settings.topN}
+                          onChange={(v) => updateSetting('topN', v)}
+                          options={TOP_N_OPTIONS}
+                        />
+                        <Select
+                          compact
+                          label="ADAPTIVE MODE"
+                          value={settings.adaptiveMode}
+                          onChange={(v) => updateSetting("adaptiveMode", v)}
+                          options={adaptiveModeOptions}
+                        />
+                        <Select
+                          compact
+                          label="POSITION SIZING"
+                          value={settings.positionSizing}
+                          onChange={(v) => updateSetting("positionSizing", v)}
+                          options={positionSizingOptions}
+                        />
+                      </>
+                    )}
                     {isCompositeFamily(settings.strategy) && (
                       <Select
                         compact
