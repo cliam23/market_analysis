@@ -16,6 +16,10 @@ import { apiFetch, apiFetchNoStore } from "../lib/api.js";
 import { fmtMoney as _fmtMoney, fmtPctSigned } from "../lib/formatters.js";
 import weightSweepCached from "../assets/weight-sweep-result.json";
 import AlphaLabEquityCurves from "./AlphaLabEquityCurves.jsx";
+import { useBackendMode } from "../hooks/useBackendMode.js";
+
+const LITE_DIAGNOSTICS_MSG =
+  "Not available on this read-only deploy — needs the full backend running locally (see README § Live deployment).";
 
 const CARD_BORDER = "rgba(255,255,255,0.08)";
 const CARD_BORDER_HOVER = "rgba(255,255,255,0.14)";
@@ -180,6 +184,8 @@ function WeightStackBar({ weights, label, variant = "active" }) {
 }
 
 export default function AlphaLabTab({ visible }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [universeId, setUniverseId] = useState("sp500_top150");
   const [period, setPeriod] = useState("3y");
 
@@ -402,6 +408,24 @@ export default function AlphaLabTab({ visible }) {
       return;
     }
     alphaLabBulkKeyRef.current = bulkKey;
+    // On the read-only deploy, rl/status and paper-trade/portfolio are
+    // mirrored and work fine; the rest need live compute server.js doesn't
+    // run here, so skip firing calls that are guaranteed to fail and show
+    // a clear reason instead of a generic fetch error.
+    if (lite) {
+      void Promise.all([loadRlStatus(), loadPaperWeights()]);
+      setUcErr(LITE_DIAGNOSTICS_MSG);
+      setUcLoading(false);
+      setFacErr(LITE_DIAGNOSTICS_MSG);
+      setFacLoading(false);
+      setHedgeErr(LITE_DIAGNOSTICS_MSG);
+      setHedgeLoading(false);
+      setFwRec(null);
+      setFwLoading(false);
+      setRlCompareErr(LITE_DIAGNOSTICS_MSG);
+      setRlCompareLoading(false);
+      return;
+    }
     void Promise.all([
       loadRlStatus(),
       loadPaperWeights(),
@@ -415,6 +439,7 @@ export default function AlphaLabTab({ visible }) {
     visible,
     universeId,
     period,
+    lite,
     loadRlStatus,
     loadPaperWeights,
     loadUniverseCompare,
@@ -429,6 +454,11 @@ export default function AlphaLabTab({ visible }) {
       forwardConfPrevVisibleRef.current = false;
       return;
     }
+    if (lite) {
+      setFcErr(LITE_DIAGNOSTICS_MSG);
+      setFcLoading(false);
+      return;
+    }
     const w = paperPf?.portfolio?.config?.weights;
     const fcKey = `${universeId}|${period}|${w ? JSON.stringify(w) : "na"}`;
     const becameVisible = !forwardConfPrevVisibleRef.current;
@@ -438,7 +468,7 @@ export default function AlphaLabTab({ visible }) {
     }
     forwardConfKeyRef.current = fcKey;
     loadForwardConfidence();
-  }, [visible, universeId, period, paperPf, loadForwardConfidence]);
+  }, [visible, universeId, period, paperPf, loadForwardConfidence, lite]);
 
   useEffect(() => {
     return () => {
@@ -759,7 +789,13 @@ export default function AlphaLabTab({ visible }) {
                 <SkeletonBlock h={100} />
               )}
               <div style={{ marginTop: 14, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                <button type="button" className="ma-alphalab-btn" disabled={retrainBusy} onClick={() => postRlTrainSmoke()}>
+                <button
+                  type="button"
+                  className="ma-alphalab-btn"
+                  disabled={retrainBusy || lite}
+                  title={lite ? "Needs the full backend running locally" : undefined}
+                  onClick={() => postRlTrainSmoke()}
+                >
                   {retrainBusy ? "Training…" : `Retrain ${rlModeLabel("qlearning")}`}
                 </button>
                 {retrainMsg ? (
@@ -768,7 +804,7 @@ export default function AlphaLabTab({ visible }) {
                   </span>
                 ) : (
                   <span className="ma-mono" style={{ fontSize: 10, color: "var(--color-text-muted)" }}>
-                    Smoke train (120 ep) — use RL Agent tab for full runs.
+                    {lite ? "Needs the full backend running locally." : "Smoke train (120 ep) — use RL Agent tab for full runs."}
                   </span>
                 )}
               </div>
@@ -779,7 +815,13 @@ export default function AlphaLabTab({ visible }) {
         <CardShell
           title="Weight configuration"
           actions={
-            <button type="button" className="ma-alphalab-btn" onClick={runWeightSweep} disabled={weightSweepRunning}>
+            <button
+              type="button"
+              className="ma-alphalab-btn"
+              onClick={runWeightSweep}
+              disabled={weightSweepRunning || lite}
+              title={lite ? "Needs the full backend running locally" : undefined}
+            >
               {weightSweepRunning ? `Sweep… ${weightSweepElapsed}s` : "Run weight sweep"}
             </button>
           }
@@ -1050,10 +1092,22 @@ export default function AlphaLabTab({ visible }) {
           title="Forward confidence"
           actions={
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" className="ma-alphalab-btn" onClick={loadForwardConfidence} disabled={fcLoading}>
+              <button
+                type="button"
+                className="ma-alphalab-btn"
+                onClick={loadForwardConfidence}
+                disabled={fcLoading || lite}
+                title={lite ? "Needs the full backend running locally" : undefined}
+              >
                 {fcLoading ? "…" : "Refresh"}
               </button>
-              <button type="button" className="ma-alphalab-btn" onClick={loadForwardWeightRec} disabled={fwLoading}>
+              <button
+                type="button"
+                className="ma-alphalab-btn"
+                onClick={loadForwardWeightRec}
+                disabled={fwLoading || lite}
+                title={lite ? "Needs the full backend running locally" : undefined}
+              >
                 {fwLoading ? "…" : "Weight rec"}
               </button>
             </div>
