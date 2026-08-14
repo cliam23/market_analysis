@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 // Boots the real server.js on a scratch port, hits its own production
 // endpoints (live composite scan + dashboard summary — same code path the
-// UI uses), and writes public/data/scores-snapshot.json. Run on a schedule
-// by .github/workflows/scheduled-pipeline.yml; api/scores.js serves the
-// resulting file as a public API without needing a live server on Vercel.
+// UI uses), and writes public/data/scores-snapshot.json plus a read-only
+// mirror of a handful of other GET routes (public/data/mirror/*.json) that
+// the api/ Vercel functions replay verbatim. This is a static copy of what
+// the app looked like at generation time, not a live backend — POST/PATCH
+// routes (rebalance, create portfolio, RL training, …) still need
+// server.js running somewhere. Run on a schedule by
+// .github/workflows/scheduled-pipeline.yml.
 //
 //   node scripts/generate-scores-snapshot.mjs [--universe sp500_top50] [--top 15]
 
@@ -11,7 +15,7 @@ import { spawn } from 'node:child_process';
 import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildSnapshotPayload } from './lib/build-snapshot.mjs';
+import { buildSnapshotPayload, MIRRORED_UNIVERSES } from './lib/build-snapshot.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -86,8 +90,50 @@ async function main() {
     console.log(
       `Wrote ${outPath}: ${snapshot.topScores.length} tickers, regime=${snapshot.regime}, generatedAt=${snapshot.generatedAt}`
     );
+
+    await mirrorEndpoints(base, outDir);
   } finally {
     shutdown();
+  }
+}
+
+async function fetchJsonOrNull(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`mirror: ${url} -> ${res.status}, skipping`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn(`mirror: ${url} failed (${e.message}), skipping`);
+    return null;
+  }
+}
+
+// Captures a handful of read-only GET routes verbatim so the Vercel-only
+// deploy's api/ functions can replay them without a live server. Mutating
+// routes are intentionally not mirrored — see file header.
+async function mirrorEndpoints(base, outDir) {
+  const mirrorDir = path.join(outDir, 'mirror');
+  await mkdir(mirrorDir, { recursive: true });
+
+  const jobs = [
+    ['dashboard-summary.json', `${base}/api/dashboard/summary`],
+    ['market-indices.json', `${base}/api/market/indices`],
+    ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-portfolio-${u}.json`, `${base}/api/paper-trade/portfolio?universe=${u}`]),
+    ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-history-${u}.json`, `${base}/api/paper-trade/history?universe=${u}`]),
+    ...MIRRORED_UNIVERSES.map((u) => [`rl-status-${u}.json`, `${base}/api/rl/status?universe=${u}`])
+  ];
+
+  for (const [filename, url] of jobs) {
+    const data = await fetchJsonOrNull(url);
+    if (data == null) continue;
+    // Wrapped the same way scripts/snapshot-ui.mjs wraps its local-dev
+    // snapshots, so api/*.js can report a consistent mirroredAt/age.
+    const wrapped = { _snapshotTs: Date.now(), _snapshotData: data };
+    await writeFile(path.join(mirrorDir, filename), JSON.stringify(wrapped, null, 2));
+    console.log(`Wrote ${path.join(mirrorDir, filename)}`);
   }
 }
 

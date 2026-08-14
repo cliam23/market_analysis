@@ -3,6 +3,11 @@
 // Kept separate from generate-scores-snapshot.mjs so it's unit-testable
 // without booting a server or hitting the network.
 
+// Universes mirrored as static read-only copies for the Vercel-only deploy
+// (see scripts/generate-scores-snapshot.mjs and the api/ routes that read
+// public/data/mirror/*.json). Keep in sync with server/config/universes.js.
+export const MIRRORED_UNIVERSES = ['sp500_top50', 'sp500_top150'];
+
 export function buildSnapshotPayload(scan, summary, { universeId, topN = 15, rlStatus } = {}) {
   if (!scan?.results) throw new Error('buildSnapshotPayload: scan.results missing');
   if (!summary) throw new Error('buildSnapshotPayload: summary missing');

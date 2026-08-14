@@ -1,0 +1,262 @@
+{
+  "_snapshotTs": 1786733310838,
+  "_snapshotData": {
+    "success": true,
+    "updatedAt": "2026-08-14T18:48:30.836Z",
+    "regime": "pullback",
+    "regimeBadge": {
+      "label": "PULLBACK",
+      "tone": "pullback",
+      "raw": "pullback"
+    },
+    "systemStatus": {
+      "lines": [
+        "Online learning ON",
+        "2 portfolios live"
+      ],
+      "lastRebalance": "2026-06-18",
+      "nextRebalance": "2026-08-15",
+      "adaptiveWeights": {
+        "momentum": 0.2,
+        "value": 0.2,
+        "fundamental": 0.15,
+        "earningsMomentum": 0.45,
+        "dcf": 0,
+        "valuation": 0
+      }
+    },
+    "rl": {
+      "agentType": "qlearning",
+      "mainAgentReady": false,
+      "agents": {
+        "sp500_top50": {
+          "loaded": true
+        },
+        "sp500_top150": {
+          "loaded": true
+        }
+      }
+    },
+    "portfolios": {
+      "sp500_top50": {
+        "universeId": "sp500_top50",
+        "totalValue": 110938.64,
+        "returnPct": 10.94,
+        "positions": 13,
+        "nextRebalance": "2026-08-15",
+        "lastRebalance": "2026-08-10",
+        "rebalanceFreq": "bimonthly",
+        "rlActive": true,
+        "rlOnlineLearning": false,
+        "regime": "strong_bull",
+        "adaptiveWeights": {
+          "momentum": 0.35294117647058826,
+          "value": 0.35294117647058826,
+          "fundamental": 0.11764705882352942,
+          "earningsMomentum": 0.17647058823529413,
+          "dcf": 0,
+          "valuation": 0
+        }
+      },
+      "sp500_top150": {
+        "universeId": "sp500_top150",
+        "totalValue": 114874.12,
+        "returnPct": 14.87,
+        "positions": 10,
+        "nextRebalance": "2026-08-15",
+        "lastRebalance": "2026-06-18",
+        "rebalanceFreq": "bimonthly",
+        "rlActive": true,
+        "rlOnlineLearning": true,
+        "regime": "pullback",
+        "adaptiveWeights": {
+          "momentum": 0.2,
+          "value": 0.2,
+          "fundamental": 0.15,
+          "earningsMomentum": 0.45,
+          "dcf": 0,
+          "valuation": 0
+        }
+      }
+    },
+    "recentSignals": [
+      {
+        "date": "2026-06-18",
+        "regime": "pullback",
+        "buys": [
+          "PANW"
+        ],
+        "sells": [
+          "WELL",
+          "CME",
+          "NEE",
+          "NVST",
+          "JNJ",
+          "MA"
+        ],
+        "stopTickers": []
+      },
+      {
+        "date": "2026-05-25",
+        "regime": "strong_bull",
+        "buys": [],
+        "sells": [],
+        "stopTickers": []
+      },
+      {
+        "date": "2026-04-19",
+        "regime": "strong_bull",
+        "buys": [],
+        "sells": [],
+        "stopTickers": []
+      }
+    ],
+    "factorPulse": {
+      "factors": [
+        {
+          "key": "earningsMomentum",
+          "label": "Earnings momentum",
+          "weight": 0.486,
+          "weightPct": 48.6,
+          "anchorPct": 45,
+          "trend": "up",
+          "pulseLabel": "HOT"
+        },
+        {
+          "key": "momentum",
+          "label": "Momentum",
+          "weight": 0.21600000000000003,
+          "weightPct": 21.6,
+          "anchorPct": 20,
+          "trend": "up",
+          "pulseLabel": "WARMING"
+        },
+        {
+          "key": "value",
+          "label": "Value",
+          "weight": 0.21600000000000003,
+          "weightPct": 21.6,
+          "anchorPct": 20,
+          "trend": "up",
+          "pulseLabel": "WARMING"
+        },
+        {
+          "key": "fundamental",
+          "label": "Quality",
+          "weight": 0.081,
+          "weightPct": 8.1,
+          "anchorPct": 15,
+          "trend": "down",
+          "pulseLabel": "COLD"
+        },
+        {
+          "key": "dcf",
+          "label": "DCF",
+          "weight": 0,
+          "weightPct": 0,
+          "anchorPct": 0,
+          "trend": "flat",
+          "pulseLabel": "FLAT"
+        },
+        {
+          "key": "valuation",
+          "label": "Valuation",
+          "weight": 0,
+          "weightPct": 0,
+          "anchorPct": 0,
+          "trend": "flat",
+          "pulseLabel": "FLAT"
+        }
+      ],
+      "anchor": {
+        "momentum": 0.2,
+        "value": 0.2,
+        "fundamental": 0.15,
+        "earningsMomentum": 0.45,
+        "dcf": 0,
+        "valuation": 0
+      }
+    },
+    "topMovers": {
+      "gainers": [
+        {
+          "ticker": "MKSI",
+          "compositeScore": 100
+        },
+        {
+          "ticker": "ALGM",
+          "compositeScore": 100
+        },
+        {
+          "ticker": "PANW",
+          "compositeScore": 100
+        },
+        {
+          "ticker": "UNH",
+          "compositeScore": 93.89089535990976
+        },
+        {
+          "ticker": "BAC",
+          "compositeScore": 89.5336010467324
+        }
+      ],
+      "losers": [
+        {
+          "ticker": "ODFL",
+          "compositeScore": 76.74996495930915
+        },
+        {
+          "ticker": "CARR",
+          "compositeScore": 77.26969261396691
+        },
+        {
+          "ticker": "TECH",
+          "compositeScore": 85.09983933554311
+        },
+        {
+          "ticker": "MSCI",
+          "compositeScore": 85.70293745252546
+        },
+        {
+          "ticker": "JPM",
+          "compositeScore": 88.92597805195513
+        }
+      ],
+      "active": [
+        {
+          "ticker": "ODFL",
+          "compositeScore": 76.74996495930915
+        },
+        {
+          "ticker": "CARR",
+          "compositeScore": 77.26969261396691
+        },
+        {
+          "ticker": "MKSI",
+          "compositeScore": 100
+        },
+        {
+          "ticker": "ALGM",
+          "compositeScore": 100
+        },
+        {
+          "ticker": "PANW",
+          "compositeScore": 100
+        }
+      ]
+    },
+    "sectorBreakdown": [
+      {
+        "name": "Other",
+        "value": 61123.5,
+        "pct": 76.5
+      },
+      {
+        "name": "Financials",
+        "value": 18772.55,
+        "pct": 23.5
+      }
+    ],
+    "primaryUniverse": "sp500_top150"
+  }
+}

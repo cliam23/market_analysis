@@ -298,13 +298,22 @@ export default function DashboardTab({ setTab }) {
         </div>
       )}
 
+      {summary?.publicMirror && (
+        <div className="ma-dash-banner" style={{ background: "rgba(88,166,255,0.06)", borderColor: "rgba(88,166,255,0.28)" }} role="status">
+          <span className="ma-dash-muted">
+            Read-only public mirror — a copy of the local app's state as of {relTime(summary.mirroredAt)}, refreshed
+            daily by a scheduled pipeline. Rebalancing, RL training, and other actions need the full backend running
+            locally (see <span className="ma-mono">README § Live deployment</span>).
+          </span>
+        </div>
+      )}
+
       {liteMode && (
         <div className="ma-dash-banner" style={{ background: "rgba(88,166,255,0.06)", borderColor: "rgba(88,166,255,0.28)" }} role="status">
           <span className="ma-dash-muted">
-            This deploy runs a lightweight public API only (<span className="ma-mono">/api/scores</span>) — positions, market
-            indices, and performance need the full Express backend. See the{" "}
-            <span className="ma-mono">README § Live deployment</span> to run or deploy it. The live composite-score + RL
-            snapshot below works standalone.
+            No backend data available yet — this deploy runs a lightweight public API (<span className="ma-mono">/api/scores</span>{" "}
+            and a read-only mirror of a few other routes) that's populated by a scheduled pipeline. Check back after
+            its first run, or see <span className="ma-mono">README § Live deployment</span> to run the full backend.
           </span>
         </div>
       )}

@@ -8,12 +8,11 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const SNAPSHOT_PATH = path.join(process.cwd(), 'public', 'data', 'scores-snapshot.json');
-
 export default function handler(req, res) {
   let snapshot;
   try {
-    snapshot = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
+    const snapshotPath = path.join(process.cwd(), 'public', 'data', 'scores-snapshot.json');
+    snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'));
   } catch {
     res.status(503).json({ success: false, error: 'snapshot not generated yet' });
     return;
