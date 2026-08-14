@@ -118,12 +118,20 @@ async function mirrorEndpoints(base, outDir) {
   const mirrorDir = path.join(outDir, 'mirror');
   await mkdir(mirrorDir, { recursive: true });
 
+  // Fixed config for the headline backtest comparison card — deliberately
+  // NOT mirrored at /api/rl/compare itself, since AlphaLabTab/RLTab call
+  // that path with user-chosen periods; a static file there would silently
+  // serve the wrong period's numbers. This lives at /api/backtest/compare
+  // instead, a new path with no interactive counterpart to collide with.
+  const compareParams = 'universeId=sp500_top50&period=1y&rebalanceFreq=bimonthly&topN=15&strategy=full_composite';
+
   const jobs = [
     ['dashboard-summary.json', `${base}/api/dashboard/summary`],
     ['market-indices.json', `${base}/api/market/indices`],
     ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-portfolio-${u}.json`, `${base}/api/paper-trade/portfolio?universe=${u}`]),
     ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-history-${u}.json`, `${base}/api/paper-trade/history?universe=${u}`]),
-    ...MIRRORED_UNIVERSES.map((u) => [`rl-status-${u}.json`, `${base}/api/rl/status?universe=${u}`])
+    ...MIRRORED_UNIVERSES.map((u) => [`rl-status-${u}.json`, `${base}/api/rl/status?universe=${u}`]),
+    ['backtest-compare.json', `${base}/api/rl/compare?${compareParams}`]
   ];
 
   for (const [filename, url] of jobs) {

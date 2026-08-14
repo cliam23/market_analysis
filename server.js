@@ -17301,6 +17301,26 @@ app.get('/api/scores', (req, res) => {
   });
 });
 
+// ── Backtest comparison mirror — mirrors api/backtest/compare.js (Vercel) for
+// local-dev parity. Fixed config only; use GET /api/rl/compare for live,
+// user-configurable comparisons (AlphaLabTab, RLTab).
+app.get('/api/backtest/compare', (req, res) => {
+  const mirrorPath = path.join(process.cwd(), 'public', 'data', 'mirror', 'backtest-compare.json');
+  let wrapped;
+  try {
+    wrapped = JSON.parse(readFileSync(mirrorPath, 'utf8'));
+  } catch {
+    return res.status(503).json({ success: false, error: 'mirror not generated yet' });
+  }
+  const ts = wrapped._snapshotTs ?? Date.now();
+  res.json({
+    ...(wrapped._snapshotData ?? wrapped),
+    publicMirror: true,
+    mirroredAt: new Date(ts).toISOString(),
+    mirrorAgeMs: Date.now() - ts
+  });
+});
+
 // ── Health check — Railway / load balancer ────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({

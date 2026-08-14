@@ -105,3 +105,37 @@ test('api/paper-trade/portfolio.js picks the file for the requested universe', a
     assert.equal(res._body.portfolio.config.universe, 'sp500_top50');
   });
 });
+
+test('api/backtest/compare.js serves the fixed headline comparison', async () => {
+  await withScratchProject(async (dir) => {
+    await writeFile(
+      path.join(dir, 'public', 'data', 'mirror', 'backtest-compare.json'),
+      JSON.stringify({
+        _snapshotTs: Date.now(),
+        _snapshotData: {
+          success: true,
+          universe: 'sp500_top50',
+          period: '1y',
+          baseline: { totalReturn: '17.20', alpha: '15.02', sharpe: '1.81' },
+          rlEval: { totalReturn: '14.36', alpha: '10.43', sharpe: '1.56' }
+        }
+      })
+    );
+    const { default: handler } = await import(`../api/backtest/compare.js?t=${Date.now()}`);
+    const res = mockRes();
+    handler({ query: {} }, res);
+    assert.equal(res._status, 200);
+    assert.equal(res._body.baseline.totalReturn, '17.20');
+    assert.equal(res._body.rlEval.alpha, '10.43');
+    assert.equal(res._body.publicMirror, true);
+  });
+});
+
+test('api/backtest/compare.js returns 503 when no mirror exists yet', async () => {
+  await withScratchProject(async () => {
+    const { default: handler } = await import(`../api/backtest/compare.js?t=${Date.now()}`);
+    const res = mockRes();
+    handler({ query: {} }, res);
+    assert.equal(res._status, 503);
+  });
+});
