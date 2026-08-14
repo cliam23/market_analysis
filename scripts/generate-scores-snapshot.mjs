@@ -16,6 +16,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSnapshotPayload, MIRRORED_UNIVERSES } from './lib/build-snapshot.mjs';
+import { backtestMirrorConfigs, backtestMirrorFilename, backtestMirrorQuery } from './lib/backtest-mirror.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -92,6 +93,7 @@ async function main() {
     );
 
     await mirrorEndpoints(base, outDir);
+    await mirrorBacktests(base, outDir);
   } finally {
     shutdown();
   }
@@ -118,20 +120,12 @@ async function mirrorEndpoints(base, outDir) {
   const mirrorDir = path.join(outDir, 'mirror');
   await mkdir(mirrorDir, { recursive: true });
 
-  // Fixed config for the headline backtest comparison card — deliberately
-  // NOT mirrored at /api/rl/compare itself, since AlphaLabTab/RLTab call
-  // that path with user-chosen periods; a static file there would silently
-  // serve the wrong period's numbers. This lives at /api/backtest/compare
-  // instead, a new path with no interactive counterpart to collide with.
-  const compareParams = 'universeId=sp500_top50&period=1y&rebalanceFreq=bimonthly&topN=15&strategy=full_composite';
-
   const jobs = [
     ['dashboard-summary.json', `${base}/api/dashboard/summary`],
     ['market-indices.json', `${base}/api/market/indices`],
     ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-portfolio-${u}.json`, `${base}/api/paper-trade/portfolio?universe=${u}`]),
     ...MIRRORED_UNIVERSES.map((u) => [`paper-trade-history-${u}.json`, `${base}/api/paper-trade/history?universe=${u}`]),
-    ...MIRRORED_UNIVERSES.map((u) => [`rl-status-${u}.json`, `${base}/api/rl/status?universe=${u}`]),
-    ['backtest-compare.json', `${base}/api/rl/compare?${compareParams}`]
+    ...MIRRORED_UNIVERSES.map((u) => [`rl-status-${u}.json`, `${base}/api/rl/status?universe=${u}`])
   ];
 
   for (const [filename, url] of jobs) {
@@ -142,6 +136,34 @@ async function mirrorEndpoints(base, outDir) {
     const wrapped = { _snapshotTs: Date.now(), _snapshotData: data };
     await writeFile(path.join(mirrorDir, filename), JSON.stringify(wrapped, null, 2));
     console.log(`Wrote ${path.join(mirrorDir, filename)}`);
+  }
+}
+
+// Runs the fixed matrix of full interactive backtests (see
+// scripts/lib/backtest-mirror.mjs) sequentially — not in parallel, to stay
+// polite to Yahoo's rate limits on a transient boot with a cold cache.
+// Slow (8 full runs over years of data across 50-150 tickers); expect this
+// step alone to take a while.
+async function mirrorBacktests(base, outDir) {
+  const mirrorDir = path.join(outDir, 'mirror');
+  await mkdir(mirrorDir, { recursive: true });
+
+  const configs = backtestMirrorConfigs();
+  for (const [i, config] of configs.entries()) {
+    const query = backtestMirrorQuery(config);
+    const url = `${base}/api/backtest/${config.universeId}?${query.toString()}`;
+    const label = `[${i + 1}/${configs.length}] ${config.universeId} ${config.period} rl${config.rlAgent ? 'on' : 'off'}`;
+    console.log(`${label}: fetching…`);
+    const start = Date.now();
+    const data = await fetchJsonOrNull(url);
+    if (data == null) {
+      console.warn(`${label}: failed, skipping`);
+      continue;
+    }
+    const filename = backtestMirrorFilename(config);
+    const wrapped = { _snapshotTs: Date.now(), _snapshotData: data };
+    await writeFile(path.join(mirrorDir, filename), JSON.stringify(wrapped, null, 2));
+    console.log(`${label}: wrote ${filename} (${Math.round((Date.now() - start) / 1000)}s)`);
   }
 }
 

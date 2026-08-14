@@ -40,7 +40,7 @@ All routes are served by **`server.js`** unless noted. Query parameters vary by 
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/api/backtest/:universeId` | Walk-forward backtest (performance, equity curve, logs) |
+| `GET` | `/api/backtest/:universeId` | Walk-forward backtest (performance, equity curve, logs). On the Vercel-only deploy, only a fixed matrix of configs is available — see below. |
 | `GET` | `/api/backtest/diagnostic/:universeId` | Compact diagnostic row |
 
 ---
@@ -82,9 +82,9 @@ All routes are served by **`server.js`** unless noted. Query parameters vary by 
 | `GET` | `/api/dashboard/summary` | Dashboard bundle |
 | `GET` | `/api/scores` | Public composite-score + RL-decision snapshot (`?ticker=` optional). Served from `public/data/scores-snapshot.json`, refreshed on a schedule by `scripts/generate-scores-snapshot.mjs`. On Vercel this is a standalone serverless function (`api/scores.js`) — no `server.js` process required; locally `server.js` serves the identical route from the same file. See [README § Live deployment](../README.md#live-deployment--data-pipeline). |
 
-On the Vercel-only deploy, `GET /api/dashboard/summary`, `GET /api/market/indices`, `GET /api/paper-trade/portfolio`, `GET /api/paper-trade/history`, and `GET /api/rl/status` (all `?universe=` where applicable) are also served — by `api/dashboard/summary.js`, `api/market/indices.js`, `api/paper-trade/portfolio.js`, `api/paper-trade/history.js`, and `api/rl/status.js` respectively — as a **read-only mirror** of the same routes below, replaying whatever `scripts/generate-scores-snapshot.mjs` last captured (`publicMirror: true`, `mirroredAt` in the response). Every other route in this document, and all non-GET methods on these five, require `server.js` running (locally, Railway, Docker, …).
+On the Vercel-only deploy, `GET /api/dashboard/summary`, `GET /api/market/indices`, `GET /api/paper-trade/portfolio`, `GET /api/paper-trade/history`, and `GET /api/rl/status` (all `?universe=` where applicable) are also served — by `api/dashboard/summary.js`, `api/market/indices.js`, `api/paper-trade/portfolio.js`, `api/paper-trade/history.js`, and `api/rl/status.js` respectively — as a **read-only mirror** of the same routes above, replaying whatever `scripts/generate-scores-snapshot.mjs` last captured (`publicMirror: true`, `mirroredAt` in the response). Every other route in this document, and all non-GET methods on these, require `server.js` running (locally, Railway, Docker, …).
 
-`GET /api/backtest/compare` (`api/backtest/compare.js`) is a sixth mirrored route, but with **no live counterpart at that path** — it's a fixed rules-vs-RL-vs-benchmark headline (`sp500_top50`, 1y, bimonthly, top 15) captured from `GET /api/rl/compare` with one canonical config, shown on the Backtest tab. It's deliberately not mirrored at `/api/rl/compare` itself, since AlphaLabTab and RLTab call that route with user-chosen periods/universes — a static file there would silently serve the wrong period's numbers whenever a setting changed.
+`GET /api/backtest/:universeId` is mirrored too (`api/backtest/[universeId].js`), but only for a **fixed matrix**: `universeId` ∈ {`sp500_top50`, `sp500_top150`} × `period` ∈ {`3y`, `5y`} × `rlAgent` ∈ {`true`, `false`}, always `rebalanceFreq=quarterly&topN=15&strategy=full_composite` (the Backtest tab's own defaults for everything except universe/period/strategy — see `scripts/lib/backtest-mirror.mjs`). A request matching that matrix gets the real captured response verbatim (equity curve, rebalance log, everything); anything else gets a 404 explaining only that matrix is available. `GET /api/rl/compare` (used by AlphaLabTab/RLTab with user-chosen periods) is **not** mirrored — a static file at that path would silently serve the wrong period's numbers whenever a setting changed.
 | `POST` | `/api/optimization/reset` | Optimization state reset |
 | `POST` | `/api/optimization/freeze` | Freeze optimization |
 | `GET` | `/api/optimization/status` | Optimization status |

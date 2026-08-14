@@ -495,23 +495,6 @@ export default function BacktestTab() {
   const [tradePage, setTradePage] = useState(0);
   const TRADES_PER_PAGE = 50;
   const [compareSnaps, setCompareSnaps] = useState({ full_composite: null, full_composite_aggressive: null });
-  const [headlineCompare, setHeadlineCompare] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await apiFetch("/api/backtest/compare");
-        const data = await res.json();
-        if (!cancelled && res.ok && data?.success) setHeadlineCompare(data);
-      } catch {
-        /* optional card — quietly absent if unavailable */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const [settings, setSettings] = useState({
     universe: "sp500_top50",
@@ -773,34 +756,6 @@ export default function BacktestTab() {
 
   return (
     <div className="ma-bt-page">
-      {headlineCompare && (
-        <div className="ma-dash-card" style={{ marginBottom: 16 }}>
-          <h2 className="ma-dash-h2">Headline comparison</h2>
-          <p className="ma-dash-muted" style={{ marginBottom: 10 }}>
-            Fixed config ({headlineCompare.universe}, {headlineCompare.period}, {headlineCompare.rebalanceFreq},
-            top {headlineCompare.topN}) — refreshed daily by the scheduled pipeline, not affected by the settings
-            below. Full interactive backtests (Run Backtest) need the backend running locally.
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-            {[
-              { label: "Rules-based composite", perf: headlineCompare.baseline },
-              { label: "RL agent", perf: headlineCompare.rlEval }
-            ].map(({ label, perf }) => (
-              <div key={label} className="ma-dash-perf-tile" style={{ cursor: "default" }}>
-                <div className="ma-dash-perf-tile__label">{label}</div>
-                <div className="ma-dash-perf-tile__value ma-mono">{perf?.totalReturn ?? "—"}%</div>
-                <div className={(parseFloat(perf?.alpha) ?? 0) >= 0 ? "ma-dash-pos ma-mono" : "ma-dash-neg ma-mono"}>
-                  alpha {perf?.alpha ?? "—"}%
-                </div>
-                <div className="ma-dash-muted ma-mono" style={{ fontSize: 12 }}>
-                  Sharpe {perf?.sharpe ?? "—"} · max DD {perf?.maxDrawdown ?? "—"}%
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="ma-bt-controls">
         <div className="ma-bt-controls__row">
           <div className="ma-bt-controls__filters" style={btFilterGridStyle}>

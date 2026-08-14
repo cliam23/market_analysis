@@ -147,11 +147,12 @@ See **`.env.example`** for the full list of toggles (`ML_RANK_WEIGHT`, `RL_ENABL
 │  ├─ scores.js              # GET /api/scores (see Live deployment)
 │  ├─ dashboard/summary.js, market/indices.js
 │  ├─ paper-trade/portfolio.js, paper-trade/history.js
-│  └─ rl/status.js
+│  ├─ rl/status.js
+│  └─ backtest/[universeId].js  # fixed matrix only — see below
 ├─ public/data/               # scores-snapshot.json + mirror/*.json — pipeline output
 ├─ scripts/                  # OOS replay, golden snapshots, qlearning trainer, etc.
 │  ├─ generate-scores-snapshot.mjs  # Data pipeline: boots server.js, writes snapshot + mirror
-│  └─ lib/build-snapshot.mjs, lib/read-mirror.mjs  # Pure transforms, unit-tested separately
+│  └─ lib/build-snapshot.mjs, lib/read-mirror.mjs, lib/backtest-mirror.mjs  # Pure transforms, unit-tested separately
 ├─ test/                     # node:test unit tests (snapshot transform, /api/scores, RL agent)
 ├─ .github/workflows/        # ci.yml (tests + build), scheduled-pipeline.yml (cron data refresh)
 ├─ ml/                       # Python: train_rf*, train_rnn, predict workers
@@ -292,9 +293,9 @@ docker run --rm -p 3001:3001 \
 
 The public Vercel deploy ships three real, connected pieces instead of a static demo:
 
-1. **Scheduled data pipeline** — `.github/workflows/scheduled-pipeline.yml` runs on a cron (weekdays, after US market close) and on manual dispatch. It calls `node scripts/generate-scores-snapshot.mjs`, which boots the real `server.js` on a scratch port and hits **its own production endpoints** — `GET /api/scan/sp500_top50` (live composite scan against fresh Yahoo data), `GET /api/dashboard/summary`, `GET /api/market/indices`, `GET /api/paper-trade/portfolio` + `/history` (both universes), `GET /api/rl/status` (the trained Q-learning agent's live decision), and `GET /api/rl/compare` (one fixed rules-vs-RL-vs-benchmark config). It writes `public/data/scores-snapshot.json` plus a read-only mirror of those other routes to `public/data/mirror/*.json`, and commits both. No scoring logic is reimplemented — the pipeline reuses the exact code path the local dashboard uses, so there's nothing to keep in sync.
-2. **Public API endpoints** — `api/scores.js`, `api/dashboard/summary.js`, `api/market/indices.js`, `api/paper-trade/{portfolio,history}.js`, `api/rl/status.js`, and `api/backtest/compare.js` are Vercel Node serverless functions that replay those captured routes (the first five at their *exact same paths* as `server.js` — `api/scores.js` also takes `?ticker=`, the others take `?universe=`; the last at a new path, since `/api/rl/compare` itself takes user-chosen periods from AlphaLabTab/RLTab and can't be safely mirrored 1:1). Because most paths and response shapes match `server.js` exactly, the existing frontend components (Dashboard, Paper Trade, RL Agent) work against them unmodified — they don't know or care that the data is a periodic mirror instead of a live process. The Backtest tab gets a small always-visible "Headline comparison" card fed by `/api/backtest/compare`, separate from its interactive settings. `server.js` exposes identical routes for local-dev parity, all reading the same files. **This only covers read (`GET`) routes** — actions that mutate state (rebalance, create/reset portfolio, RL training, options trades, interactive backtests) need `server.js` actually running somewhere and will fail on the Vercel-only deploy by design; the Dashboard shows a "Read-only public mirror" banner when serving mirrored data so this is clear in the UI.
-3. **CI/CD with tests** — `.github/workflows/ci.yml` runs `npm test` (unit tests for the snapshot transform, the mirror-read helper, the `/api/scores` and mirror route handlers, and RL agent state/action encode-decode round trips — `test/*.test.mjs`, Node's built-in test runner, no extra dependency) and a production build on every push/PR to `main`.
+1. **Scheduled data pipeline** — `.github/workflows/scheduled-pipeline.yml` runs on a cron (weekdays, after US market close) and on manual dispatch. It calls `node scripts/generate-scores-snapshot.mjs`, which boots the real `server.js` on a scratch port and hits **its own production endpoints** — `GET /api/scan/sp500_top50` (live composite scan against fresh Yahoo data), `GET /api/dashboard/summary`, `GET /api/market/indices`, `GET /api/paper-trade/portfolio` + `/history` (both universes), `GET /api/rl/status`, and `GET /api/backtest/:universeId` **eight times** — a fixed matrix of S&P Top 50 / Top 150 × 3 Years / 5 Years × RL on/off, all Full Composite strategy (see `scripts/lib/backtest-mirror.mjs`). It writes `public/data/scores-snapshot.json` plus a read-only mirror of those other routes to `public/data/mirror/*.json`, and commits it all. No scoring or backtest logic is reimplemented — the pipeline reuses the exact code path the local app uses, so there's nothing to keep in sync. The backtest matrix alone runs 8 full multi-year simulations, so a full pipeline run takes a while (tens of minutes).
+2. **Public API endpoints** — `api/scores.js`, `api/dashboard/summary.js`, `api/market/indices.js`, `api/paper-trade/{portfolio,history}.js`, `api/rl/status.js`, and `api/backtest/[universeId].js` are Vercel Node serverless functions that replay those captured routes at their *exact same paths* as `server.js` (`api/scores.js` takes `?ticker=`, most others take `?universe=`). Because the paths and response shapes match exactly, the existing frontend components (Dashboard, Paper Trade, RL Agent, **and** the Backtest tab's normal "Run Backtest" flow) work against them completely unmodified — they don't know or care that the data is a periodic mirror instead of a live process. `api/backtest/[universeId].js` only serves the fixed matrix above; picking S&P Top 50/150 + 3y/5y + Full Composite (leaving everything else at its default) on the Backtest tab returns the real captured equity curve and rebalance log — anything else returns a clear message instead of a generic failure, since there's no live server to compute it. `server.js` exposes identical routes for local-dev parity (except `/api/backtest/:universeId` itself, which always runs live locally — the mirror only stands in when there's no server at all). **This only covers read (`GET`) routes** — actions that mutate state (rebalance, create/reset portfolio, RL training, options trades) need `server.js` actually running somewhere and will fail on the Vercel-only deploy by design; the Dashboard shows a "Read-only public mirror" banner when serving mirrored data so this is clear in the UI.
+3. **CI/CD with tests** — `.github/workflows/ci.yml` runs `npm test` (unit tests for the snapshot transform, the mirror-read helper, the backtest-matrix matcher, the `/api/scores` and mirror route handlers, and RL agent state/action encode-decode round trips — `test/*.test.mjs`, Node's built-in test runner, no extra dependency) and a production build on every push/PR to `main`.
 
 ```
                      ┌─────────────────────────────────────────────┐
@@ -309,7 +310,10 @@ The public Vercel deploy ships three real, connected pieces instead of a static 
                      │    │     trained rl-agent-top50.json)        │
                      │    ├─ GET /api/dashboard/summary ─▶ regime   │
                      │    ├─ GET /api/market/indices                │
-                     │    └─ GET /api/paper-trade/{portfolio,history}│
+                     │    ├─ GET /api/paper-trade/{portfolio,history}│
+                     │    └─ GET /api/backtest/:universe ×8  ─▶ full│
+                     │          equity curves (Top50/150 × 3y/5y ×  │
+                     │          RL on/off, Full Composite)          │
                      │                                               │
                      │  writes public/data/scores-snapshot.json     │
                      │  and public/data/mirror/*.json, commits ─────┼──┐
@@ -324,7 +328,8 @@ The public Vercel deploy ships three real, connected pieces instead of a static 
                                                         │     summary, market/       │
                                                         │     indices, paper-trade/  │
                                                         │     {portfolio,history},   │
-                                                        │     rl/status — all public,│
+                                                        │     rl/status, backtest/   │
+                                                        │     [universeId] — public, │
                                                         │     read-only, same paths  │
                                                         │     server.js would serve  │
                                                         └──────────────┬─────────────┘

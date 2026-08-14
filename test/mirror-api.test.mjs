@@ -106,36 +106,79 @@ test('api/paper-trade/portfolio.js picks the file for the requested universe', a
   });
 });
 
-test('api/backtest/compare.js serves the fixed headline comparison', async () => {
+test('api/backtest/[universeId].js serves a matching mirrored backtest', async () => {
   await withScratchProject(async (dir) => {
     await writeFile(
-      path.join(dir, 'public', 'data', 'mirror', 'backtest-compare.json'),
+      path.join(dir, 'public', 'data', 'mirror', 'backtest-sp500_top50-3y-rlon.json'),
       JSON.stringify({
         _snapshotTs: Date.now(),
-        _snapshotData: {
-          success: true,
-          universe: 'sp500_top50',
-          period: '1y',
-          baseline: { totalReturn: '17.20', alpha: '15.02', sharpe: '1.81' },
-          rlEval: { totalReturn: '14.36', alpha: '10.43', sharpe: '1.56' }
-        }
+        _snapshotData: { success: true, performance: { totalReturn: 0.42 }, dailyValues: [{ date: '2023-01-01', portfolio: 10000 }] }
       })
     );
-    const { default: handler } = await import(`../api/backtest/compare.js?t=${Date.now()}`);
+    const { default: handler } = await import(`../api/backtest/[universeId].js?t=${Date.now()}`);
     const res = mockRes();
-    handler({ query: {} }, res);
+    handler(
+      {
+        query: {
+          universeId: 'sp500_top50',
+          period: '3y',
+          rebalanceFreq: 'quarterly',
+          topN: '15',
+          strategy: 'full_composite',
+          rlAgent: 'true',
+          rlMode: 'eval',
+          fresh: 'true',
+          _t: '123'
+        }
+      },
+      res
+    );
     assert.equal(res._status, 200);
-    assert.equal(res._body.baseline.totalReturn, '17.20');
-    assert.equal(res._body.rlEval.alpha, '10.43');
+    assert.equal(res._body.performance.totalReturn, 0.42);
     assert.equal(res._body.publicMirror, true);
   });
 });
 
-test('api/backtest/compare.js returns 503 when no mirror exists yet', async () => {
+test('api/backtest/[universeId].js returns 404 with guidance for an unmirrored combo', async () => {
   await withScratchProject(async () => {
-    const { default: handler } = await import(`../api/backtest/compare.js?t=${Date.now()}`);
+    const { default: handler } = await import(`../api/backtest/[universeId].js?t=${Date.now()}`);
     const res = mockRes();
-    handler({ query: {} }, res);
+    handler(
+      {
+        query: {
+          universeId: 'sp500_top50',
+          period: '1y', // not in the mirrored matrix (only 3y/5y)
+          rebalanceFreq: 'quarterly',
+          topN: '15',
+          strategy: 'full_composite',
+          rlAgent: 'true'
+        }
+      },
+      res
+    );
+    assert.equal(res._status, 404);
+    assert.equal(res._body.success, false);
+    assert.match(res._body.error, /S&P Top 50/);
+  });
+});
+
+test('api/backtest/[universeId].js returns 503 when the matched mirror file is missing', async () => {
+  await withScratchProject(async () => {
+    const { default: handler } = await import(`../api/backtest/[universeId].js?t=${Date.now()}`);
+    const res = mockRes();
+    handler(
+      {
+        query: {
+          universeId: 'sp500_top150',
+          period: '5y',
+          rebalanceFreq: 'quarterly',
+          topN: '15',
+          strategy: 'full_composite',
+          rlAgent: 'false'
+        }
+      },
+      res
+    );
     assert.equal(res._status, 503);
   });
 });
