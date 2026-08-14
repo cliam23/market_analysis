@@ -136,6 +136,8 @@ export default function DashboardTab({ setTab }) {
   const [posUniverse, setPosUniverse] = useState("sp500_top150");
   const [err, setErr] = useState(null);
   const [boot, setBoot] = useState(true);
+  const [scoresSnapshot, setScoresSnapshot] = useState(null);
+  const [scoresErr, setScoresErr] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -211,6 +213,23 @@ export default function DashboardTab({ setTab }) {
         })
       );
       if (!cancelled) setPaperByUniverse(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch("/api/scores");
+        const data = await safeJson(res);
+        if (!cancelled && data?.success) setScoresSnapshot(data);
+        else if (!cancelled) setScoresErr("Snapshot not available yet.");
+      } catch {
+        if (!cancelled) setScoresErr("Snapshot not available yet.");
+      }
     })();
     return () => {
       cancelled = true;
@@ -439,6 +458,45 @@ export default function DashboardTab({ setTab }) {
                 );
               })}
             </ul>
+          </section>
+
+          <section className="ma-dash-card" style={{ animationDelay: "200ms" }}>
+            <h2 className="ma-dash-h2">Live snapshot (public API)</h2>
+            {scoresErr && !scoresSnapshot && <p className="ma-dash-muted">{scoresErr}</p>}
+            {scoresSnapshot && (
+              <>
+                <div className="ma-dash-muted" style={{ marginBottom: 8 }}>
+                  {scoresSnapshot.universeId} · regime{" "}
+                  <span className={"ma-dash-regime ma-dash-regime--inline " + regimeToneClass(dashboardRegimeTone(scoresSnapshot.regime))}>
+                    {scoresSnapshot.regime?.replace(/_/g, " ") || "—"}
+                  </span>{" "}
+                  · updated {relTime(scoresSnapshot.generatedAt)} · RL exposure{" "}
+                  {scoresSnapshot.rl?.decision?.exposure != null
+                    ? `${Math.round(scoresSnapshot.rl.decision.exposure * 100)}%`
+                    : "—"}
+                  , {scoresSnapshot.rl?.decision?.positionCount ?? "—"} positions (
+                  {scoresSnapshot.rl?.decision?.sizingMethod ?? "—"})
+                </div>
+                <ul className="ma-dash-factor-list">
+                  {(scoresSnapshot.topScores ?? []).slice(0, 5).map((r) => (
+                    <li key={r.ticker} className="ma-dash-factor-row">
+                      <div className="ma-dash-factor-name">
+                        {r.rank}. {r.ticker}
+                      </div>
+                      <div className="ma-dash-factor-bar-wrap">
+                        <div className="ma-dash-factor-bar" style={{ width: `${clamp(r.compositeScore, 0, 100)}%` }} />
+                      </div>
+                      <div className="ma-dash-factor-pct ma-mono">{r.compositeScore}</div>
+                      <div className="ma-dash-factor-trend ma-mono">{r.grade}</div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="ma-dash-muted" style={{ marginTop: 6 }}>
+                  Composite score → RL decision, refreshed daily by a scheduled pipeline and served from{" "}
+                  <span className="ma-mono">/api/scores</span>.
+                </div>
+              </>
+            )}
           </section>
         </div>
 

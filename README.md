@@ -84,6 +84,8 @@ npm run server   # serves dist/ from Express + /api routes
 | `npm run verify:golden`  | Golden snapshot replay |
 | `npm run warm:gold`      | Warm `data/gold/` bars |
 | `npm run snapshot:ui`    | Snapshot dashboard / API responses |
+| `npm test`               | Unit tests (`node --test`) — snapshot transform, `/api/scores` handler, RL agent encode/decode |
+| `npm run snapshot:scores`| Regenerate `public/data/scores-snapshot.json` (boots server.js briefly, hits its own live endpoints) — see [Live deployment](#live-deployment--data-pipeline) |
 
 ---
 
@@ -141,7 +143,14 @@ See **`.env.example`** for the full list of toggles (`ML_RANK_WEIGHT`, `RL_ENABL
 ├─ options-auto-trader.js    # Scanner + auto-trader loop
 ├─ wheel-portfolio-service.js# Covered-call / CSP wheel manager
 ├─ pull-data.js, analyze.js  # CLI utilities
+├─ api/                      # Vercel serverless functions
+│  └─ scores.js              # GET /api/scores — public snapshot (see Live deployment)
+├─ public/data/               # scores-snapshot.json — pipeline output, served as-is by Vercel
 ├─ scripts/                  # OOS replay, golden snapshots, qlearning trainer, etc.
+│  ├─ generate-scores-snapshot.mjs  # Data pipeline: boots server.js, writes the snapshot
+│  └─ lib/build-snapshot.mjs        # Pure transform, unit-tested separately
+├─ test/                     # node:test unit tests (snapshot transform, /api/scores, RL agent)
+├─ .github/workflows/        # ci.yml (tests + build), scheduled-pipeline.yml (cron data refresh)
 ├─ ml/                       # Python: train_rf*, train_rnn, predict workers
 ├─ models/                   # Trained sklearn / pytorch artifacts (joblib / pt)
 ├─ data/                     # gold/ bars, local-snapshots/  (both gitignored)
@@ -159,6 +168,7 @@ These live at the repo root so the app boots with sensible state on a fresh pers
 - `paper-portfolio.json`, `paper-portfolio-top50.json`, `paper-portfolio-top150.json`
 - `wheel-portfolio.json`, `options-portfolio.json`, `options-auto-portfolio.json`
 - `rl-agent-top50.json`, `rl-agent-top150.json` (Q-learning)
+- `public/data/scores-snapshot.json` — seed content for `GET /api/scores`; the scheduled pipeline overwrites it on its own cadence (see [Live deployment](#live-deployment--data-pipeline))
 
 Anything else (DQN, training reports, sweep outputs, caches, presentation export) is gitignored and regenerated on demand.
 
@@ -258,9 +268,11 @@ The repo includes config for common split-deploy setups (Railway API + Vercel UI
 
 `railway.json` uses the Nixpacks builder, runs `node server.js`, and points the health check at `/health`. Add a Railway volume mounted at `/data` and set `DATA_DIR=/data`.
 
-### Vercel (frontend only, split deploy)
+### Vercel — static SPA + serverless public API
 
-`vercel.json` builds the SPA (`npm run build`, `dist/`) and rewrites all routes to `index.html`. Point `VITE_API_BASE` at your API host (e.g. Railway) and add the same domain to `FRONTEND_URL` on the API side for CORS.
+`vercel.json` builds the SPA (`npm run build`, `dist/`) **and** deploys `api/scores.js` as a Node serverless function, so a Vercel-only deploy is no longer frontend-only — it ships a small, genuinely public backend without needing an always-on Express process (Vercel doesn't run one). See **[Live deployment & data pipeline](#live-deployment--data-pipeline)** below for the full picture, and the [Vercel setup steps](#connecting-vercel) to go live.
+
+If you *also* run the full Express server elsewhere (Railway, Docker), point `VITE_API_BASE` at that host and add the Vercel domain to `FRONTEND_URL` for CORS — the two are independent: `VITE_API_BASE` covers the full `/api/*` surface (paper trade, backtests, options, …), while `/api/scores` works standalone on Vercel with no other backend required.
 
 ### Docker
 
@@ -270,6 +282,65 @@ docker run --rm -p 3001:3001 \
   -e DATA_DIR=/data -v market_data:/data \
   --env-file .env market-analysis
 ```
+
+---
+
+## Live deployment & data pipeline
+
+The public Vercel deploy ships three real, connected pieces instead of a static demo:
+
+1. **Scheduled data pipeline** — `.github/workflows/scheduled-pipeline.yml` runs on a cron (weekdays, after US market close) and on manual dispatch. It calls `node scripts/generate-scores-snapshot.mjs`, which boots the real `server.js` on a scratch port and hits **its own production endpoints** — `GET /api/scan/sp500_top50` (live composite scan against fresh Yahoo data), `GET /api/dashboard/summary` (regime + system status), and `GET /api/rl/status` (the trained Q-learning agent's live decision for the paper-trading portfolio). It writes the result to `public/data/scores-snapshot.json` and commits it. No scoring logic is reimplemented — the pipeline reuses the exact code path the local dashboard uses, so there's nothing to keep in sync.
+2. **Public API endpoint** — `api/scores.js` is a Vercel Node serverless function that serves that snapshot at `/api/scores` (optionally filtered with `?ticker=AAPL`), with cache headers tuned to the pipeline's cadence. `server.js` exposes an identical route at `/api/scores` for local-dev parity — both read the same file.
+3. **CI/CD with tests** — `.github/workflows/ci.yml` runs `npm test` (unit tests for the snapshot transform, the `/api/scores` handler, and RL agent state/action encode-decode round trips — `test/*.test.mjs`, Node's built-in test runner, no extra dependency) and a production build on every push/PR to `main`.
+
+```
+                     ┌─────────────────────────────────────────────┐
+                     │  GitHub Actions — scheduled-pipeline.yml     │
+                     │  (cron: weekdays after close, or dispatch)   │
+                     │                                               │
+  Yahoo Finance ────▶│  node server.js (scratch port, transient)    │
+  (data in)          │    ├─ GET /api/scan/:universe   ─▶ composite │
+                     │    │     score (analysis-engine.js pillars)  │
+                     │    ├─ GET /api/rl/status        ─▶ RL agent  │
+                     │    │     decision (q-learning-agent.js,      │
+                     │    │     trained rl-agent-top50.json)        │
+                     │    └─ GET /api/dashboard/summary ─▶ regime   │
+                     │                                               │
+                     │  writes public/data/scores-snapshot.json     │
+                     │  commits to main  ───────────────────────────┼──┐
+                     └─────────────────────────────────────────────┘  │
+                                                                        │ push
+                                                                        ▼
+                                                        ┌───────────────────────────┐
+                                                        │  Vercel (auto-redeploy)   │
+                                                        │  ├─ dist/  (React SPA)    │
+                                                        │  └─ api/scores.js         │
+                                                        │     (serverless, public)  │
+                                                        └──────────────┬────────────┘
+                                                                        │ GET /api/scores
+                                                                        ▼
+                                                        Dashboard tab → "Live snapshot
+                                                        (public API)" widget
+```
+
+### Connecting Vercel
+
+Vercel account setup and repo authorization are steps only you can do — here's the exact path:
+
+1. Push this repo to GitHub (already done: `cliam23/market_analysis`).
+2. At [vercel.com](https://vercel.com), sign in and **Add New → Project → Import** the `cliam23/market_analysis` GitHub repo. Vercel auto-detects `vercel.json` (framework: Vite, build: `npm run build`, output: `dist/`) — no config needed.
+3. Deploy. Vercel gives you a `*.vercel.app` URL; every push to `main` (including the scheduled pipeline's commits) redeploys automatically.
+4. On the repo's **Settings → Actions → General → Workflow permissions**, confirm **"Read and write permissions"** is selected — the scheduled pipeline needs this to commit `scores-snapshot.json` back to `main`.
+5. Optionally trigger the pipeline once by hand (Actions tab → *Scheduled scores pipeline* → **Run workflow**) so the first deploy already has live data instead of the seed snapshot committed in this repo.
+
+No environment variables or secrets are required for the Vercel deploy itself — `/api/scores` reads a file bundled with the deployment, and the scheduled pipeline uses GitHub's default `GITHUB_TOKEN`.
+
+### Screenshot
+
+<!-- Once connected, replace with a real screenshot of your *.vercel.app deploy: -->
+<!-- ![Dashboard — live snapshot widget](docs/screenshot-dashboard.png) -->
+
+_Add a screenshot of the live Dashboard tab (showing the "Live snapshot (public API)" panel) to `docs/screenshot-dashboard.png` after connecting Vercel, and uncomment the line above._
 
 ---
 

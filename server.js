@@ -17269,6 +17269,38 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// ── Public scores snapshot — mirrors api/scores.js (Vercel) for local-dev parity.
+// Both read the same file written by scripts/generate-scores-snapshot.mjs.
+app.get('/api/scores', (req, res) => {
+  const snapshotPath = path.join(process.cwd(), 'public', 'data', 'scores-snapshot.json');
+  let snapshot;
+  try {
+    snapshot = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+  } catch {
+    return res.status(503).json({ success: false, error: 'snapshot not generated yet' });
+  }
+
+  let topScores = snapshot.topScores ?? [];
+  const { ticker } = req.query;
+  if (ticker) {
+    const t = String(ticker).toUpperCase();
+    topScores = topScores.filter((r) => r.ticker === t);
+  }
+
+  const ageMs = Date.now() - new Date(snapshot.generatedAt).getTime();
+  res.json({
+    success: true,
+    generatedAt: snapshot.generatedAt,
+    ageHours: Math.round((ageMs / 3600000) * 10) / 10,
+    universeId: snapshot.universeId,
+    regime: snapshot.regime,
+    rl: snapshot.rl,
+    systemStatus: snapshot.systemStatus,
+    scanSummary: snapshot.scanSummary,
+    topScores
+  });
+});
+
 // ── Health check — Railway / load balancer ────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({

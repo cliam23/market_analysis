@@ -80,6 +80,7 @@ All routes are served by **`server.js`** unless noted. Query parameters vary by 
 |--------|------|---------|
 | `GET` | `/api/market/indices` | Index snapshot |
 | `GET` | `/api/dashboard/summary` | Dashboard bundle |
+| `GET` | `/api/scores` | Public composite-score + RL-decision snapshot (`?ticker=` optional). Served from `public/data/scores-snapshot.json`, refreshed on a schedule by `scripts/generate-scores-snapshot.mjs`. On Vercel this is a standalone serverless function (`api/scores.js`) — no `server.js` process required; locally `server.js` serves the identical route from the same file. See [README § Live deployment](../README.md#live-deployment--data-pipeline). |
 | `POST` | `/api/optimization/reset` | Optimization state reset |
 | `POST` | `/api/optimization/freeze` | Freeze optimization |
 | `GET` | `/api/optimization/status` | Optimization status |

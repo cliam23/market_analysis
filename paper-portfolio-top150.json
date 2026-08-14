@@ -22,7 +22,7 @@
     "_weightsVersion": 4
   },
   "initialCapital": 100000,
-  "cash": 95.16035652160645,
+  "cash": 16941.539918899536,
   "holdings": [
     {
       "ticker": "MKSI",
@@ -90,45 +90,6 @@
       }
     },
     {
-      "ticker": "WELL",
-      "shares": 44,
-      "entryPrice": 211.3300018310547,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 96.44202415111563,
-        "fundamental": 36,
-        "momentum": 100,
-        "valuation": 41.233333333333334,
-        "value": 63
-      }
-    },
-    {
-      "ticker": "CME",
-      "shares": 31,
-      "entryPrice": 296.8999938964844,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 95.11306898945217,
-        "fundamental": 50.3,
-        "momentum": 100,
-        "valuation": 53.37833333333334,
-        "value": 60
-      }
-    },
-    {
-      "ticker": "MA",
-      "shares": 17,
-      "entryPrice": 519.9600219726562,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 93.6309646987386,
-        "fundamental": 50.8,
-        "momentum": 17.841357435611766,
-        "valuation": 46.78666666666666,
-        "value": 38
-      }
-    },
-    {
       "ticker": "JPM",
       "shares": 31,
       "entryPrice": 305.92999267578125,
@@ -142,32 +103,6 @@
       }
     },
     {
-      "ticker": "NVST",
-      "shares": 171,
-      "entryPrice": 27.030000686645508,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 84.01335083335753,
-        "fundamental": 38.8,
-        "momentum": 100,
-        "valuation": 33.32,
-        "value": 80
-      }
-    },
-    {
-      "ticker": "JNJ",
-      "shares": 39,
-      "entryPrice": 238.6699981689453,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 83.88930764536025,
-        "fundamental": 39.3,
-        "momentum": 100,
-        "valuation": 41.72833333333334,
-        "value": 80
-      }
-    },
-    {
       "ticker": "CSX",
       "shares": 225,
       "entryPrice": 42.099998474121094,
@@ -178,19 +113,6 @@
         "momentum": 100,
         "valuation": 35.766666666666666,
         "value": 68
-      }
-    },
-    {
-      "ticker": "NEE",
-      "shares": 104,
-      "entryPrice": 91.23999786376953,
-      "entryDate": "2026-04-16",
-      "scores": {
-        "composite": 81.67973343233886,
-        "fundamental": 33.5,
-        "momentum": 91.6054882241351,
-        "valuation": 34.19166666666666,
-        "value": 55
       }
     },
     {
@@ -217,6 +139,19 @@
         "momentum": 100,
         "valuation": 26.383333333333333,
         "value": 93
+      }
+    },
+    {
+      "ticker": "PANW",
+      "shares": 109,
+      "entryPrice": 282.1300048828125,
+      "entryDate": "2026-06-18",
+      "scores": {
+        "composite": 100,
+        "fundamental": 44,
+        "momentum": 100,
+        "valuation": 27.433333333333334,
+        "value": 70
       }
     }
   ],
@@ -385,6 +320,36 @@
       "date": "2026-05-25",
       "portfolioValue": 102973.44,
       "spyValue": 106267.99
+    },
+    {
+      "date": "2026-06-18",
+      "portfolioValue": 106553.2,
+      "spyValue": 106402.67
+    },
+    {
+      "date": "2026-06-25",
+      "portfolioValue": 96837.59,
+      "spyValue": 104651.83
+    },
+    {
+      "date": "2026-06-26",
+      "portfolioValue": 108072.79,
+      "spyValue": 103895.05
+    },
+    {
+      "date": "2026-06-27",
+      "portfolioValue": 108072.79,
+      "spyValue": 103895.05
+    },
+    {
+      "date": "2026-08-10",
+      "portfolioValue": 112165.7,
+      "spyValue": 110204.37
+    },
+    {
+      "date": "2026-08-14",
+      "portfolioValue": 114874.12,
+      "spyValue": 110602
     }
   ],
   "rebalanceHistory": [
@@ -1906,27 +1871,483 @@
           "note": "RL chose 100% exposure, 15 positions, invVol sizing"
         }
       }
+    },
+    {
+      "date": "2026-06-18",
+      "regime": "pullback",
+      "adjustedTopN": 10,
+      "effectiveTargetN": 10,
+      "compositeScoreFloor": 55,
+      "hedgeRecommendation": {
+        "action": "HOLD"
+      },
+      "rlAgent": {
+        "stateIdx": 1051,
+        "avgTopScore": 97.17,
+        "stateBins": {
+          "regimeBucket": 2,
+          "alphaBin": 4,
+          "breadthBin": 1,
+          "volBin": 2,
+          "signalBin": 3
+        },
+        "actionIdx": 15,
+        "exposure": 0.65,
+        "positionCount": 10,
+        "sizingMethod": "equal",
+        "rebalanceWait": "standard",
+        "fallback": false,
+        "bullFloorApplied": false,
+        "bearCapApplied": false
+      },
+      "rlExposure": 0.65,
+      "sells": [
+        {
+          "ticker": "WELL",
+          "shares": 44,
+          "entryPrice": 211.3300018310547,
+          "sellPrice": 206.5500030517578,
+          "pnl": -210.32,
+          "pnlPct": -2.26,
+          "holdingReturn": -0.02261864731879475,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "CME",
+          "shares": 31,
+          "entryPrice": 296.8999938964844,
+          "sellPrice": 252.5399932861328,
+          "pnl": -1375.16,
+          "pnlPct": -14.94,
+          "holdingReturn": -0.1494105810787517,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "NEE",
+          "shares": 104,
+          "entryPrice": 91.23999786376953,
+          "sellPrice": 85.7300033569336,
+          "pnl": -573.04,
+          "pnlPct": -6.04,
+          "holdingReturn": -0.060390120954002126,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "NVST",
+          "shares": 171,
+          "entryPrice": 27.030000686645508,
+          "sellPrice": 24.860000610351562,
+          "pnl": -371.07,
+          "pnlPct": -8.03,
+          "holdingReturn": -0.08028116985457791,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "JNJ",
+          "shares": 39,
+          "entryPrice": 238.6699981689453,
+          "sellPrice": 234.1999969482422,
+          "pnl": -174.33,
+          "pnlPct": -1.87,
+          "holdingReturn": -0.01872879396236046,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "MA",
+          "shares": 17,
+          "entryPrice": 519.9600219726562,
+          "sellPrice": 492.989990234375,
+          "pnl": -458.49,
+          "pnlPct": -5.19,
+          "holdingReturn": -0.0518694334152089,
+          "holdingDays": 63,
+          "reason": "ROTATION"
+        }
+      ],
+      "buys": [
+        {
+          "ticker": "PANW",
+          "shares": 109,
+          "buyPrice": 282.1300048828125,
+          "cost": 30752.17,
+          "scores": {
+            "composite": 100,
+            "fundamental": 44,
+            "momentum": 100,
+            "valuation": 27.433333333333334,
+            "value": 70
+          }
+        }
+      ],
+      "allRankings": [
+        {
+          "ticker": "MKSI",
+          "compositeScore": 100,
+          "fundamentalScore": 39.8,
+          "momentumScore": 100,
+          "valuationScore": 26.80333333333333,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 75.51724137931035
+        },
+        {
+          "ticker": "ALGM",
+          "compositeScore": 100,
+          "fundamentalScore": 38,
+          "momentumScore": 100,
+          "valuationScore": 26.53333333333333,
+          "valueScore": 93,
+          "dcfScore": 10,
+          "earningsMomentum": 62.5297528227037
+        },
+        {
+          "ticker": "PANW",
+          "compositeScore": 100,
+          "fundamentalScore": 44,
+          "momentumScore": 100,
+          "valuationScore": 27.433333333333334,
+          "valueScore": 70,
+          "dcfScore": 10,
+          "earningsMomentum": 69.06316753127861
+        },
+        {
+          "ticker": "UNH",
+          "compositeScore": 93.89089535990976,
+          "fundamentalScore": 44.5,
+          "momentumScore": 100,
+          "valuationScore": 30.84166666666667,
+          "valueScore": 65,
+          "dcfScore": 25,
+          "earningsMomentum": 51.23283490997865
+        },
+        {
+          "ticker": "BAC",
+          "compositeScore": 89.5336010467324,
+          "fundamentalScore": 43.5,
+          "momentumScore": 100,
+          "valuationScore": 40.69166666666666,
+          "valueScore": 63,
+          "dcfScore": 100,
+          "earningsMomentum": 63.4269148611535
+        },
+        {
+          "ticker": "JPM",
+          "compositeScore": 88.92597805195513,
+          "fundamentalScore": 50.6,
+          "momentumScore": 100,
+          "valuationScore": 41.75666666666667,
+          "valueScore": 68,
+          "dcfScore": 50,
+          "earningsMomentum": 46.62801342691486
+        },
+        {
+          "ticker": "MSCI",
+          "compositeScore": 85.70293745252546,
+          "fundamentalScore": 44.8,
+          "momentumScore": 100,
+          "valuationScore": 52.553333333333335,
+          "valueScore": 70,
+          "dcfScore": 10,
+          "earningsMomentum": 40.93072932560269
+        },
+        {
+          "ticker": "TECH",
+          "compositeScore": 85.09983933554311,
+          "fundamentalScore": 40.5,
+          "momentumScore": 20.822494258291403,
+          "valuationScore": 43.575,
+          "valueScore": 38,
+          "dcfScore": 10,
+          "earningsMomentum": 25.245651510527924
+        },
+        {
+          "ticker": "CARR",
+          "compositeScore": 77.26969261396691,
+          "fundamentalScore": 40.3,
+          "momentumScore": 100,
+          "valuationScore": 38.545,
+          "valueScore": 95,
+          "dcfScore": 10,
+          "earningsMomentum": 44.65669819957278
+        },
+        {
+          "ticker": "ODFL",
+          "compositeScore": 76.74996495930915,
+          "fundamentalScore": 52.4,
+          "momentumScore": 100,
+          "valuationScore": 35.36,
+          "valueScore": 85,
+          "dcfScore": 10,
+          "earningsMomentum": 65.09917607567898
+        }
+      ],
+      "portfolioValue": 106553.2,
+      "cashAfter": 16941.54,
+      "report": {
+        "periodReturn": -2.2,
+        "spyReturn": 0.2,
+        "alpha": -2.4,
+        "soldPerformance": [
+          {
+            "ticker": "WELL",
+            "pnl": -210.32,
+            "pnlPct": -2.26,
+            "reason": "Dropped out of top N"
+          },
+          {
+            "ticker": "CME",
+            "pnl": -1375.16,
+            "pnlPct": -14.94,
+            "reason": "Dropped out of top N"
+          },
+          {
+            "ticker": "NEE",
+            "pnl": -573.04,
+            "pnlPct": -6.04,
+            "reason": "Dropped out of top N"
+          },
+          {
+            "ticker": "NVST",
+            "pnl": -371.07,
+            "pnlPct": -8.03,
+            "reason": "Dropped out of top N"
+          },
+          {
+            "ticker": "JNJ",
+            "pnl": -174.33,
+            "pnlPct": -1.87,
+            "reason": "Dropped out of top N"
+          },
+          {
+            "ticker": "MA",
+            "pnl": -458.49,
+            "pnlPct": -5.19,
+            "reason": "Dropped out of top N"
+          }
+        ],
+        "missedOpportunities": [
+          {
+            "ticker": "KLAC",
+            "returnPct": 18.7,
+            "currentRank": 10,
+            "wasRanked": true
+          },
+          {
+            "ticker": "LRCX",
+            "returnPct": 16,
+            "currentRank": 15,
+            "wasRanked": true
+          },
+          {
+            "ticker": "APH",
+            "returnPct": 15.4,
+            "currentRank": 14,
+            "wasRanked": true
+          },
+          {
+            "ticker": "TECH",
+            "returnPct": 14.7,
+            "currentRank": 33,
+            "wasRanked": true
+          },
+          {
+            "ticker": "ENTG",
+            "returnPct": 10.7,
+            "currentRank": 16,
+            "wasRanked": true
+          }
+        ],
+        "factorPerformance": [
+          {
+            "name": "fundamental",
+            "label": "Quality",
+            "avgScoreWinners": 49.2,
+            "avgScoreLosers": 43.9,
+            "spread": 5.3,
+            "contribution": "strong"
+          },
+          {
+            "name": "dcf",
+            "label": "DCF",
+            "avgScoreWinners": 12.1,
+            "avgScoreLosers": 10,
+            "spread": 2.1,
+            "contribution": "moderate"
+          },
+          {
+            "name": "valuation",
+            "label": "Valuation",
+            "avgScoreWinners": 36.8,
+            "avgScoreLosers": 34.5,
+            "spread": 2.3,
+            "contribution": "moderate"
+          },
+          {
+            "name": "momentum",
+            "label": "Momentum",
+            "avgScoreWinners": 89.9,
+            "avgScoreLosers": 92.6,
+            "spread": -2.8,
+            "contribution": "negative"
+          },
+          {
+            "name": "value",
+            "label": "Value",
+            "avgScoreWinners": 68.9,
+            "avgScoreLosers": 72.5,
+            "spread": -3.6,
+            "contribution": "negative"
+          },
+          {
+            "name": "earningsMomentum",
+            "label": "Earnings momentum",
+            "avgScoreWinners": 55.1,
+            "avgScoreLosers": 58.9,
+            "spread": -3.8,
+            "contribution": "negative"
+          }
+        ],
+        "weightChanges": {
+          "previous": {
+            "fundamental": 15,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 20,
+            "value": 20,
+            "earningsMomentum": 45
+          },
+          "new": {
+            "fundamental": 8.1,
+            "dcf": 0,
+            "valuation": 0,
+            "momentum": 21.6,
+            "value": 21.6,
+            "earningsMomentum": 48.6
+          },
+          "changes": [
+            {
+              "factor": "fundamental",
+              "label": "Quality",
+              "from": 15,
+              "to": 8.1,
+              "direction": "decreased"
+            },
+            {
+              "factor": "dcf",
+              "label": "DCF",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "valuation",
+              "label": "Valuation",
+              "from": 0,
+              "to": 0,
+              "direction": "unchanged"
+            },
+            {
+              "factor": "momentum",
+              "label": "Momentum",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "value",
+              "label": "Value",
+              "from": 20,
+              "to": 21.6,
+              "direction": "increased"
+            },
+            {
+              "factor": "earningsMomentum",
+              "label": "Earnings momentum",
+              "from": 45,
+              "to": 48.6,
+              "direction": "increased"
+            }
+          ]
+        },
+        "narrative": "Portfolio returned -2.2% vs S&P +0.2% (alpha: -2.4%). This period: Quality was strongest predictor (spread +5.3). Earnings momentum was weak (spread -3.8). Long-term IC (4 periods): Momentum strongest (IC +0.180), Quality weakest (IC -0.080). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%). Missed: KLAC (+18.7% ranked #10), LRCX (+16% ranked #15), APH (+15.4% ranked #14).",
+        "rlDecision": {
+          "stateIdx": 1051,
+          "actionIdx": 15,
+          "exposure": 0.65,
+          "positionCount": 10,
+          "sizingMethod": "equal",
+          "rebalanceWait": "standard",
+          "fallback": false,
+          "bullFloorApplied": false,
+          "bearCapApplied": false,
+          "stateFeatures": {
+            "regime": "pullback",
+            "regimeBucket": 2,
+            "recentAlpha": 0.0271,
+            "breadthRatio": 0.493,
+            "realizedVol": 0.1596,
+            "avgTopScore": 97.2
+          },
+          "note": "RL chose 65% exposure, 10 positions, equal sizing"
+        }
+      }
     }
   ],
-  "recentSells": {},
+  "recentSells": {
+    "WELL": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 206.5500030517578,
+      "exitReturn": -0.02261864731879475
+    },
+    "CME": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 252.5399932861328,
+      "exitReturn": -0.1494105810787517
+    },
+    "NEE": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 85.7300033569336,
+      "exitReturn": -0.060390120954002126
+    },
+    "NVST": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 24.860000610351562,
+      "exitReturn": -0.08028116985457791
+    },
+    "JNJ": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 234.1999969482422,
+      "exitReturn": -0.01872879396236046
+    },
+    "MA": {
+      "exitDate": "2026-06-18",
+      "exitPrice": 492.989990234375,
+      "exitReturn": -0.0518694334152089
+    }
+  },
   "createdAt": "2026-04-16",
-  "lastRebalance": "2026-05-25",
-  "lastNavUpdate": "2026-05-25",
+  "lastRebalance": "2026-06-18",
+  "lastNavUpdate": "2026-08-14",
   "_spyStartPrice": 701.66,
-  "lastRebalanceRegime": "strong_bull",
-  "_rlPrevState": 87,
-  "_rlPrevAction": 58,
+  "lastRebalanceRegime": "pullback",
+  "_rlPrevState": 1051,
+  "_rlPrevAction": 15,
   "_rlLastAction": {
-    "exposure": 1,
-    "positionCount": 15,
-    "sizingMethod": "invVol",
+    "exposure": 0.65,
+    "positionCount": 10,
+    "sizingMethod": "equal",
     "rebalanceWait": "standard"
   },
   "_rlLastStateFeatures": {
-    "regimeBucket": 0,
-    "recentAlpha": -0.02821889896249319,
-    "breadthRatio": 0.39864864864864863,
-    "realizedVol": 0.10043990838923825,
-    "avgTopScore": 97.34978352788188
+    "regimeBucket": 2,
+    "recentAlpha": 0.02712864715511687,
+    "breadthRatio": 0.49324324324324326,
+    "realizedVol": 0.15958034006484173,
+    "avgTopScore": 97.17171594946662
   }
 }

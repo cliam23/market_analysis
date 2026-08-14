@@ -768,30 +768,35 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             <button type="button" className="ma-btn-primary" onClick={initPortfolio}>
               Create Paper Portfolio
             </button>
+            <button
+              type="button"
+              className="ma-btn-ghost"
+              style={{ fontSize: 13 }}
+              onClick={() => { setError(null); fetchPortfolio(true); }}
+            >
+              Reload existing
+            </button>
           </div>
           {error && (
             <div className="ma-mono" style={{ color: "var(--color-negative)", fontSize: 12, marginTop: 10 }}>
               {error}
-              {/already exists/i.test(error) && (
-                <div style={{ marginTop: 10 }}>
-                  <button
-                    type="button"
-                    className="ma-btn-ghost"
-                    style={{ fontSize: 12 }}
-                    onClick={() => {
-                      setError(null);
-                      setLoading(true);
-                      fetchPortfolio(true);
-                    }}
-                  >
-                    Reload portfolio
-                  </button>
-                  {" · "}
-                  <button type="button" className="ma-btn-danger-outline" style={{ fontSize: 12 }} onClick={() => setShowResetConfirm(true)}>
-                    Reset and start over
-                  </button>
-                </div>
-              )}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  type="button"
+                  className="ma-btn-ghost"
+                  style={{ fontSize: 12 }}
+                  onClick={() => {
+                    setError(null);
+                    fetchPortfolio(true);
+                  }}
+                >
+                  Reload portfolio
+                </button>
+                {" · "}
+                <button type="button" className="ma-btn-danger-outline" style={{ fontSize: 12 }} onClick={() => setShowResetConfirm(true)}>
+                  Reset and start over
+                </button>
+              </div>
             </div>
           )}
           </Box>
@@ -1195,6 +1200,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
               ) : (
                 "REBALANCE NOW"
               )}
+            </button>
+            <button
+              type="button"
+              className="ma-pt-btn-secondary"
+              disabled={loading || rebalancing}
+              onClick={() => fetchPortfolio(false)}
+            >
+              RELOAD
             </button>
             <button type="button" className="ma-pt-btn-danger" onClick={() => setShowResetConfirm(true)}>
               RESET

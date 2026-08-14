@@ -1,0 +1,46 @@
+name: Scheduled scores pipeline
+
+# Data pipeline: fetches live Yahoo data, runs it through the real composite
+# scorer + trained RL agent (by booting the actual server.js and calling its
+# own production endpoints — see scripts/generate-scores-snapshot.mjs), and
+# commits the resulting public/data/scores-snapshot.json. That commit lands
+# on main and triggers Vercel to redeploy, so api/scores.js (and the
+# dashboard's live snapshot widget) serve fresh data without needing an
+# always-on backend process.
+
+on:
+  schedule:
+    # 21:30 UTC ≈ after US market close, Mon–Fri
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Generate scores snapshot
+        run: node scripts/generate-scores-snapshot.mjs --universe sp500_top50 --top 15
+
+      - name: Commit snapshot if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- public/data/scores-snapshot.json; then
+            echo "No change in snapshot, skipping commit."
+            exit 0
+          fi
+          git add public/data/scores-snapshot.json
+          git commit -m "chore: refresh scores snapshot [skip ci]"
+          git push

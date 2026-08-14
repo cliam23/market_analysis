@@ -15,7 +15,7 @@
     "server": "node server.js",
     "start": "node server.js",
     "server:free": "node scripts/free-api-port.mjs",
-    "dev:all": "concurrently \"npm run dev\" \"node scripts/free-api-port.mjs && node server.js\"",
+    "dev:all": "concurrently \"npm run dev\" \"node scripts/free-api-port.mjs 3001 5173 && node server.js\"",
     "dev-all": "npm run dev:all",
     "build": "vite build",
     "preview": "vite preview",
@@ -25,7 +25,9 @@
     "train-qlearn-both": "node scripts/train-qlearning-both.mjs",
     "verify:golden": "node scripts/verify-golden.mjs",
     "warm:gold": "node scripts/warm-gold.mjs",
-    "snapshot:ui": "node scripts/snapshot-ui.mjs"
+    "snapshot:ui": "node scripts/snapshot-ui.mjs",
+    "test": "node --test test/*.test.mjs",
+    "snapshot:scores": "node scripts/generate-scores-snapshot.mjs"
   },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
