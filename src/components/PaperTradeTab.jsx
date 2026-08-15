@@ -200,6 +200,7 @@ function ChartTooltip({ active, payload, label }) {
     typeof label === "number"
       ? new Date(label).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
       : label;
+  const isReal = payload[0]?.payload?.isReal !== false;
   return (
     <div
       className="ma-mono"
@@ -212,7 +213,10 @@ function ChartTooltip({ active, payload, label }) {
         boxShadow: "none"
       }}
     >
-      <div style={{ color: "var(--color-text-muted)", marginBottom: 6 }}>{labelStr}</div>
+      <div style={{ color: "var(--color-text-muted)", marginBottom: 6 }}>
+        {labelStr}
+        {!isReal && <span style={{ opacity: 0.7 }}> (estimated)</span>}
+      </div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, marginBottom: 2 }}>
           {p.name}: ${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
@@ -220,6 +224,43 @@ function ChartTooltip({ active, payload, label }) {
       ))}
     </div>
   );
+}
+
+/**
+ * navHistory only gains a point when the server actually ticks (a daily
+ * job, or whenever a dev happens to have it running) — real gaps of days
+ * or weeks exist between recorded snapshots. Recharts' hover snaps to the
+ * nearest actual data point, so without this, hovering anywhere in a large
+ * gap only ever shows one of its two endpoints. Filling in one linearly
+ * interpolated point per day between real snapshots (flagged isReal:false)
+ * makes hover work smoothly across the whole chart while keeping the
+ * visual line identical — the interpolated points fall exactly on the
+ * straight segment already being drawn between the two real points.
+ */
+function densifyChartData(sparse) {
+  if (!sparse || sparse.length === 0) return [];
+  const sorted = [...sparse].sort((a, b) => a.dateTs - b.dateTs);
+  if (sorted.length < 2) return sorted.map((p) => ({ ...p, isReal: true }));
+  const DAY_MS = 86400000;
+  const out = [];
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+    out.push({ ...a, isReal: true });
+    const days = Math.round((b.dateTs - a.dateTs) / DAY_MS);
+    for (let d = 1; d < days; d++) {
+      const t = d / days;
+      out.push({
+        date: new Date(a.dateTs + d * DAY_MS).toISOString().slice(0, 10),
+        dateTs: a.dateTs + d * DAY_MS,
+        Portfolio: a.Portfolio + (b.Portfolio - a.Portfolio) * t,
+        "S&P 500": a["S&P 500"] + (b["S&P 500"] - a["S&P 500"]) * t,
+        isReal: false
+      });
+    }
+  }
+  out.push({ ...sorted[sorted.length - 1], isReal: true });
+  return out;
 }
 
 /**
@@ -888,12 +929,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   } = portfolio;
   const rebalanceHistory = history?.rebalanceHistory || [];
 
-  const chartData = (navHistory || []).map(n => ({
-    date: n.date,
-    dateTs: new Date(n.date + "T00:00:00").getTime(),
-    Portfolio: n.portfolioValue,
-    "S&P 500": n.spyValue
-  }));
+  const chartData = densifyChartData(
+    (navHistory || []).map(n => ({
+      date: n.date,
+      dateTs: new Date(n.date + "T00:00:00").getTime(),
+      Portfolio: n.portfolioValue,
+      "S&P 500": n.spyValue
+    }))
+  );
   const chartXTicks =
     chartData.length > 1
       ? monthlyTicks(
