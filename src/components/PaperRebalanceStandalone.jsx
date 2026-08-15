@@ -2,11 +2,14 @@ import { useState, useEffect } from "react";
 import { MONO, SANS } from "../lib/theme.js";
 import { apiFetch } from "../lib/api.js";
 import PaperRebalanceReportBody from "./PaperRebalanceReportBody.jsx";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 
 /**
  * Full-page rebalance report loaded via ?paperRebalance=YYYY-MM-DD (&paperRebalanceOcc=n for duplicate dates).
  */
 export default function PaperRebalanceStandalone({ date, occurrence }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
   const [rb, setRb] = useState(null);
@@ -17,6 +20,13 @@ export default function PaperRebalanceStandalone({ date, occurrence }) {
       setLoading(true);
       setErr(null);
       setRb(null);
+      if (lite) {
+        setErr(
+          "Not available on this read-only deploy — individual rebalance report lookups need the full backend running locally. See README § Live deployment."
+        );
+        setLoading(false);
+        return;
+      }
       const q = new URLSearchParams({ date });
       if (occurrence != null && occurrence !== "") {
         q.set("occurrence", String(occurrence));
@@ -39,7 +49,7 @@ export default function PaperRebalanceStandalone({ date, occurrence }) {
     return () => {
       aborted = true;
     };
-  }, [date, occurrence]);
+  }, [date, occurrence, lite]);
 
   const backHref = typeof window !== "undefined" ? `${window.location.pathname}` : "/";
 

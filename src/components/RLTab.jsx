@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { decodeState, TOTAL_ACTIONS, TOTAL_STATES } from "../../q-learning-agent.js";
 import { apiFetch } from "../lib/api.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
+
+const LITE_MSG = "Not available on this read-only deploy — needs the full backend running locally (see README § Live deployment).";
 import { MONO, SANS, TEXT, GREEN, GREEN_LIGHT, RED, RED_LIGHT, AMBER, AMBER_LIGHT, BORDER_LIGHT } from "../lib/theme.js";
 import { fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters.js";
 
@@ -88,6 +91,8 @@ function weightsShort(w) {
 const RL_NAV_UNIVERSE_KEY = "ma-rl-nav-universe";
 
 export default function RLTab() {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [rlStatus, setRlStatus] = useState(null);
   const [statusErr, setStatusErr] = useState(null);
   const [universeId, setUniverseId] = useState("sp500_top150");
@@ -267,6 +272,10 @@ export default function RLTab() {
   }, []);
 
   const runTrain = useCallback(async () => {
+    if (lite) {
+      setTrainErr(LITE_MSG);
+      return;
+    }
     if (!sumOk) {
       setTrainErr("Weights must sum to 1.0 (±0.02) before training.");
       return;
@@ -308,9 +317,14 @@ export default function RLTab() {
       }
       setTrainLoading(false);
     }
-  }, [trainBody, sumOk, universeId, loadStatus, loadPaperBlock]);
+  }, [trainBody, sumOk, universeId, loadStatus, loadPaperBlock, lite]);
 
   const loadPolicy = useCallback(async () => {
+    if (lite) {
+      setPolicyJson(null);
+      setPolicyErr(LITE_MSG);
+      return;
+    }
     setPolicyLoading(true);
     setPolicyErr(null);
     try {
@@ -325,7 +339,7 @@ export default function RLTab() {
     } finally {
       setPolicyLoading(false);
     }
-  }, [universeId, isDqn]);
+  }, [universeId, isDqn, lite]);
 
   useEffect(() => {
     setPolicyJson(null);
@@ -333,6 +347,11 @@ export default function RLTab() {
   }, [universeId, isDqn]);
 
   const runCompare = useCallback(async () => {
+    if (lite) {
+      setCompareErr(LITE_MSG);
+      setCompareResult(null);
+      return;
+    }
     setCompareLoading(true);
     setCompareErr(null);
     setCompareResult(null);
@@ -353,9 +372,13 @@ export default function RLTab() {
     } finally {
       setCompareLoading(false);
     }
-  }, [universeId, comparePeriod, compareTopN, compareFreq]);
+  }, [universeId, comparePeriod, compareTopN, compareFreq, lite]);
 
   const openPreviewModal = async () => {
+    if (lite) {
+      setPreviewErr(LITE_MSG);
+      return;
+    }
     setPreviewLoading(true);
     setPreviewErr(null);
     try {
@@ -614,7 +637,13 @@ export default function RLTab() {
             </label>
           </div>
 
-          <button type="button" className="ma-rl-run-btn ma-btn-primary" disabled={trainLoading || !sumOk} onClick={runTrain}>
+          <button
+            type="button"
+            className="ma-rl-run-btn ma-btn-primary"
+            disabled={trainLoading || !sumOk || lite}
+            title={lite ? "Needs the full backend running locally" : undefined}
+            onClick={runTrain}
+          >
             {trainLoading ? (
               <>
                 <Loader2 size={16} className="ma-alphalab-loadbtn__spin" style={{ verticalAlign: "middle", marginRight: 8 }} />
@@ -657,7 +686,13 @@ export default function RLTab() {
         <section className="ma-rl-card">
           <h2 className="ma-rl-card__title">Live policy</h2>
           <p className="ma-rl-card__sub">Greedy action per visited state ({universeId}).</p>
-          <button type="button" className="ma-rl-load-policy" disabled={policyLoading} onClick={loadPolicy}>
+          <button
+            type="button"
+            className="ma-rl-load-policy"
+            disabled={policyLoading || lite}
+            title={lite ? "Needs the full backend running locally" : undefined}
+            onClick={loadPolicy}
+          >
             {policyLoading ? "Loading…" : "Load policy"}
           </button>
           {policyErr && <div style={{ color: RED_LIGHT, fontFamily: MONO, fontSize: 12, marginTop: 12 }}>{policyErr}</div>}
@@ -806,7 +841,13 @@ export default function RLTab() {
                   <span style={{ opacity: 0.8 }}> · {daysAway} days away</span>
                 )}
               </span>
-              <button type="button" className="ma-rl-load-policy" disabled={previewLoading} onClick={openPreviewModal}>
+              <button
+                type="button"
+                className="ma-rl-load-policy"
+                disabled={previewLoading || lite}
+                title={lite ? "Needs the full backend running locally" : undefined}
+                onClick={openPreviewModal}
+              >
                 {previewLoading ? "Preview…" : "Preview rebalance"}
               </button>
             </div>
@@ -851,7 +892,14 @@ export default function RLTab() {
               <option value="monthly">monthly</option>
             </select>
           </div>
-          <button type="button" className="ma-rl-run-btn" style={{ maxWidth: 200, marginTop: 18 }} disabled={compareLoading} onClick={runCompare}>
+          <button
+            type="button"
+            className="ma-rl-run-btn"
+            style={{ maxWidth: 200, marginTop: 18 }}
+            disabled={compareLoading || lite}
+            title={lite ? "Needs the full backend running locally" : undefined}
+            onClick={runCompare}
+          >
             {compareLoading ? "Running…" : "Run compare"}
           </button>
         </div>

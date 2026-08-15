@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 import {
   Line,
   XAxis,
@@ -123,7 +124,7 @@ function compositeTierColor(score) {
   return "var(--red)";
 }
 
-function PtToggle({ on, onChange, disabled, label }) {
+function PtToggle({ on, onChange, disabled, label, title }) {
   return (
     <div className="ma-pt-toggle-row">
       <span>{label}</span>
@@ -132,6 +133,7 @@ function PtToggle({ on, onChange, disabled, label }) {
         role="switch"
         aria-checked={on}
         disabled={disabled}
+        title={title}
         className={`ma-pt-toggle ${on ? "ma-pt-toggle--on" : ""}`}
         onClick={() => !disabled && onChange(!on)}
       />
@@ -192,6 +194,10 @@ function PaperSlotSegmented({ activeId, disabled, onPick }) {
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload || !payload.length) return null;
+  const labelStr =
+    typeof label === "number"
+      ? new Date(label).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : label;
   return (
     <div
       className="ma-mono"
@@ -204,7 +210,7 @@ function ChartTooltip({ active, payload, label }) {
         boxShadow: "none"
       }}
     >
-      <div style={{ color: "var(--color-text-muted)", marginBottom: 6 }}>{label}</div>
+      <div style={{ color: "var(--color-text-muted)", marginBottom: 6 }}>{labelStr}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, marginBottom: 2 }}>
           {p.name}: ${p.value?.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
@@ -212,6 +218,33 @@ function ChartTooltip({ active, payload, label }) {
       ))}
     </div>
   );
+}
+
+/**
+ * Fixed calendar reference points (1st and 15th of every month spanned by
+ * the data) instead of ticks at whatever days a NAV snapshot happened to
+ * land on — sparse/irregular rebalance dates otherwise made the x-axis
+ * timeline confusing to read at a glance.
+ */
+function monthlyTicks(minMs, maxMs) {
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || minMs > maxMs) return [];
+  const ticks = [];
+  const start = new Date(minMs);
+  let y = start.getFullYear();
+  let m = start.getMonth();
+  for (let guard = 0; guard < 600; guard++) {
+    const first = new Date(y, m, 1).getTime();
+    if (first > maxMs) break;
+    const fifteenth = new Date(y, m, 15).getTime();
+    if (first >= minMs) ticks.push(first);
+    if (fifteenth >= minMs && fifteenth <= maxMs) ticks.push(fifteenth);
+    m++;
+    if (m > 11) {
+      m = 0;
+      y++;
+    }
+  }
+  return ticks;
 }
 
 /** Paper trade dual portfolios (server: paper-portfolio-top50.json / paper-portfolio-top150.json). */
@@ -334,6 +367,8 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
 }
 
 export default function PaperTradeTab({ visible = false, onOpenTicker }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const sessionSnapshot = useMemo(() => readPaperTradeSessionCache(), []);
   const [paperUniverseView, setPaperUniverseView] = useState(() => {
     const u = sessionSnapshot?.portfolio?.config?.universeId ?? sessionSnapshot?.portfolio?.config?.universe;
@@ -765,7 +800,13 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             )}
           </div>
           <div style={RUN_ACTION_BAR_STYLE}>
-            <button type="button" className="ma-btn-primary" onClick={initPortfolio}>
+            <button
+              type="button"
+              className="ma-btn-primary"
+              onClick={initPortfolio}
+              disabled={lite}
+              title={lite ? "Needs the full backend running locally" : undefined}
+            >
               Create Paper Portfolio
             </button>
             <button
@@ -793,7 +834,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                   Reload portfolio
                 </button>
                 {" · "}
-                <button type="button" className="ma-btn-danger-outline" style={{ fontSize: 12 }} onClick={() => setShowResetConfirm(true)}>
+                <button
+                  type="button"
+                  className="ma-btn-danger-outline"
+                  style={{ fontSize: 12 }}
+                  onClick={() => setShowResetConfirm(true)}
+                  disabled={lite}
+                  title={lite ? "Needs the full backend running locally" : undefined}
+                >
                   Reset and start over
                 </button>
               </div>
@@ -830,9 +878,17 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
 
   const chartData = (navHistory || []).map(n => ({
     date: n.date,
+    dateTs: new Date(n.date + "T00:00:00").getTime(),
     Portfolio: n.portfolioValue,
     "S&P 500": n.spyValue
   }));
+  const chartXTicks =
+    chartData.length > 1
+      ? monthlyTicks(
+          Math.min(...chartData.map((d) => d.dateTs)),
+          Math.max(...chartData.map((d) => d.dateTs))
+        )
+      : [];
 
   const stratLabel = STRATEGY_OPTIONS.find(s => s.id === config.strategy)?.label || config.strategy;
   const configSlotId = config.universeId ?? config.universe;
@@ -1015,15 +1071,19 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                   <ComposedChart data={chartData} margin={{ top: 8, right: 20, bottom: 4, left: 4 }}>
                     <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="4 4" vertical={false} />
                     <XAxis
-                      dataKey="date"
+                      dataKey="dateTs"
+                      type="number"
+                      scale="time"
+                      domain={["dataMin", "dataMax"]}
+                      ticks={chartXTicks}
+                      interval={0}
                       tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
                       tickLine={false}
                       axisLine={{ stroke: "var(--border-card)" }}
                       tickFormatter={(v) => {
-                        const d = new Date(v + "T00:00:00");
+                        const d = new Date(v);
                         return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
                       }}
-                      minTickGap={40}
                     />
                     <YAxis
                       tick={{ fontSize: 10, fill: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}
@@ -1100,13 +1160,15 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             <>
               <PtToggle
                 label="Use on rebalance"
-                disabled={paperConfigSaving || rebalancing}
+                disabled={paperConfigSaving || rebalancing || lite}
+                title={lite ? "Needs the full backend running locally" : undefined}
                 on={rlConfigOn}
                 onChange={(v) => patchPaperConfig({ rlAgent: v })}
               />
               <PtToggle
                 label="Online Q-update"
-                disabled={paperConfigSaving || rebalancing}
+                disabled={paperConfigSaving || rebalancing || lite}
+                title={lite ? "Needs the full backend running locally" : undefined}
                 on={
                   config.rlOnlineLearning === true ||
                   config.rlOnlineLearning === "true" ||
@@ -1173,8 +1235,9 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           )}
           <button
             type="button"
-            disabled={autoOptimizing || rebalancing}
+            disabled={autoOptimizing || rebalancing || lite}
             onClick={runAutoOptimize}
+            title={lite ? "Needs the full backend running locally" : undefined}
             style={{
               background: "transparent",
               border: "1px solid var(--border-card)",
@@ -1183,7 +1246,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
               padding: "6px 10px",
               fontSize: 11,
               fontFamily: "var(--font-mono)",
-              cursor: autoOptimizing ? "not-allowed" : "pointer",
+              cursor: autoOptimizing || lite ? "not-allowed" : "pointer",
               width: "100%",
               marginBottom: 8
             }}
@@ -1191,7 +1254,13 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             {autoOptimizing ? "Checking…" : "Run Optimizer Now"}
           </button>
           <div className="ma-pt-actions">
-            <button type="button" className="ma-pt-btn-primary" disabled={rebalancing} onClick={onRebalanceClick}>
+            <button
+              type="button"
+              className="ma-pt-btn-primary"
+              disabled={rebalancing || lite}
+              onClick={onRebalanceClick}
+              title={lite ? "Needs the full backend running locally" : undefined}
+            >
               {rebalancing ? (
                 <>
                   <span className="ma-pt-spin" aria-hidden />
@@ -1209,7 +1278,13 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             >
               RELOAD
             </button>
-            <button type="button" className="ma-pt-btn-danger" onClick={() => setShowResetConfirm(true)}>
+            <button
+              type="button"
+              className="ma-pt-btn-danger"
+              onClick={() => setShowResetConfirm(true)}
+              disabled={lite}
+              title={lite ? "Needs the full backend running locally" : undefined}
+            >
               RESET
             </button>
           </div>

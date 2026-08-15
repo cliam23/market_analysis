@@ -17,6 +17,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSnapshotPayload, MIRRORED_UNIVERSES } from './lib/build-snapshot.mjs';
 import { backtestMirrorConfigs, backtestMirrorFilename, backtestMirrorQuery } from './lib/backtest-mirror.mjs';
+import { UNIVERSE_TICKERS } from '../server/config/universes.js';
+import { analysisMirrorFilename } from './lib/analysis-mirror.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -94,6 +96,7 @@ async function main() {
 
     await mirrorEndpoints(base, outDir);
     await mirrorBacktests(base, outDir);
+    await mirrorAnalysis(base, outDir);
   } finally {
     shutdown();
   }
@@ -165,6 +168,32 @@ async function mirrorBacktests(base, outDir) {
     await writeFile(path.join(mirrorDir, filename), JSON.stringify(wrapped, null, 2));
     console.log(`${label}: wrote ${filename} (${Math.round((Date.now() - start) / 1000)}s)`);
   }
+}
+
+// Mirrors GET /api/analysis/:ticker for every ticker in sp500_top150 (a
+// superset of sp500_top50), so Search actually works for real tickers
+// instead of just showing "not available" — see
+// scripts/lib/analysis-mirror.mjs. ~150 sequential requests; server.js's
+// own Yahoo cache (warmed by the earlier scan/backtest steps) keeps most
+// of these fast, but this step still takes a few minutes.
+async function mirrorAnalysis(base, outDir) {
+  const mirrorDir = path.join(outDir, 'mirror');
+  await mkdir(mirrorDir, { recursive: true });
+
+  const tickers = UNIVERSE_TICKERS.sp500_top150 || [];
+  let ok = 0;
+  for (const [i, ticker] of tickers.entries()) {
+    const data = await fetchJsonOrNull(`${base}/api/analysis/${ticker}`);
+    if (data == null) {
+      console.warn(`[analysis ${i + 1}/${tickers.length}] ${ticker}: failed, skipping`);
+      continue;
+    }
+    const wrapped = { _snapshotTs: Date.now(), _snapshotData: data };
+    await writeFile(path.join(mirrorDir, analysisMirrorFilename(ticker)), JSON.stringify(wrapped, null, 2));
+    ok++;
+    await sleep(120);
+  }
+  console.log(`Mirrored analysis for ${ok}/${tickers.length} tickers`);
 }
 
 main().catch((e) => {

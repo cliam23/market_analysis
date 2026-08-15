@@ -6,6 +6,7 @@ import { fmtBillions } from "../lib/formatters.js";
 
 import { MONO } from "../lib/theme.js";
 import { apiFetch } from "../lib/api.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 
 function ScoreRing({ score }) {
   if (score === null || score === undefined) {
@@ -241,6 +242,8 @@ function ComparisonTable({ comps }) {
 }
 
 export default function CompsTab({ ticker }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -250,6 +253,13 @@ export default function CompsTab({ ticker }) {
 
   useEffect(() => {
     if (!ticker) return;
+    if (lite) {
+      setLoading(false);
+      setError(
+        "Comps aren't mirrored on this read-only deploy (only the main analysis is, for S&P 500 Top 150 tickers) — run the full backend locally for comps on any ticker."
+      );
+      return;
+    }
 
     const id = ++reqIdRef.current;
     const ac = beginRequest();
@@ -280,7 +290,7 @@ export default function CompsTab({ ticker }) {
     return () => ac.abort();
     // beginRequest / clearIfCurrent are stable from useAbortableApi
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticker]);
+  }, [ticker, lite]);
 
   if (loading) {
     return (

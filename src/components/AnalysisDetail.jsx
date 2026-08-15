@@ -10,8 +10,8 @@ import { apiFetch } from "../lib/api.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { useBackendMode } from "../hooks/useBackendMode.js";
 
-const LITE_ANALYSIS_MSG =
-  "Full ticker analysis needs the full backend running locally — this read-only deploy only has pre-computed data for the Dashboard, Paper Trade, and Backtest tabs (see README § Live deployment).";
+const LITE_DCF_MSG =
+  "DCF models aren't mirrored on this read-only deploy (only the main analysis is, for S&P 500 Top 150 tickers) — run the full backend locally for DCF on any ticker.";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -474,6 +474,8 @@ function SubBar({ label, score, max, infoTip, delayMs = 0 }) {
 }
 
 function NetworkInput({ ticker, onSubmit }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const submitAcRef = useRef(null);
@@ -481,6 +483,7 @@ function NetworkInput({ ticker, onSubmit }) {
   useEffect(() => () => submitAcRef.current?.abort(), [ticker]);
 
   const handleSubmit = async (score, label) => {
+    if (lite) return;
     submitAcRef.current?.abort();
     const ac = new AbortController();
     submitAcRef.current = ac;
@@ -519,7 +522,8 @@ function NetworkInput({ ticker, onSubmit }) {
           <button
             key={opt.score}
             onClick={() => handleSubmit(opt.score, opt.label)}
-            disabled={submitting}
+            disabled={submitting || lite}
+            title={lite ? "Needs the full backend running locally" : undefined}
             style={{
               padding: "6px 10px",
               background: "rgba(255,255,255,0.06)",
@@ -527,7 +531,7 @@ function NetworkInput({ ticker, onSubmit }) {
               borderRadius: 6,
               color: "#f0f0f0",
               fontSize: 12,
-              cursor: "pointer",
+              cursor: lite ? "not-allowed" : "pointer",
               fontFamily: MONO
             }}
           >
@@ -535,7 +539,9 @@ function NetworkInput({ ticker, onSubmit }) {
           </button>
         ))}
       </div>
-      <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 6 }}>Click to save your assessment for this stock</div>
+      <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 6 }}>
+        {lite ? "Needs the full backend running locally to save." : "Click to save your assessment for this stock"}
+      </div>
     </div>
   );
 }
@@ -1422,12 +1428,6 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
   }, [ticker]);
 
   useEffect(() => {
-    if (lite) {
-      setLoading(false);
-      setError(LITE_ANALYSIS_MSG);
-      setData(null);
-      return;
-    }
     const id = ++analysisReqId.current;
     const ac = analysisApi.beginRequest();
     setLoading(true);
@@ -1636,7 +1636,9 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
           <DCFTab data={dcfData} />
         </Suspense>
       ) : (
-        <div style={{ padding: 20, textAlign: "center", color: "#f0f0f0", fontFamily: MONO }}>Failed to load DCF data</div>
+        <div style={{ padding: 20, textAlign: "center", color: "#f0f0f0", fontFamily: MONO }}>
+          {lite ? LITE_DCF_MSG : "Failed to load DCF data"}
+        </div>
       ))}
       {activeTab === "comps" && (
         <Suspense fallback={<div style={{ padding: 20, textAlign: "center", color: "#f0f0f0" }}>Loading...</div>}>

@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { apiFetch, safeJson } from "../lib/api.js";
 import { fmtMoney as _fmtMoney } from "../lib/formatters.js";
 import { SANS, TEXT, GREEN, RED, AMBER } from "../lib/theme.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 
 const fmtMoney = (n) => _fmtMoney(n, 2);
 
@@ -485,6 +486,8 @@ export default function WheelTab({
   universeId = "sp500_top50",
   embedded = true
 }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
@@ -494,6 +497,13 @@ export default function WheelTab({
   const book = useMemo(() => equityBookMeta(universeId), [universeId]);
 
   const load = useCallback(async () => {
+    if (lite) {
+      setLoading(false);
+      setError(
+        "Not available on this read-only deploy — the wheel manager needs live options chains and mutable paper-trade state. See README § Live deployment."
+      );
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -508,7 +518,7 @@ export default function WheelTab({
     } finally {
       setLoading(false);
     }
-  }, [universeId]);
+  }, [universeId, lite]);
 
   useEffect(() => {
     if (!visible) return;
@@ -598,6 +608,31 @@ export default function WheelTab({
       : regime === "bear"
         ? "ma-pro-regime-pill--bear"
         : "ma-pro-regime-pill--neutral";
+
+  // Wheel status/run/optimize all need live options chains plus mutable
+  // paper-trade state — no fixed matrix worth mirroring, same reasoning as
+  // OptionsTab. One clear notice instead of a page of zeroed-out KPIs.
+  if (lite) {
+    return (
+      <div
+        className={embedded ? "ma-pt-wheel-embed" : "ma-page-container ma-pro-page"}
+        style={{ fontFamily: SANS, color: TEXT, paddingBottom: embedded ? 16 : 32 }}
+      >
+        <div
+          style={{
+            padding: 20,
+            borderRadius: 8,
+            background: "rgba(88,166,255,0.06)",
+            border: "1px solid rgba(88,166,255,0.28)",
+            fontSize: 13,
+            lineHeight: 1.6
+          }}
+        >
+          {error}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
