@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { apiFetch, safeJson } from "../lib/api.js";
 import { MONO, SANS, TEXT, GREEN, RED, AMBER, BORDER_LIGHT } from "../lib/theme.js";
 import { fmtMoney as _fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 
 const fmtMoney = (n) => _fmtMoney(n, 2);
 
@@ -728,6 +729,8 @@ function OptionsBacktest() {
 
 
 export default function OptionsTab({ visible = true }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState(null);
   const [scan, setScan] = useState(null);
@@ -800,13 +803,13 @@ export default function OptionsTab({ visible = true }) {
   }, []);
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || lite) return;
     if (hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     fetchScan();
     fetchPortfolio();
     fetchAutoPortfolio();
-  }, [visible, fetchScan, fetchPortfolio, fetchAutoPortfolio]);
+  }, [visible, lite, fetchScan, fetchPortfolio, fetchAutoPortfolio]);
 
   const handleRefresh = useCallback(() => {
     hasFetchedRef.current = false;
@@ -1059,6 +1062,38 @@ export default function OptionsTab({ visible = true }) {
       : regime === "bear"
         ? "ma-pro-regime-pill--bear"
         : "ma-pro-regime-pill--neutral";
+
+  // Options scanning, paper positions, and the auto-trader are all live/
+  // stateful — chains change constantly and trades mutate state, so unlike
+  // Backtest there's no fixed matrix worth mirroring here. Show one clear
+  // notice instead of a page full of failed-fetch banners.
+  if (lite) {
+    return (
+      <div className="ma-page-container ma-opt-page ma-pro-page" style={{ fontFamily: SANS, color: TEXT, paddingBottom: 32 }}>
+        <div className="ma-pro-header">
+          <div className="ma-pro-header__left">
+            <p className="ma-pro-kicker">Options</p>
+            <h1 className="ma-pro-title">Portfolio Dashboard</h1>
+          </div>
+        </div>
+        <div
+          style={{
+            marginTop: 16,
+            padding: 20,
+            borderRadius: 8,
+            background: "rgba(88,166,255,0.06)",
+            border: "1px solid rgba(88,166,255,0.28)",
+            fontSize: 13,
+            lineHeight: 1.6
+          }}
+        >
+          Not available on this read-only deploy. The options scanner, paper positions, and auto-trader all need
+          live options chains and mutable state that this deploy doesn't run — see{" "}
+          <span className="ma-mono">README § Live deployment</span> to run the full backend locally.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="ma-page-container ma-opt-page ma-pro-page" style={{ fontFamily: SANS, color: TEXT, paddingBottom: 32 }}>

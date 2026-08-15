@@ -1,5 +1,7 @@
 # Market Analysis
 
+**Live:** [market-analysis-iv8o.vercel.app](https://market-analysis-iv8o.vercel.app) — a real, working deploy backed by a scheduled data pipeline and a public API (see [Live deployment & data pipeline](#live-deployment--data-pipeline)), not just a static demo.
+
 A local-first equity-research workbench: multi-factor composite ranking, walk-forward backtests, paper trading, an options scanner / wheel manager, and optional ML and reinforcement-learning overlays.
 
 > Single repo, two processes: a **React + Vite** SPA on `:5173` talking to an **Express** JSON API on `:3001`. Data comes mostly from public Yahoo Finance with optional FRED, Tradier sandbox, and Anthropic / Alpha Vantage hooks.
@@ -84,8 +86,8 @@ npm run server   # serves dist/ from Express + /api routes
 | `npm run verify:golden`  | Golden snapshot replay |
 | `npm run warm:gold`      | Warm `data/gold/` bars |
 | `npm run snapshot:ui`    | Snapshot dashboard / API responses |
-| `npm test`               | Unit tests (`node --test`) — snapshot transform, `/api/scores` handler, RL agent encode/decode |
-| `npm run snapshot:scores`| Regenerate `public/data/scores-snapshot.json` (boots server.js briefly, hits its own live endpoints) — see [Live deployment](#live-deployment--data-pipeline) |
+| `npm test`               | Unit tests (`node --test`, 26 tests) — snapshot transform, mirror route handlers, backtest-matrix matcher, RL agent encode/decode |
+| `npm run snapshot:scores`| Regenerate `public/data/scores-snapshot.json` + `public/data/mirror/*.json` (boots server.js, hits its own live endpoints incl. 8 full backtests — takes a while) — see [Live deployment](#live-deployment--data-pipeline) |
 
 ---
 
@@ -154,7 +156,7 @@ See **`.env.example`** for the full list of toggles (`ML_RANK_WEIGHT`, `RL_ENABL
 ├─ scripts/                  # OOS replay, golden snapshots, qlearning trainer, etc.
 │  ├─ generate-scores-snapshot.mjs  # Data pipeline: boots server.js, writes snapshot + mirror
 │  └─ lib/build-snapshot.mjs, lib/read-mirror.mjs, lib/backtest-mirror.mjs  # Pure transforms, unit-tested separately
-├─ test/                     # node:test unit tests (snapshot transform, /api/scores, RL agent)
+├─ test/                     # node:test unit tests (snapshot transform, mirror handlers, backtest matrix, RL agent)
 ├─ .github/workflows/        # ci.yml (tests + build), scheduled-pipeline.yml (cron data refresh)
 ├─ ml/                       # Python: train_rf*, train_rnn, predict workers
 ├─ models/                   # Trained sklearn / pytorch artifacts (joblib / pt)
@@ -292,12 +294,18 @@ docker run --rm -p 3001:3001 \
 
 ## Live deployment & data pipeline
 
-The public Vercel deploy ships three real, connected pieces instead of a static demo:
+**Pipeline, end to end:** data in (Yahoo Finance) → composite score (`analysis-engine.js` pillar ranking) → RL agent (`q-learning-agent.js` sizing/exposure decision) → dashboard (public API + React SPA). The full diagram is below; the short version is the public Vercel deploy ships three real, connected pieces instead of a static demo:
 
 1. **Scheduled data pipeline** — `.github/workflows/scheduled-pipeline.yml` runs on a cron (weekdays, after US market close) and on manual dispatch. It calls `node scripts/generate-scores-snapshot.mjs`, which boots the real `server.js` on a scratch port and hits **its own production endpoints** — `GET /api/scan/sp500_top50` (live composite scan against fresh Yahoo data), `GET /api/dashboard/summary`, `GET /api/market/indices`, `GET /api/paper-trade/portfolio` + `/history` (both universes), `GET /api/rl/status`, and `GET /api/backtest/:universeId` **eight times** — a fixed matrix of S&P Top 50 / Top 150 × 3 Years / 5 Years × RL on/off, all Full Composite strategy (see `scripts/lib/backtest-mirror.mjs`). It writes `public/data/scores-snapshot.json` plus a read-only mirror of those other routes to `public/data/mirror/*.json`, and commits it all. No scoring or backtest logic is reimplemented — the pipeline reuses the exact code path the local app uses, so there's nothing to keep in sync. The backtest matrix alone runs 8 full multi-year simulations, so a full pipeline run takes a while (tens of minutes).
 2. **Public API endpoints** — `api/scores.js`, `api/dashboard/summary.js`, `api/market/indices.js`, `api/paper-trade/{portfolio,history}.js`, `api/rl/status.js`, and `api/backtest/[universeId].js` are Vercel Node serverless functions that replay those captured routes at their *exact same paths* as `server.js` (`api/scores.js` takes `?ticker=`, most others take `?universe=`). Because the paths and response shapes match exactly, the existing frontend components (Dashboard, Paper Trade, RL Agent) work against them unmodified — they don't know or care that the data is a periodic mirror instead of a live process. The Backtest tab is the one exception: `src/hooks/useBackendMode.js` detects the mirror deploy at runtime (via `api/health.js`'s `mode: "lite"`) and the Universe/Period/Strategy dropdowns narrow to just the mirrored matrix, defaulting to a working combo — so "Run Backtest" always returns the real captured equity curve and rebalance log instead of a dead end, and there's nothing to misconfigure. `server.js` exposes identical routes for local-dev parity (except `/api/backtest/:universeId` itself, which always runs live locally — the mirror only stands in when there's no server at all). **This only covers read (`GET`) routes** — actions that mutate state (rebalance, create/reset portfolio, RL training, options trades) need `server.js` actually running somewhere and will fail on the Vercel-only deploy by design; the Dashboard shows a "Read-only public mirror" banner when serving mirrored data so this is clear in the UI.
 
-Alpha Lab's heavier diagnostics (universe comparison, factor strength, hedging impact, forward confidence/weight recommendation, the equity-curves chart, and `/api/rl/compare` with user-chosen periods) aren't mirrored — they're exploratory tools meant to run against live data with arbitrary parameters, not a fixed few configs. `useBackendMode()` detects the lite deploy and skips firing those calls, showing "Not available on this read-only deploy" per section instead of a fetch error, and disables the Retrain/Run Weight Sweep buttons. The RL agent status and portfolio weights panels *are* mirrored, so those still show real data.
+Alpha Lab's heavier diagnostics (universe comparison, factor strength, hedging impact, forward confidence/weight recommendation, the equity-curves chart, and `/api/rl/compare` with user-chosen periods) aren't mirrored — they're exploratory tools meant to run against live data with arbitrary parameters, not a fixed few configs. `useBackendMode()` detects the lite deploy and skips firing those calls, showing "Not available on this read-only deploy" per section instead of a fetch error, and disables the Retrain/Run Weight Sweep buttons. The RL agent status and portfolio weights panels *are* mirrored, so those still show real data. Search (`GET /api/analysis/:ticker`, `/api/dcf/:ticker` — any of hundreds of tickers, not a fixed few) and Options (scanning, paper positions, and the auto-trader are all live/mutable state) get the same treatment: the search box and Options KPI header still render, but attempting a ticker analysis or opening Options shows one clear explanatory message instead of a page full of failed fetches.
+
+### Nothing on the live deploy can write anywhere — verified, not assumed
+
+Every function under `api/` (`scores.js`, `dashboard/summary.js`, `market/indices.js`, `paper-trade/{portfolio,history}.js`, `rl/status.js`, `backtest/[universeId].js`, `health.js`) only ever calls `readFileSync` — none of them import `writeFileSync` or touch any mutable state, and each one rejects any request that isn't `GET`/`HEAD` with `405` via `requireGet()` in `scripts/lib/read-mirror.mjs` (tested in `test/require-get.test.mjs`). So even if someone tried to hit a mutating-looking path on the live URL — resetting a portfolio, closing an options position, triggering RL training — there's no code there that would do it; Vercel's routing has no matching function for any of those paths, and the five read-only functions that *do* exist would reject a non-GET method outright regardless.
+
+And even setting that aside: **the live Vercel deploy and your local machine are entirely separate infrastructure.** Vercel builds and runs its own copy of this repo in its own containers — nothing a visitor does there can reach your computer's filesystem, your local `paper-portfolio-*.json`, or your local `rl-agent-*.json`. The only data flow in either direction is: (1) the scheduled pipeline computing fresh data and committing it to GitHub, and (2) you running `git pull` on your own machine whenever you choose to. Nobody else can push to this repo or trigger that pull.
 3. **CI/CD with tests** — `.github/workflows/ci.yml` runs `npm test` (unit tests for the snapshot transform, the mirror-read helper, the backtest-matrix matcher, the `/api/scores` and mirror route handlers, and RL agent state/action encode-decode round trips — `test/*.test.mjs`, Node's built-in test runner, no extra dependency) and a production build on every push/PR to `main`.
 
 ```
@@ -349,7 +357,7 @@ Vercel account setup and repo authorization are steps only you can do — here's
 
 1. Push this repo to GitHub (already done: `cliam23/market_analysis`).
 2. At [vercel.com](https://vercel.com), sign in and **Add New → Project → Import** the `cliam23/market_analysis` GitHub repo. Vercel auto-detects `vercel.json` (framework: Vite, build: `npm run build`, output: `dist/`) — no config needed.
-3. Deploy. Vercel gives you a `*.vercel.app` URL; every push to `main` (including the scheduled pipeline's commits) redeploys automatically.
+3. Deploy. Vercel gives you a `*.vercel.app` URL (this repo's is [market-analysis-iv8o.vercel.app](https://market-analysis-iv8o.vercel.app)); every push to `main` (including the scheduled pipeline's commits) redeploys automatically.
 4. On the repo's **Settings → Actions → General → Workflow permissions**, confirm **"Read and write permissions"** is selected — the scheduled pipeline needs this to commit the snapshot and mirror files back to `main`.
 5. Optionally trigger the pipeline once by hand (Actions tab → *Scheduled scores pipeline* → **Run workflow**) so the first deploy already has fresh data instead of the seed files committed in this repo.
 
@@ -357,10 +365,9 @@ No environment variables or secrets are required for the Vercel deploy itself �
 
 ### Screenshot
 
-<!-- Once connected, replace with a real screenshot of your *.vercel.app deploy: -->
-<!-- ![Dashboard — live snapshot widget](docs/screenshot-dashboard.png) -->
+![Dashboard on the live Vercel deploy — market regime, performance overview, positions, top movers](docs/screenshot-dashboard.webp)
 
-_Add a screenshot of the live Dashboard tab (showing the "Live snapshot (public API)" panel) to `docs/screenshot-dashboard.png` after connecting Vercel, and uncomment the line above._
+The live [market-analysis-iv8o.vercel.app](https://market-analysis-iv8o.vercel.app) Dashboard, showing real mirrored data: regime badge, adaptive weights, both paper portfolios' performance, live positions, and top movers.
 
 ---
 

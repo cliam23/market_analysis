@@ -97,6 +97,30 @@ test('GET /api/scores?ticker=AAA filters to one row', async () => {
   }
 });
 
+test('POST /api/scores is rejected with 405 — no route under api/ accepts writes', async () => {
+  const originalCwd = process.cwd();
+  const dir = await mkdtemp(path.join(tmpdir(), 'scores-api-'));
+  try {
+    await mkdir(path.join(dir, 'public', 'data'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'public', 'data', 'scores-snapshot.json'),
+      JSON.stringify({ generatedAt: new Date().toISOString(), topScores: [] })
+    );
+    process.chdir(dir);
+    const { default: handler } = await import(`../api/scores.js?t=${Date.now()}`);
+
+    const res = mockRes();
+    handler({ query: {}, method: 'POST' }, res);
+
+    assert.equal(res._status, 405);
+    assert.equal(res._body.success, false);
+    assert.equal(res._headers['Allow'], 'GET, HEAD');
+  } finally {
+    process.chdir(originalCwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('GET /api/scores returns 503 when snapshot is missing', async () => {
   const originalCwd = process.cwd();
   const dir = await mkdtemp(path.join(tmpdir(), 'scores-api-'));

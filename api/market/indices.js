@@ -1,7 +1,8 @@
 // Read-only mirror of GET /api/market/indices — see api/dashboard/summary.js.
-import { readMirror } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, requireGet } from '../../scripts/lib/read-mirror.mjs';
 
 export default function handler(req, res) {
+  if (!requireGet(req, res)) return;
   const data = readMirror('market-indices.json');
   if (!data) {
     res.status(503).json({ success: false, error: 'mirror not generated yet' });

@@ -8,6 +8,10 @@ const CompsTab = lazy(() => import("./CompsTab.jsx"));
 import { MONO, SANS } from "../lib/theme.js";
 import { apiFetch } from "../lib/api.js";
 import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
+import { useBackendMode } from "../hooks/useBackendMode.js";
+
+const LITE_ANALYSIS_MSG =
+  "Full ticker analysis needs the full backend running locally — this read-only deploy only has pre-computed data for the Dashboard, Paper Trade, and Backtest tabs (see README § Live deployment).";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -1392,6 +1396,8 @@ function ScaleTab({ data, ticker, refreshKey }) {
 }
 
 export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1416,6 +1422,12 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
   }, [ticker]);
 
   useEffect(() => {
+    if (lite) {
+      setLoading(false);
+      setError(LITE_ANALYSIS_MSG);
+      setData(null);
+      return;
+    }
     const id = ++analysisReqId.current;
     const ac = analysisApi.beginRequest();
     setLoading(true);
@@ -1457,13 +1469,14 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
     })();
     // analysisApi methods are stable
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticker, refreshKey]);
+  }, [ticker, refreshKey, lite]);
 
   const handleRefresh = () => setRefreshKey((k) => k + 1);
 
   useEffect(() => {
     if (activeTab !== "dcf") return undefined;
     if (dcfData) return undefined;
+    if (lite) return undefined;
 
     const id = ++dcfReqId.current;
     const ac = dcfApi.beginRequest();
@@ -1487,7 +1500,7 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
 
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch when tab/ticker/data cleared; skip if dcf already loaded
-  }, [activeTab, ticker, dcfData]);
+  }, [activeTab, ticker, dcfData, lite]);
 
   if (loading && !data) {
     return (

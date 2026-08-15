@@ -1,9 +1,10 @@
 // Read-only mirror of GET /api/paper-trade/portfolio?universe= — see
 // api/dashboard/summary.js. Mutating routes (init/rebalance/reset/config)
 // are intentionally not mirrored; they need a live server.js.
-import { readMirror, resolveUniverse } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, resolveUniverse, requireGet } from '../../scripts/lib/read-mirror.mjs';
 
 export default function handler(req, res) {
+  if (!requireGet(req, res)) return;
   const universe = resolveUniverse(req);
   const data = readMirror(`paper-trade-portfolio-${universe}.json`);
   if (!data) {

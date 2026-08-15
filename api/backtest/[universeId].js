@@ -6,10 +6,11 @@
 // different strategy, period, universe, or tweaked Advanced setting — has
 // no live server to compute it here, so it gets a clear explanation
 // instead of a generic 404.
-import { readMirror } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, requireGet } from '../../scripts/lib/read-mirror.mjs';
 import { matchBacktestMirrorConfig, backtestMirrorFilename } from '../../scripts/lib/backtest-mirror.mjs';
 
 export default function handler(req, res) {
+  if (!requireGet(req, res)) return;
   const universeId = req.query.universeId;
   const config = matchBacktestMirrorConfig(universeId, req.query);
 

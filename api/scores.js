@@ -7,8 +7,10 @@
 // Express process, since Vercel doesn't run the always-on Node server.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { requireGet } from '../scripts/lib/read-mirror.mjs';
 
 export default function handler(req, res) {
+  if (!requireGet(req, res)) return;
   let snapshot;
   try {
     const snapshotPath = path.join(process.cwd(), 'public', 'data', 'scores-snapshot.json');

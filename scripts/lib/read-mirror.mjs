@@ -31,3 +31,31 @@ export function resolveUniverse(req) {
   const u = raw != null && String(raw).trim() !== '' ? String(raw).trim() : null;
   return u === 'sp500_top50' ? 'sp500_top50' : 'sp500_top150';
 }
+
+/**
+ * Every function under api/ only ever reads a static file — none of them
+ * call writeFileSync or touch any mutable state. This guard makes that a
+ * hard property instead of an implicit one: any non-GET request (a
+ * mis-pointed script, a probe, whatever) is rejected outright before the
+ * handler body runs, rather than relying on "the code just happens to only
+ * read". Nothing served from api/ can ever write anywhere — not on Vercel's
+ * own filesystem, and there is no code path back to a developer's machine
+ * at all (Vercel's deployment is a separate copy of the repo; the only way
+ * data flows from GitHub to a local clone is a `git pull` the developer
+ * runs themselves).
+ *
+ * Returns false (and has already written the 405 response) when the
+ * request should stop here.
+ */
+export function requireGet(req, res) {
+  const method = req.method ?? 'GET';
+  if (method !== 'GET' && method !== 'HEAD') {
+    res.setHeader('Allow', 'GET, HEAD');
+    res.status(405).json({
+      success: false,
+      error: 'Method not allowed — every route under /api is a read-only public mirror; nothing here writes anywhere.'
+    });
+    return false;
+  }
+  return true;
+}

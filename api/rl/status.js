@@ -1,8 +1,9 @@
 // Read-only mirror of GET /api/rl/status?universe= — see
 // api/dashboard/summary.js.
-import { readMirror, resolveUniverse } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, resolveUniverse, requireGet } from '../../scripts/lib/read-mirror.mjs';
 
 export default function handler(req, res) {
+  if (!requireGet(req, res)) return;
   const universe = resolveUniverse(req);
   const data = readMirror(`rl-status-${universe}.json`);
   if (!data) {
