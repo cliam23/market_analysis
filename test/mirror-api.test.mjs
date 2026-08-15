@@ -92,15 +92,15 @@ test('api/dashboard/summary.js returns 503 when no mirror exists yet', async () 
   });
 });
 
-test('api/paper-trade/portfolio.js picks the file for the requested universe', async () => {
+test('api/paper-trade/[...path].js picks the file for the requested universe', async () => {
   await withScratchProject(async (dir) => {
     await writeFile(
       path.join(dir, 'public', 'data', 'mirror', 'paper-trade-portfolio-sp500_top50.json'),
       JSON.stringify({ _snapshotTs: Date.now(), _snapshotData: { success: true, portfolio: { config: { universe: 'sp500_top50' } } } })
     );
-    const { default: handler } = await import(`../api/paper-trade/portfolio.js?t=${Date.now()}`);
+    const { default: handler } = await import(`../api/paper-trade/[...path].js?t=${Date.now()}`);
     const res = mockRes();
-    handler({ query: { universe: 'sp500_top50' } }, res);
+    handler({ query: { path: ['portfolio'], universe: 'sp500_top50' } }, res);
     assert.equal(res._status, 200);
     assert.equal(res._body.portfolio.config.universe, 'sp500_top50');
   });
