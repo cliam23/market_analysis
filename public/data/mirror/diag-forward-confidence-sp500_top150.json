@@ -1,0 +1,107 @@
+{
+  "_snapshotTs": 1786770425446,
+  "_snapshotData": {
+    "success": true,
+    "universeId": "sp500_top150",
+    "period": "3y",
+    "weights": {
+      "fundamental": 0.15,
+      "dcf": 0,
+      "valuation": 0,
+      "momentum": 0.2,
+      "value": 0.2,
+      "earningsMomentum": 0.45
+    },
+    "subperiodAnalysis": {
+      "1y": {
+        "totalReturn": 53.54,
+        "alpha": 47.38,
+        "sharpe": 2.31,
+        "maxDrawdown": -15.15
+      },
+      "2y": {
+        "totalReturn": 40.56,
+        "alpha": 7.9,
+        "sharpe": 0.74,
+        "maxDrawdown": -18.94
+      },
+      "3y": {
+        "totalReturn": 80.17,
+        "alpha": 4.39,
+        "sharpe": 0.9,
+        "maxDrawdown": -20.82
+      }
+    },
+    "regimeSplit": {
+      "strong_bull": {
+        "daysInRegime": 274,
+        "return": 70.47,
+        "alpha": -3.7,
+        "sharpe": -0.09,
+        "maxDD": -12.37,
+        "benchmarkReturn": 74.17,
+        "numPeriods": 33
+      },
+      "normal": {
+        "daysInRegime": 66,
+        "return": 29.93,
+        "alpha": -2.79,
+        "sharpe": -0.68,
+        "maxDD": -2.73,
+        "benchmarkReturn": 32.73,
+        "numPeriods": 10
+      },
+      "pullback": {
+        "daysInRegime": 259,
+        "return": 2.77,
+        "alpha": 10.64,
+        "sharpe": 0.84,
+        "maxDD": -20.54,
+        "benchmarkReturn": -7.86,
+        "numPeriods": 43
+      },
+      "caution": {
+        "daysInRegime": 83,
+        "return": -3.81,
+        "alpha": 5.78,
+        "sharpe": 2.1,
+        "maxDD": -15.11,
+        "benchmarkReturn": -9.59,
+        "numPeriods": 14
+      },
+      "bear": {
+        "daysInRegime": 27,
+        "return": -17.72,
+        "alpha": -2.15,
+        "sharpe": null,
+        "maxDD": -17.72,
+        "benchmarkReturn": -15.57,
+        "numPeriods": 6
+      }
+    },
+    "regimeDiversification": {
+      "positiveAlphaRegimes": 2,
+      "totalRegimesObserved": 5,
+      "worstRegimeAlpha": -3.7,
+      "bestRegimeAlpha": 10.64,
+      "alphaRange": 14.34,
+      "robustnessScore": 0.4
+    },
+    "scores": {
+      "stability": 1,
+      "robustness": 0.4,
+      "simplicity": 0.3333,
+      "recencyDiscount": 0.2587,
+      "forwardConfidence": 0.5755
+    },
+    "forwardEstimate": {
+      "estimatedAnnualAlpha": 3.07,
+      "confidenceBand": {
+        "low": 1.53,
+        "high": 4.6
+      },
+      "basis": "Conservative blend: min(primary-window annualized alpha, median sub-period alpha) with damping; confidence score is separate from this estimate."
+    },
+    "interpretation": "Forward confidence 58% blends sub-period stability (100%), regime robustness (40%), weight simplicity (33%), and recency discount (26%). Positive alpha in 2/5 sampled regimes (worst regime alpha -3.7%). Recent performance looks elevated vs long-run average — forward estimate is conservative."
+  }
+}

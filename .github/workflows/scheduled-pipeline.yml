@@ -37,10 +37,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- public/data/scores-snapshot.json; then
-            echo "No change in snapshot, skipping commit."
+          if git diff --quiet -- public/data/scores-snapshot.json public/data/mirror/; then
+            echo "No change in snapshot or mirror, skipping commit."
             exit 0
           fi
-          git add public/data/scores-snapshot.json
+          git add public/data/scores-snapshot.json public/data/mirror/
           git commit -m "chore: refresh scores snapshot [skip ci]"
           git push

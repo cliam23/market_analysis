@@ -11,9 +11,6 @@ import {
 } from "recharts";
 import { MONO } from "../lib/theme.js";
 import { apiFetchNoStore } from "../lib/api.js";
-import { useBackendMode } from "../hooks/useBackendMode.js";
-
-const LITE_MSG = "Not available on this read-only deploy — needs the full backend running locally (see README § Live deployment).";
 
 const COLORS = {
   benchmark: "#6b7280",
@@ -80,8 +77,6 @@ function colorVsBench(val, bench) {
 }
 
 export default function AlphaLabEquityCurves({ visible, universeId, period }) {
-  const backendMode = useBackendMode();
-  const lite = backendMode === "lite";
   const [raw, setRaw] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
@@ -111,11 +106,6 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
       equityPrevVisibleRef.current = false;
       return;
     }
-    if (lite) {
-      setErr(LITE_MSG);
-      setLoading(false);
-      return;
-    }
     const k = `${universeId}|${period}`;
     const becameVisible = !equityPrevVisibleRef.current;
     equityPrevVisibleRef.current = true;
@@ -124,7 +114,7 @@ export default function AlphaLabEquityCurves({ visible, universeId, period }) {
     }
     equityCurveKeyRef.current = k;
     void load();
-  }, [visible, load, universeId, period, lite]);
+  }, [visible, load, universeId, period]);
 
   const chartData = useMemo(() => mergeEquityRows(raw?.curves), [raw]);
   const hasRl = (raw?.curves?.rlEval?.length ?? 0) > 0;

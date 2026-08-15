@@ -1,0 +1,61 @@
+{
+  "_snapshotTs": 1786770304714,
+  "_snapshotData": {
+    "success": true,
+    "universeId": "sp500_top150",
+    "period": "3y",
+    "rlAgentKind": "qlearning",
+    "configs": [
+      {
+        "name": "Rules only",
+        "hedging": false,
+        "rl": false,
+        "totalReturn": 59.6,
+        "alpha": -0.78,
+        "sharpe": 0.77,
+        "maxDrawdown": -18.6,
+        "hedgeStats": null
+      },
+      {
+        "name": "Q-learning only",
+        "hedging": false,
+        "rl": true,
+        "totalReturn": 80.12,
+        "alpha": 4.37,
+        "sharpe": 0.89,
+        "maxDrawdown": -15.43,
+        "hedgeStats": null
+      },
+      {
+        "name": "Rules + Hedge",
+        "hedging": true,
+        "rl": false,
+        "totalReturn": 56.54,
+        "alpha": -1.58,
+        "sharpe": 0.72,
+        "maxDrawdown": -18.83,
+        "hedgeStats": {
+          "totalOpened": 2,
+          "netImpact": -98.05,
+          "costDrag": 98.05,
+          "protectionGain": 0
+        }
+      },
+      {
+        "name": "Q-learning + Hedge",
+        "hedging": true,
+        "rl": true,
+        "totalReturn": 79.16,
+        "alpha": 4.14,
+        "sharpe": 0.88,
+        "maxDrawdown": -15.51,
+        "hedgeStats": {
+          "totalOpened": 2,
+          "netImpact": -98.8,
+          "costDrag": 98.8,
+          "protectionGain": 0
+        }
+      }
+    ]
+  }
+}

@@ -151,9 +151,9 @@ function PaperSlotLoadingBanner({ show }) {
   );
 }
 
-function PaperTradeSubTabs({ active, disabled, onPick }) {
+function PaperTradeSubTabs({ active, disabled, onPick, lite }) {
   return (
-    <div className="ma-pt-segmented ma-pt-subtabs" style={{ width: "100%", maxWidth: 320, marginTop: 12 }}>
+    <div className="ma-pt-segmented ma-pt-subtabs" style={{ width: "100%", maxWidth: lite ? 160 : 320, marginTop: 12 }}>
       <button
         type="button"
         className={`ma-pt-seg ${active === "portfolio" ? "ma-pt-seg--active" : ""}`}
@@ -162,14 +162,16 @@ function PaperTradeSubTabs({ active, disabled, onPick }) {
       >
         Portfolio
       </button>
-      <button
-        type="button"
-        className={`ma-pt-seg ${active === "wheel" ? "ma-pt-seg--active" : ""}`}
-        disabled={disabled}
-        onClick={() => onPick("wheel")}
-      >
-        Wheel
-      </button>
+      {!lite && (
+        <button
+          type="button"
+          className={`ma-pt-seg ${active === "wheel" ? "ma-pt-seg--active" : ""}`}
+          disabled={disabled}
+          onClick={() => onPick("wheel")}
+        >
+          Wheel
+        </button>
+      )}
     </div>
   );
 }
@@ -447,6 +449,14 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
     writePaperTradeSubTab(paperSubTab);
   }, [paperSubTab]);
 
+  // Wheel sub-tab isn't mirrored on the read-only deploy (needs live options
+  // chains + mutable paper-trade state) — its toggle is hidden entirely in
+  // lite mode, so steer away from a stale "wheel" choice restored from
+  // sessionStorage instead of stranding the user on a hidden panel.
+  useEffect(() => {
+    if (lite && paperSubTab === "wheel") setPaperSubTab("portfolio");
+  }, [lite, paperSubTab]);
+
   const runAutoOptimize = async () => {
     setAutoOptimizing(true);
     setAutoOptResult(null);
@@ -469,7 +479,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
   };
 
   useEffect(() => {
-    if (!portfolio || autoRebalanced || rebalancing) return;
+    if (lite || !portfolio || autoRebalanced || rebalancing) return;
     const { lastRebalance, holdings, nextRebalance } = portfolio;
     if (holdings.length === 0 && portfolio.rebalanceCount === 0) return;
     if (!lastRebalance || !nextRebalance) return;
@@ -478,7 +488,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
       setAutoRebalanced(true);
       rebalance();
     }
-  }, [portfolio]);
+  }, [portfolio, lite]);
 
   const paperUniverseQs = `?universe=${encodeURIComponent(paperUniverseView)}`;
 
@@ -664,8 +674,8 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           disabled
           onPick={() => {}}
         />
-        <PaperTradeSubTabs active={paperSubTab} disabled={false} onPick={setPaperSubTab} />
-        {paperSubTab === "wheel" ? (
+        <PaperTradeSubTabs active={paperSubTab} disabled={false} onPick={setPaperSubTab} lite={lite} />
+        {!lite && paperSubTab === "wheel" ? (
           <WheelTab
             visible={visible && paperSubTab === "wheel"}
             universeId={paperUniverseView}
@@ -725,7 +735,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             fetchPortfolio(true, id);
           }}
         />
-        <PaperTradeSubTabs active={paperSubTab} disabled={paperSlotFetchPending} onPick={setPaperSubTab} />
+        <PaperTradeSubTabs active={paperSubTab} disabled={paperSlotFetchPending} onPick={setPaperSubTab} lite={lite} />
         <PaperSlotLoadingBanner show={paperSlotFetchPending && paperSubTab === "portfolio"} />
         {showResetConfirm && (
           <ConfirmModal
@@ -734,7 +744,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             onCancel={() => setShowResetConfirm(false)}
           />
         )}
-        {paperSubTab === "wheel" && (
+        {!lite && paperSubTab === "wheel" && (
           <WheelTab
             visible={visible && paperSubTab === "wheel"}
             universeId={paperUniverseView}
@@ -800,15 +810,15 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             )}
           </div>
           <div style={RUN_ACTION_BAR_STYLE}>
-            <button
-              type="button"
-              className="ma-btn-primary"
-              onClick={initPortfolio}
-              disabled={lite}
-              title={lite ? "Needs the full backend running locally" : undefined}
-            >
-              Create Paper Portfolio
-            </button>
+            {!lite && (
+              <button
+                type="button"
+                className="ma-btn-primary"
+                onClick={initPortfolio}
+              >
+                Create Paper Portfolio
+              </button>
+            )}
             <button
               type="button"
               className="ma-btn-ghost"
@@ -833,17 +843,19 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                 >
                   Reload portfolio
                 </button>
-                {" · "}
-                <button
-                  type="button"
-                  className="ma-btn-danger-outline"
-                  style={{ fontSize: 12 }}
-                  onClick={() => setShowResetConfirm(true)}
-                  disabled={lite}
-                  title={lite ? "Needs the full backend running locally" : undefined}
-                >
-                  Reset and start over
-                </button>
+                {!lite && (
+                  <>
+                    {" · "}
+                    <button
+                      type="button"
+                      className="ma-btn-danger-outline"
+                      style={{ fontSize: 12 }}
+                      onClick={() => setShowResetConfirm(true)}
+                    >
+                      Reset and start over
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -927,7 +939,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
           fetchPortfolio(true, id);
         }}
       />
-      <PaperTradeSubTabs active={paperSubTab} disabled={loading || slotUiPending} onPick={setPaperSubTab} />
+      <PaperTradeSubTabs active={paperSubTab} disabled={loading || slotUiPending} onPick={setPaperSubTab} lite={lite} />
       <PaperSlotLoadingBanner show={slotUiPending && paperSubTab === "portfolio"} />
       {showResetConfirm && (
         <ConfirmModal
@@ -1156,19 +1168,17 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
               {rlConfigOn ? "ON" : "OFF"}
             </span>
           </div>
-          {isCompositeStrategy(config.strategy) && (
+          {isCompositeStrategy(config.strategy) && !lite && (
             <>
               <PtToggle
                 label="Use on rebalance"
-                disabled={paperConfigSaving || rebalancing || lite}
-                title={lite ? "Needs the full backend running locally" : undefined}
+                disabled={paperConfigSaving || rebalancing}
                 on={rlConfigOn}
                 onChange={(v) => patchPaperConfig({ rlAgent: v })}
               />
               <PtToggle
                 label="Online Q-update"
-                disabled={paperConfigSaving || rebalancing || lite}
-                title={lite ? "Needs the full backend running locally" : undefined}
+                disabled={paperConfigSaving || rebalancing}
                 on={
                   config.rlOnlineLearning === true ||
                   config.rlOnlineLearning === "true" ||
@@ -1233,43 +1243,45 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
                 ))}
             </div>
           )}
-          <button
-            type="button"
-            disabled={autoOptimizing || rebalancing || lite}
-            onClick={runAutoOptimize}
-            title={lite ? "Needs the full backend running locally" : undefined}
-            style={{
-              background: "transparent",
-              border: "1px solid var(--border-card)",
-              color: autoOptimizing ? "var(--text-secondary)" : "var(--text-primary)",
-              borderRadius: 6,
-              padding: "6px 10px",
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              cursor: autoOptimizing || lite ? "not-allowed" : "pointer",
-              width: "100%",
-              marginBottom: 8
-            }}
-          >
-            {autoOptimizing ? "Checking…" : "Run Optimizer Now"}
-          </button>
-          <div className="ma-pt-actions">
+          {!lite && (
             <button
               type="button"
-              className="ma-pt-btn-primary"
-              disabled={rebalancing || lite}
-              onClick={onRebalanceClick}
-              title={lite ? "Needs the full backend running locally" : undefined}
+              disabled={autoOptimizing || rebalancing}
+              onClick={runAutoOptimize}
+              style={{
+                background: "transparent",
+                border: "1px solid var(--border-card)",
+                color: autoOptimizing ? "var(--text-secondary)" : "var(--text-primary)",
+                borderRadius: 6,
+                padding: "6px 10px",
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                cursor: autoOptimizing ? "not-allowed" : "pointer",
+                width: "100%",
+                marginBottom: 8
+              }}
             >
-              {rebalancing ? (
-                <>
-                  <span className="ma-pt-spin" aria-hidden />
-                  Rebalancing…
-                </>
-              ) : (
-                "REBALANCE NOW"
-              )}
+              {autoOptimizing ? "Checking…" : "Run Optimizer Now"}
             </button>
+          )}
+          <div className="ma-pt-actions">
+            {!lite && (
+              <button
+                type="button"
+                className="ma-pt-btn-primary"
+                disabled={rebalancing}
+                onClick={onRebalanceClick}
+              >
+                {rebalancing ? (
+                  <>
+                    <span className="ma-pt-spin" aria-hidden />
+                    Rebalancing…
+                  </>
+                ) : (
+                  "REBALANCE NOW"
+                )}
+              </button>
+            )}
             <button
               type="button"
               className="ma-pt-btn-secondary"
@@ -1278,15 +1290,15 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
             >
               RELOAD
             </button>
+            {!lite && (
             <button
-              type="button"
-              className="ma-pt-btn-danger"
-              onClick={() => setShowResetConfirm(true)}
-              disabled={lite}
-              title={lite ? "Needs the full backend running locally" : undefined}
-            >
-              RESET
-            </button>
+                type="button"
+                className="ma-pt-btn-danger"
+                onClick={() => setShowResetConfirm(true)}
+              >
+                RESET
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1658,7 +1670,7 @@ export default function PaperTradeTab({ visible = false, onOpenTicker }) {
         </div>
       )}
 
-      {paperSubTab === "wheel" && (
+      {!lite && paperSubTab === "wheel" && (
         <WheelTab
           visible={visible && paperSubTab === "wheel"}
           universeId={paperUniverseView}

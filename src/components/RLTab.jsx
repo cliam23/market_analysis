@@ -3,8 +3,6 @@ import { Loader2 } from "lucide-react";
 import { decodeState, TOTAL_ACTIONS, TOTAL_STATES } from "../../q-learning-agent.js";
 import { apiFetch } from "../lib/api.js";
 import { useBackendMode } from "../hooks/useBackendMode.js";
-
-const LITE_MSG = "Not available on this read-only deploy — needs the full backend running locally (see README § Live deployment).";
 import { MONO, SANS, TEXT, GREEN, GREEN_LIGHT, RED, RED_LIGHT, AMBER, AMBER_LIGHT, BORDER_LIGHT } from "../lib/theme.js";
 import { fmtMoney, fmtPctSigned as fmtPct } from "../lib/formatters.js";
 
@@ -272,10 +270,6 @@ export default function RLTab() {
   }, []);
 
   const runTrain = useCallback(async () => {
-    if (lite) {
-      setTrainErr(LITE_MSG);
-      return;
-    }
     if (!sumOk) {
       setTrainErr("Weights must sum to 1.0 (±0.02) before training.");
       return;
@@ -317,14 +311,9 @@ export default function RLTab() {
       }
       setTrainLoading(false);
     }
-  }, [trainBody, sumOk, universeId, loadStatus, loadPaperBlock, lite]);
+  }, [trainBody, sumOk, universeId, loadStatus, loadPaperBlock]);
 
   const loadPolicy = useCallback(async () => {
-    if (lite) {
-      setPolicyJson(null);
-      setPolicyErr(LITE_MSG);
-      return;
-    }
     setPolicyLoading(true);
     setPolicyErr(null);
     try {
@@ -339,7 +328,7 @@ export default function RLTab() {
     } finally {
       setPolicyLoading(false);
     }
-  }, [universeId, isDqn, lite]);
+  }, [universeId, isDqn]);
 
   useEffect(() => {
     setPolicyJson(null);
@@ -347,11 +336,6 @@ export default function RLTab() {
   }, [universeId, isDqn]);
 
   const runCompare = useCallback(async () => {
-    if (lite) {
-      setCompareErr(LITE_MSG);
-      setCompareResult(null);
-      return;
-    }
     setCompareLoading(true);
     setCompareErr(null);
     setCompareResult(null);
@@ -372,13 +356,9 @@ export default function RLTab() {
     } finally {
       setCompareLoading(false);
     }
-  }, [universeId, comparePeriod, compareTopN, compareFreq, lite]);
+  }, [universeId, comparePeriod, compareTopN, compareFreq]);
 
   const openPreviewModal = async () => {
-    if (lite) {
-      setPreviewErr(LITE_MSG);
-      return;
-    }
     setPreviewLoading(true);
     setPreviewErr(null);
     try {
@@ -496,6 +476,7 @@ export default function RLTab() {
       </header>
 
       <div className="ma-rl-grid-2" style={{ marginTop: 28 }}>
+        {!lite && (
         <section className="ma-rl-card">
           <h2 className="ma-rl-card__title">Train agent</h2>
           <p className="ma-rl-card__sub">Run episodes to update the on-disk policy for the selected universe.</p>
@@ -640,8 +621,7 @@ export default function RLTab() {
           <button
             type="button"
             className="ma-rl-run-btn ma-btn-primary"
-            disabled={trainLoading || !sumOk || lite}
-            title={lite ? "Needs the full backend running locally" : undefined}
+            disabled={trainLoading || !sumOk}
             onClick={runTrain}
           >
             {trainLoading ? (
@@ -682,6 +662,7 @@ export default function RLTab() {
             </div>
           )}
         </section>
+        )}
 
         <section className="ma-rl-card">
           <h2 className="ma-rl-card__title">Live policy</h2>
@@ -689,8 +670,7 @@ export default function RLTab() {
           <button
             type="button"
             className="ma-rl-load-policy"
-            disabled={policyLoading || lite}
-            title={lite ? "Needs the full backend running locally" : undefined}
+            disabled={policyLoading}
             onClick={loadPolicy}
           >
             {policyLoading ? "Loading…" : "Load policy"}
@@ -844,8 +824,7 @@ export default function RLTab() {
               <button
                 type="button"
                 className="ma-rl-load-policy"
-                disabled={previewLoading || lite}
-                title={lite ? "Needs the full backend running locally" : undefined}
+                disabled={previewLoading}
                 onClick={openPreviewModal}
               >
                 {previewLoading ? "Preview…" : "Preview rebalance"}
@@ -896,8 +875,7 @@ export default function RLTab() {
             type="button"
             className="ma-rl-run-btn"
             style={{ maxWidth: 200, marginTop: 18 }}
-            disabled={compareLoading || lite}
-            title={lite ? "Needs the full backend running locally" : undefined}
+            disabled={compareLoading}
             onClick={runCompare}
           >
             {compareLoading ? "Running…" : "Run compare"}

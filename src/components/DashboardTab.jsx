@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { apiFetch, apiFetchBypassBrowserCache, safeJson } from "../lib/api.js";
 import { fmtDate } from "../lib/formatters.js";
-import { CongressSignalInline } from "./shared.jsx";
+import { CongressSignalInline, InfoTip } from "./shared.jsx";
+import { EDUCATION } from "../lib/education.js";
+import { UNIVERSE_OPTIONS } from "../lib/constants.js";
 
 /** Must match PaperTradeTab (`PAPER_TRADE_NAV_UNIVERSE_KEY`). */
 const PAPER_TRADE_NAV_UNIVERSE_KEY = "ma-paper-trade-nav-universe";
@@ -102,6 +104,17 @@ function relTime(iso) {
   const h = Math.round(m / 60);
   if (h < 48) return `${h}h ago`;
   return `${Math.round(h / 24)}d ago`;
+}
+
+/** One-line, jargon-free gloss for a raw regime string — shown next to the regime pill. */
+function regimePlainText(raw) {
+  const r = String(raw || "").toLowerCase();
+  if (r === "strong_bull") return "healthy, strong market";
+  if (r === "normal") return "steady, healthy market";
+  if (r === "pullback" || r === "correction") return "mild dip after a run-up";
+  if (r === "caution") return "shakier conditions — trimming risk";
+  if (r === "bear") return "sustained downturn — playing defense";
+  return "";
 }
 
 function regimeToneClass(tone) {
@@ -318,44 +331,7 @@ export default function DashboardTab({ setTab }) {
         </div>
       )}
 
-      <section className="ma-dash-card" style={{ animationDelay: "0ms" }}>
-        <h2 className="ma-dash-h2">Live snapshot (public API)</h2>
-        {scoresErr && !scoresSnapshot && <p className="ma-dash-muted">{scoresErr}</p>}
-        {scoresSnapshot && (
-          <>
-            <div className="ma-dash-muted" style={{ marginBottom: 8 }}>
-              {scoresSnapshot.universeId} · regime{" "}
-              <span className={"ma-dash-regime ma-dash-regime--inline " + regimeToneClass(dashboardRegimeTone(scoresSnapshot.regime))}>
-                {scoresSnapshot.regime?.replace(/_/g, " ") || "—"}
-              </span>{" "}
-              · updated {relTime(scoresSnapshot.generatedAt)} · RL exposure{" "}
-              {scoresSnapshot.rl?.decision?.exposure != null
-                ? `${Math.round(scoresSnapshot.rl.decision.exposure * 100)}%`
-                : "—"}
-              , {scoresSnapshot.rl?.decision?.positionCount ?? "—"} positions (
-              {scoresSnapshot.rl?.decision?.sizingMethod ?? "—"})
-            </div>
-            <ul className="ma-dash-factor-list">
-              {(scoresSnapshot.topScores ?? []).slice(0, 5).map((r) => (
-                <li key={r.ticker} className="ma-dash-factor-row">
-                  <div className="ma-dash-factor-name">
-                    {r.rank}. {r.ticker}
-                  </div>
-                  <div className="ma-dash-factor-bar-wrap">
-                    <div className="ma-dash-factor-bar" style={{ width: `${clamp(r.compositeScore, 0, 100)}%` }} />
-                  </div>
-                  <div className="ma-dash-factor-pct ma-mono">{r.compositeScore}</div>
-                  <div className="ma-dash-factor-trend ma-mono">{r.grade}</div>
-                </li>
-              ))}
-            </ul>
-            <div className="ma-dash-muted" style={{ marginTop: 6 }}>
-              Composite score → RL decision, refreshed daily by a scheduled pipeline and served from{" "}
-              <span className="ma-mono">/api/scores</span>.
-            </div>
-          </>
-        )}
-      </section>
+      {liteMode && <TopPicksCard scoresSnapshot={scoresSnapshot} scoresErr={scoresErr} delay="0ms" />}
 
       {!liteMode && (
       <>
@@ -400,12 +376,19 @@ export default function DashboardTab({ setTab }) {
       <div className="ma-dash-layout">
         <div className="ma-dash-main">
           <section className="ma-dash-card ma-dash-card--a" style={{ animationDelay: "0ms" }}>
-            <h2 className="ma-dash-h2">Market regime & system</h2>
+            <h2 className="ma-dash-h2" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              Market regime & system
+              <InfoTip title={EDUCATION.marketRegime.title}>{EDUCATION.marketRegime.content}</InfoTip>
+            </h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              How risky conditions look right now, and how the strategy is responding.
+            </p>
             <div className="ma-dash-regime-row">
               <div className={"ma-dash-regime " + regimeToneClass(badge?.tone)}>
                 {badge?.label ?? "—"}
               </div>
               <div className="ma-dash-system-lines">
+                <div className="ma-dash-muted ma-dash-system-line">{regimePlainText(badge?.raw)}</div>
                 {(summary?.systemStatus?.lines ?? []).map((ln) => (
                   <div key={ln} className="ma-dash-system-line">
                     {ln}
@@ -423,11 +406,20 @@ export default function DashboardTab({ setTab }) {
                 </div>
               </div>
             </div>
+            <p className="ma-dash-muted" style={{ marginTop: 12, marginBottom: 4 }}>
+              How much each signal currently matters when picking stocks:
+            </p>
             <AdaptiveWeightsBar weights={summary?.systemStatus?.adaptiveWeights} />
           </section>
 
           <section className="ma-dash-card" style={{ animationDelay: "50ms" }}>
-            <h2 className="ma-dash-h2">Performance overview</h2>
+            <h2 className="ma-dash-h2" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              Performance overview
+              <InfoTip title={EDUCATION.paperPortfolio.title}>{EDUCATION.paperPortfolio.content}</InfoTip>
+            </h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              Two practice portfolios (no real money) tracking how the strategy performs. Click either to see full detail.
+            </p>
             <div className="ma-dash-perf-grid">
               {[
                 { id: "sp500_top50", label: "S&P Top 50", card: p50 },
@@ -453,8 +445,8 @@ export default function DashboardTab({ setTab }) {
                     {card ? fmtPct(card.returnPct) : "—"}
                   </div>
                   <div className="ma-dash-muted">
-                    {card ? `${card.positions} positions` : "No data"}
-                    {card ? ` · RL: ${card.rlActive ? "Active" : "Off"}` : ""}
+                    {card ? `${card.positions} stocks` : "No data"}
+                    {card ? ` · Auto-adjust: ${card.rlActive ? "On" : "Off"}` : ""}
                   </div>
                   <div className="ma-dash-muted">
                     Next: {card?.nextRebalance ? fmtDate(card.nextRebalance) : "—"}
@@ -466,6 +458,9 @@ export default function DashboardTab({ setTab }) {
 
           <section className="ma-dash-card" style={{ animationDelay: "100ms" }}>
             <h2 className="ma-dash-h2">Recent signals</h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              A plain-English log of what the strategy bought or sold at each rebalance.
+            </p>
             <ul className="ma-dash-feed">
               {(summary?.recentSignals ?? []).length === 0 && (
                 <li className="ma-dash-muted">No rebalance history yet.</li>
@@ -501,6 +496,9 @@ export default function DashboardTab({ setTab }) {
 
           <section className="ma-dash-card" style={{ animationDelay: "150ms" }}>
             <h2 className="ma-dash-h2">Factor pulse</h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              Whether each signal has been working better or worse lately.
+            </p>
             {(summary?.factorPulse?.factors ?? []).length === 0 && (
               <p className="ma-dash-muted">No adaptive weight history yet (run a rebalance).</p>
             )}
@@ -527,6 +525,8 @@ export default function DashboardTab({ setTab }) {
               })}
             </ul>
           </section>
+
+          <TopPicksCard scoresSnapshot={scoresSnapshot} scoresErr={scoresErr} delay="200ms" />
         </div>
 
         <aside className="ma-dash-side">
@@ -548,6 +548,9 @@ export default function DashboardTab({ setTab }) {
                 ))}
               </div>
             </div>
+            <p className="ma-dash-muted" style={{ marginTop: -8, marginBottom: 10 }}>
+              What the practice portfolio owns right now, best performers first.
+            </p>
             <div className="ma-dash-pos-list">
               {holdingsSorted.winners.map((h) => (
                 <div key={h.ticker} className="ma-dash-pos-row">
@@ -598,11 +601,17 @@ export default function DashboardTab({ setTab }) {
 
           <section className="ma-dash-card" style={{ animationDelay: "90ms" }}>
             <h2 className="ma-dash-h2">Top movers (ranking)</h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              Stocks whose score changed the most, or traded the most, in the current ranking.
+            </p>
             <MoversPanel movers={movers} />
           </section>
 
           <section className="ma-dash-card" style={{ animationDelay: "130ms" }}>
             <h2 className="ma-dash-h2">Sector mix</h2>
+            <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+              How the practice portfolio is spread across industries.
+            </p>
             {sectors.length === 0 ? (
               <p className="ma-dash-muted">No holdings to map.</p>
             ) : (
@@ -630,6 +639,72 @@ export default function DashboardTab({ setTab }) {
       </>
       )}
     </div>
+  );
+}
+
+function friendlyUniverseLabel(id) {
+  return UNIVERSE_OPTIONS.find((u) => u.id === id)?.label || id || "—";
+}
+
+function sizingMethodPlain(method) {
+  const m = String(method || "").toLowerCase();
+  if (m === "invvol") return "weighted by stability";
+  if (m === "score") return "weighted by score";
+  if (m === "equal") return "equally";
+  return method || "—";
+}
+
+/** Renamed from "Live snapshot (public API)" — see conversation with the user
+ * about making the dashboard approachable for non-traders. Shown as the sole
+ * lead content on the lite (Vercel-only) deploy, or lower in the page,
+ * after the paper portfolios, once the full backend's own data has loaded. */
+function TopPicksCard({ scoresSnapshot, scoresErr, delay }) {
+  return (
+    <section className="ma-dash-card" style={{ animationDelay: delay }}>
+      <h2 className="ma-dash-h2" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        Today&apos;s top-ranked stocks
+        <InfoTip title={EDUCATION.topPicks.title}>{EDUCATION.topPicks.content}</InfoTip>
+      </h2>
+      <p className="ma-dash-muted" style={{ marginTop: -6, marginBottom: 12 }}>
+        The 5 highest-scoring stocks right now, out of the universe the model tracks — not a buy recommendation.
+      </p>
+      {scoresErr && !scoresSnapshot && <p className="ma-dash-muted">{scoresErr}</p>}
+      {scoresSnapshot && (
+        <>
+          <div className="ma-dash-muted" style={{ marginBottom: 8 }}>
+            {friendlyUniverseLabel(scoresSnapshot.universeId)} ·{" "}
+            <span className={"ma-dash-regime ma-dash-regime--inline " + regimeToneClass(dashboardRegimeTone(scoresSnapshot.regime))}>
+              {scoresSnapshot.regime?.replace(/_/g, " ") || "—"}
+            </span>{" "}
+            market ({regimePlainText(scoresSnapshot.regime)}) · updated {relTime(scoresSnapshot.generatedAt)}
+            <br />
+            Currently investing{" "}
+            {scoresSnapshot.rl?.decision?.exposure != null
+              ? `~${Math.round(scoresSnapshot.rl.decision.exposure * 100)}%`
+              : "—"}{" "}
+            of the portfolio across {scoresSnapshot.rl?.decision?.positionCount ?? "—"} stocks, {" "}
+            {sizingMethodPlain(scoresSnapshot.rl?.decision?.sizingMethod)}
+          </div>
+          <ul className="ma-dash-factor-list">
+            {(scoresSnapshot.topScores ?? []).slice(0, 5).map((r) => (
+              <li key={r.ticker} className="ma-dash-factor-row">
+                <div className="ma-dash-factor-name">
+                  {r.rank}. {r.ticker}
+                </div>
+                <div className="ma-dash-factor-bar-wrap">
+                  <div className="ma-dash-factor-bar" style={{ width: `${clamp(r.compositeScore, 0, 100)}%` }} />
+                </div>
+                <div className="ma-dash-factor-pct ma-mono">{r.compositeScore}</div>
+                <div className="ma-dash-factor-trend ma-mono">{r.grade}</div>
+              </li>
+            ))}
+          </ul>
+          <div className="ma-dash-muted" style={{ marginTop: 6 }}>
+            Score 0–100, recalculated once a day. Grade is the same score as a letter (A–F).
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

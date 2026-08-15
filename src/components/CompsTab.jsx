@@ -253,13 +253,6 @@ export default function CompsTab({ ticker }) {
 
   useEffect(() => {
     if (!ticker) return;
-    if (lite) {
-      setLoading(false);
-      setError(
-        "Comps aren't mirrored on this read-only deploy (only the main analysis is, for S&P 500 Top 150 tickers) — run the full backend locally for comps on any ticker."
-      );
-      return;
-    }
 
     const id = ++reqIdRef.current;
     const ac = beginRequest();

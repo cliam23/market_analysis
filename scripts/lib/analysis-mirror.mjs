@@ -8,3 +8,11 @@ export const ANALYSIS_MIRROR_UNIVERSE = 'sp500_top150';
 export function analysisMirrorFilename(ticker) {
   return `analysis-${String(ticker).toUpperCase()}.json`;
 }
+
+export function dcfMirrorFilename(ticker) {
+  return `dcf-${String(ticker).toUpperCase()}.json`;
+}
+
+export function compsMirrorFilename(ticker) {
+  return `comps-${String(ticker).toUpperCase()}.json`;
+}

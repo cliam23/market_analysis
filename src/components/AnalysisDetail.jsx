@@ -11,7 +11,7 @@ import { useAbortableApi, isAbortError } from "../hooks/useAbortableApi.js";
 import { useBackendMode } from "../hooks/useBackendMode.js";
 
 const LITE_DCF_MSG =
-  "DCF models aren't mirrored on this read-only deploy (only the main analysis is, for S&P 500 Top 150 tickers) — run the full backend locally for DCF on any ticker.";
+  "DCF for this ticker isn't available on this read-only deploy — run the full backend locally for DCF on any ticker.";
 
 function Box({ border, children, style: sx = {} }) {
   return (
@@ -483,7 +483,6 @@ function NetworkInput({ ticker, onSubmit }) {
   useEffect(() => () => submitAcRef.current?.abort(), [ticker]);
 
   const handleSubmit = async (score, label) => {
-    if (lite) return;
     submitAcRef.current?.abort();
     const ac = new AbortController();
     submitAcRef.current = ac;
@@ -505,7 +504,7 @@ function NetworkInput({ ticker, onSubmit }) {
     }
   };
 
-  if (submitted) {
+  if (lite || submitted) {
     return null;
   }
 
@@ -522,8 +521,7 @@ function NetworkInput({ ticker, onSubmit }) {
           <button
             key={opt.score}
             onClick={() => handleSubmit(opt.score, opt.label)}
-            disabled={submitting || lite}
-            title={lite ? "Needs the full backend running locally" : undefined}
+            disabled={submitting}
             style={{
               padding: "6px 10px",
               background: "rgba(255,255,255,0.06)",
@@ -531,7 +529,7 @@ function NetworkInput({ ticker, onSubmit }) {
               borderRadius: 6,
               color: "#f0f0f0",
               fontSize: 12,
-              cursor: lite ? "not-allowed" : "pointer",
+              cursor: "pointer",
               fontFamily: MONO
             }}
           >
@@ -540,7 +538,7 @@ function NetworkInput({ ticker, onSubmit }) {
         ))}
       </div>
       <div style={{ fontSize: 11, color: "#f0f0f0", marginTop: 6 }}>
-        {lite ? "Needs the full backend running locally to save." : "Click to save your assessment for this stock"}
+        Click to save your assessment for this stock
       </div>
     </div>
   );
@@ -1476,7 +1474,6 @@ export default function AnalysisDetail({ ticker, onBack, onAnalyzeTicker }) {
   useEffect(() => {
     if (activeTab !== "dcf") return undefined;
     if (dcfData) return undefined;
-    if (lite) return undefined;
 
     const id = ++dcfReqId.current;
     const ac = dcfApi.beginRequest();

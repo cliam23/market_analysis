@@ -7,6 +7,7 @@ import {
   Settings,
   LayoutDashboard
 } from "lucide-react";
+import { useBackendMode } from "../hooks/useBackendMode.js";
 
 function OptionsNavIcon(props) {
   return (
@@ -33,11 +34,14 @@ const NAV = [
   { id: "backtest", label: "Backtest", Icon: LineChart },
   { id: "papertrade", label: "Trading", Icon: Wallet },
   { id: "alphalab", label: "Alpha Lab", Icon: FlaskConical },
-  { id: "options", label: "Options", Icon: OptionsNavIcon },
+  { id: "options", label: "Options", Icon: OptionsNavIcon, fullBackendOnly: true },
   { id: "rl", label: "RL Agent", Icon: Bot }
 ];
 
 export default function Sidebar({ tab, setTab }) {
+  const backendMode = useBackendMode();
+  const lite = backendMode === "lite";
+  const navItems = lite ? NAV.filter((n) => !n.fullBackendOnly) : NAV;
   return (
     <aside className="ma-sidebar" aria-label="Main navigation">
       <div className="ma-sidebar__brand">
@@ -45,7 +49,7 @@ export default function Sidebar({ tab, setTab }) {
         <span className="ma-sidebar__logo">Market Analysis</span>
       </div>
       <nav className="ma-sidebar__nav">
-        {NAV.map(({ id, label, Icon }) => (
+        {navItems.map(({ id, label, Icon }) => (
           <button
             key={id}
             type="button"

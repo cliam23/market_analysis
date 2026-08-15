@@ -2,6 +2,24 @@
 // Each entry has a title and content (plain-English explanation)
 
 export const EDUCATION = {
+  // === DASHBOARD / PAPER TRADING (beginner-friendly) ===
+  paperPortfolio: {
+    title: "What is this portfolio?",
+    content: "This is a paper (practice) portfolio — it uses real market data with pretend money, so you can watch the strategy work with zero financial risk. \"Return\" is how much the pretend money has grown; \"vs S&P 500\" (alpha) shows whether that beat just buying the overall stock market instead."
+  },
+  marketRegime: {
+    title: "What is a \"market regime\"?",
+    content: "The model classifies overall market conditions into five states, from calmest to most stressed: Strong Bull and Normal (steady, healthy markets), Pullback (a mild dip after a run-up), Caution (shakier conditions), and Bear (a sustained downturn). It automatically takes less risk — fewer stocks, smaller positions — as conditions get rougher, and more risk when things look healthy."
+  },
+  autoAdjust: {
+    title: "What does \"auto-adjust\" mean?",
+    content: "When turned on, an AI agent that learned from thousands of simulated market cycles decides how much of the portfolio to invest and how many stocks to hold — instead of following one fixed rule. It adjusts on its own as conditions change. When off, the strategy uses simpler fixed rules instead."
+  },
+  topPicks: {
+    title: "What are these rankings?",
+    content: "Every stock gets a single \"composite score\" from 0–100 blending quality, momentum, value, and other signals — the same score used to build the paper portfolios below. This list shows the 5 highest-scoring stocks right now, recalculated once a day from live market data. It's a research tool, not a buy recommendation."
+  },
+
   // === COMPOSITE SCORE ===
   compositeScore: {
     title: "Composite Score",

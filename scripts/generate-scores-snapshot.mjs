@@ -18,7 +18,20 @@ import { fileURLToPath } from 'node:url';
 import { buildSnapshotPayload, MIRRORED_UNIVERSES } from './lib/build-snapshot.mjs';
 import { backtestMirrorConfigs, backtestMirrorFilename, backtestMirrorQuery } from './lib/backtest-mirror.mjs';
 import { UNIVERSE_TICKERS } from '../server/config/universes.js';
-import { analysisMirrorFilename } from './lib/analysis-mirror.mjs';
+import { analysisMirrorFilename, dcfMirrorFilename, compsMirrorFilename } from './lib/analysis-mirror.mjs';
+import {
+  DIAG_MIRROR_UNIVERSES,
+  DIAG_MIRROR_PERIOD,
+  RL_COMPARE_PARAMS,
+  factorsFilename,
+  hedgeImpactFilename,
+  equityCurvesFilename,
+  forwardConfidenceFilename,
+  rlCompareFilename,
+  rlPolicyFilename,
+  PAPER_TRADE_PREVIEW_FILENAME,
+  UNIVERSE_COMPARE_FILENAME
+} from './lib/diagnostics-mirror.mjs';
 
 const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '..', '..');
 
@@ -97,6 +110,8 @@ async function main() {
     await mirrorEndpoints(base, outDir);
     await mirrorBacktests(base, outDir);
     await mirrorAnalysis(base, outDir);
+    await mirrorDiagnostics(base, outDir);
+    await mirrorTickerExtras(base, outDir);
   } finally {
     shutdown();
   }
@@ -194,6 +209,125 @@ async function mirrorAnalysis(base, outDir) {
     await sleep(120);
   }
   console.log(`Mirrored analysis for ${ok}/${tickers.length} tickers`);
+}
+
+async function fetchJsonPostOrNull(url, body) {
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      console.warn(`mirror: POST ${url} -> ${res.status}, skipping`);
+      return null;
+    }
+    return await res.json();
+  } catch (e) {
+    console.warn(`mirror: POST ${url} failed (${e.message}), skipping`);
+    return null;
+  }
+}
+
+async function writeMirrorFile(mirrorDir, filename, data) {
+  const wrapped = { _snapshotTs: Date.now(), _snapshotData: data };
+  await writeFile(path.join(mirrorDir, filename), JSON.stringify(wrapped, null, 2));
+  console.log(`Wrote ${filename}`);
+}
+
+// Mirrors the "moderate cost" Alpha Lab / RL Agent diagnostics — see
+// scripts/lib/diagnostics-mirror.mjs for exactly which combo of each
+// matches the real components' defaults. Each of these is roughly one
+// backtest-equivalent of compute (some run two internally), so this step
+// takes several minutes; forward-weight-recommendation and weight-sweep
+// are deliberately excluded (multi-hour, not mirrored).
+async function mirrorDiagnostics(base, outDir) {
+  const mirrorDir = path.join(outDir, 'mirror');
+  await mkdir(mirrorDir, { recursive: true });
+
+  console.log('[diagnostics] universe-compare: fetching (can take several minutes)…');
+  const uc = await fetchJsonOrNull(`${base}/api/diagnostics/universe-compare`);
+  if (uc != null) await writeMirrorFile(mirrorDir, UNIVERSE_COMPARE_FILENAME, uc);
+
+  const paperTradePreview = await fetchJsonOrNull(`${base}/api/paper-trade/preview`);
+  if (paperTradePreview != null) await writeMirrorFile(mirrorDir, PAPER_TRADE_PREVIEW_FILENAME, paperTradePreview);
+
+  for (const universeId of DIAG_MIRROR_UNIVERSES) {
+    console.log(`[diagnostics] ${universeId}: factors…`);
+    const factors = await fetchJsonOrNull(
+      `${base}/api/diagnostics/factors/${universeId}?period=${DIAG_MIRROR_PERIOD}&subperiods=true`
+    );
+    if (factors != null) await writeMirrorFile(mirrorDir, factorsFilename(universeId), factors);
+
+    console.log(`[diagnostics] ${universeId}: hedge-impact…`);
+    const hedge = await fetchJsonOrNull(
+      `${base}/api/diagnostics/hedge-impact?universeId=${universeId}&period=${DIAG_MIRROR_PERIOD}`
+    );
+    if (hedge != null) await writeMirrorFile(mirrorDir, hedgeImpactFilename(universeId), hedge);
+
+    console.log(`[diagnostics] ${universeId}: equity-curves…`);
+    const curves = await fetchJsonOrNull(
+      `${base}/api/diagnostics/equity-curves/${universeId}?period=${DIAG_MIRROR_PERIOD}&fresh=true`
+    );
+    if (curves != null) await writeMirrorFile(mirrorDir, equityCurvesFilename(universeId), curves);
+
+    console.log(`[diagnostics] ${universeId}: rl/compare…`);
+    const compareParams = new URLSearchParams({ universeId, ...RL_COMPARE_PARAMS, fresh: 'true' });
+    const compare = await fetchJsonOrNull(`${base}/api/rl/compare?${compareParams}`);
+    if (compare != null) await writeMirrorFile(mirrorDir, rlCompareFilename(universeId), compare);
+
+    console.log(`[diagnostics] ${universeId}: rl/policy…`);
+    const policy = await fetchJsonOrNull(`${base}/api/rl/policy?universeId=${universeId}`);
+    if (policy != null) await writeMirrorFile(mirrorDir, rlPolicyFilename(universeId), policy);
+
+    console.log(`[diagnostics] ${universeId}: forward-confidence (using the portfolio's real weights)…`);
+    const portfolioRes = await fetchJsonOrNull(`${base}/api/paper-trade/portfolio?universe=${universeId}`);
+    const weights = portfolioRes?.portfolio?.config?.weights;
+    if (weights) {
+      const fc = await fetchJsonPostOrNull(`${base}/api/diagnostics/forward-confidence`, {
+        universeId,
+        period: DIAG_MIRROR_PERIOD,
+        weights,
+        topN: 15
+      });
+      if (fc != null) await writeMirrorFile(mirrorDir, forwardConfidenceFilename(universeId), fc);
+    } else {
+      console.warn(`[diagnostics] ${universeId}: no portfolio weights available, skipping forward-confidence`);
+    }
+  }
+}
+
+// Mirrors GET /api/dcf/:ticker and /api/comps/:ticker for the same
+// sp500_top150 ticker set as mirrorAnalysis — completes the Search
+// experience (Overview/DCF/Comps sub-tabs) for every mirrored ticker.
+async function mirrorTickerExtras(base, outDir) {
+  const mirrorDir = path.join(outDir, 'mirror');
+  await mkdir(mirrorDir, { recursive: true });
+
+  const tickers = UNIVERSE_TICKERS.sp500_top150 || [];
+  let dcfOk = 0;
+  let compsOk = 0;
+  for (const [i, ticker] of tickers.entries()) {
+    const dcf = await fetchJsonOrNull(`${base}/api/dcf/${ticker}`);
+    if (dcf != null) {
+      await writeFile(
+        path.join(mirrorDir, dcfMirrorFilename(ticker)),
+        JSON.stringify({ _snapshotTs: Date.now(), _snapshotData: dcf }, null, 2)
+      );
+      dcfOk++;
+    }
+    const comps = await fetchJsonOrNull(`${base}/api/comps/${ticker}`);
+    if (comps != null) {
+      await writeFile(
+        path.join(mirrorDir, compsMirrorFilename(ticker)),
+        JSON.stringify({ _snapshotTs: Date.now(), _snapshotData: comps }, null, 2)
+      );
+      compsOk++;
+    }
+    if ((i + 1) % 25 === 0) console.log(`[dcf+comps] ${i + 1}/${tickers.length} tickers processed`);
+    await sleep(120);
+  }
+  console.log(`Mirrored DCF for ${dcfOk}/${tickers.length}, Comps for ${compsOk}/${tickers.length} tickers`);
 }
 
 main().catch((e) => {
