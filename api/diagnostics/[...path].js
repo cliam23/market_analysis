@@ -4,7 +4,7 @@
 // deployment at 12 serverless functions; five separate files here pushed
 // the project over that limit). Each sub-route keeps its exact prior
 // behavior — see git history for the original per-file versions.
-import { readMirror, requireGet } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, requireGet, catchAllSegments } from '../../scripts/lib/read-mirror.mjs';
 import {
   DIAG_MIRROR_PERIOD,
   UNIVERSE_COMPARE_FILENAME,
@@ -37,7 +37,7 @@ function serveByUniverse(req, res, { errorMessage, filenameFor, universeIdFromPa
 
 export default function handler(req, res) {
   if (!requireGet(req, res)) return;
-  const segs = Array.isArray(req.query.path) ? req.query.path : [req.query.path];
+  const segs = catchAllSegments(req, '/api/diagnostics/');
   const [route, universeIdFromPath] = segs;
 
   if (route === 'universe-compare') {

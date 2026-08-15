@@ -26,6 +26,24 @@ export function readMirror(filename) {
   };
 }
 
+/**
+ * Segments after `prefix` in the request's raw path, for catch-all route
+ * handlers like api/rl/[...path].js. Vercel's "Other" framework preset (this is a Vite
+ * app, not Next.js) doesn't reliably populate req.query.<catchAllParam> the
+ * way its docs describe for framework-aware routing — confirmed empty in
+ * production even though the exact same code worked against every local
+ * simulator, since a hand-rolled simulator can't reproduce a platform
+ * routing quirk it doesn't know about. Parsing req.url directly sidesteps
+ * that entirely: it's a plain Node http.IncomingMessage property Vercel
+ * doesn't touch, so it's reliable regardless of framework-preset routing
+ * behavior.
+ */
+export function catchAllSegments(req, prefix) {
+  const pathname = String(req.url || '').split('?')[0];
+  const rest = pathname.startsWith(prefix) ? pathname.slice(prefix.length) : '';
+  return rest.split('/').filter(Boolean).map((s) => decodeURIComponent(s));
+}
+
 export function resolveUniverse(req) {
   const raw = req.query?.universe ?? req.query?.universeId;
   const u = raw != null && String(raw).trim() !== '' ? String(raw).trim() : null;

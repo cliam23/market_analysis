@@ -100,7 +100,10 @@ test('api/paper-trade/[...path].js picks the file for the requested universe', a
     );
     const { default: handler } = await import(`../api/paper-trade/[...path].js?t=${Date.now()}`);
     const res = mockRes();
-    handler({ query: { path: ['portfolio'], universe: 'sp500_top50' } }, res);
+    // Matches the real Vercel request shape: query.path is NOT populated for
+    // catch-all routes in this project's "Other" framework preset (confirmed
+    // empty in production) — the handler derives segments from req.url instead.
+    handler({ url: '/api/paper-trade/portfolio?universe=sp500_top50', query: { universe: 'sp500_top50' } }, res);
     assert.equal(res._status, 200);
     assert.equal(res._body.portfolio.config.universe, 'sp500_top50');
   });

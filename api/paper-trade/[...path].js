@@ -5,7 +5,7 @@
 // intentionally not mirrored; they need a live server.js. Each sub-route
 // keeps its exact prior behavior — see git history for the original
 // per-file versions.
-import { readMirror, resolveUniverse, requireGet } from '../../scripts/lib/read-mirror.mjs';
+import { readMirror, resolveUniverse, requireGet, catchAllSegments } from '../../scripts/lib/read-mirror.mjs';
 import { PAPER_TRADE_PREVIEW_FILENAME } from '../../scripts/lib/diagnostics-mirror.mjs';
 
 function serveMirror(res, filename) {
@@ -20,7 +20,7 @@ function serveMirror(res, filename) {
 
 export default function handler(req, res) {
   if (!requireGet(req, res)) return;
-  const segs = Array.isArray(req.query.path) ? req.query.path : [req.query.path];
+  const segs = catchAllSegments(req, '/api/paper-trade/');
   const [route] = segs;
 
   if (route === 'portfolio') {

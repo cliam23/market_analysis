@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { requireGet } from '../scripts/lib/read-mirror.mjs';
+import { requireGet, catchAllSegments } from '../scripts/lib/read-mirror.mjs';
 
 function mockRes() {
   return {
@@ -46,3 +46,34 @@ for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
     assert.equal(res._headers['Allow'], 'GET, HEAD');
   });
 }
+
+// catchAllSegments parses req.url directly rather than trusting
+// req.query.<catchAllParam> — that key is empty in production for this
+// project's "Other" framework preset (confirmed via curl against the live
+// deploy; every local simulator missed it since none knew to reproduce the
+// quirk). req.url is a plain Node property Vercel doesn't touch.
+test('catchAllSegments splits the path after the prefix', () => {
+  assert.deepEqual(catchAllSegments({ url: '/api/rl/status' }, '/api/rl/'), ['status']);
+});
+
+test('catchAllSegments strips the query string', () => {
+  assert.deepEqual(
+    catchAllSegments({ url: '/api/paper-trade/portfolio?universe=sp500_top50' }, '/api/paper-trade/'),
+    ['portfolio']
+  );
+});
+
+test('catchAllSegments keeps multiple segments in order', () => {
+  assert.deepEqual(
+    catchAllSegments({ url: '/api/diagnostics/factors/sp500_top50?period=3y' }, '/api/diagnostics/'),
+    ['factors', 'sp500_top50']
+  );
+});
+
+test('catchAllSegments returns [] for the bare prefix (trailing slash, no route)', () => {
+  assert.deepEqual(catchAllSegments({ url: '/api/rl/' }, '/api/rl/'), []);
+});
+
+test("catchAllSegments returns [] when the url doesn't start with prefix", () => {
+  assert.deepEqual(catchAllSegments({ url: '/api/other/status' }, '/api/rl/'), []);
+});
