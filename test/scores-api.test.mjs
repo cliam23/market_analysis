@@ -121,6 +121,25 @@ test('POST /api/scores is rejected with 405 — no route under api/ accepts writ
   }
 });
 
+test('GET /api/scores?health=1 serves the health payload (folded in via vercel.json rewrite of /api/health to stay under the Hobby function cap)', async () => {
+  const originalCwd = process.cwd();
+  const dir = await mkdtemp(path.join(tmpdir(), 'scores-api-'));
+  try {
+    process.chdir(dir);
+    const { default: handler } = await import(`../api/scores.js?t=${Date.now()}`);
+
+    const res = mockRes();
+    handler({ query: { health: '1' } }, res);
+
+    assert.equal(res._status, 200);
+    assert.equal(res._body.status, 'ok');
+    assert.equal(res._body.mode, 'lite');
+  } finally {
+    process.chdir(originalCwd);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('GET /api/scores returns 503 when snapshot is missing', async () => {
   const originalCwd = process.cwd();
   const dir = await mkdtemp(path.join(tmpdir(), 'scores-api-'));

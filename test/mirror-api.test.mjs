@@ -92,6 +92,20 @@ test('api/dashboard/summary.js returns 503 when no mirror exists yet', async () 
   });
 });
 
+test('api/dashboard/summary.js also serves market indices via ?kind=indices (folded in via vercel.json rewrite to stay under the Hobby function cap)', async () => {
+  await withScratchProject(async (dir) => {
+    await writeFile(
+      path.join(dir, 'public', 'data', 'mirror', 'market-indices.json'),
+      JSON.stringify({ _snapshotTs: Date.now(), _snapshotData: { indices: [{ symbol: 'SPX' }] } })
+    );
+    const { default: handler } = await import(`../api/dashboard/summary.js?t=${Date.now()}`);
+    const res = mockRes();
+    handler({ query: { kind: 'indices' } }, res);
+    assert.equal(res._status, 200);
+    assert.deepEqual(res._body.indices, [{ symbol: 'SPX' }]);
+  });
+});
+
 test('api/paper-trade/[...path].js picks the file for the requested universe', async () => {
   await withScratchProject(async (dir) => {
     await writeFile(

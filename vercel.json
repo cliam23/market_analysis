@@ -8,6 +8,8 @@
     }
   },
   "rewrites": [
+    { "source": "/api/market/indices", "destination": "/api/dashboard/summary?kind=indices" },
+    { "source": "/api/health", "destination": "/api/scores?health=1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

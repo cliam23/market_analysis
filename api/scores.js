@@ -5,12 +5,22 @@
 // so the numbers here are the same composite-score + RL-agent output the
 // dashboard uses — just served from a static snapshot instead of a live
 // Express process, since Vercel doesn't run the always-on Node server.
+//
+// Also serves GET /api/health (via a vercel.json rewrite to ?health=1) —
+// folded in here, rather than kept as its own file, to stay under the
+// Hobby plan's 12-serverless-function-per-deployment cap. The frontend's
+// connectivity check (src/App.jsx, src/hooks/useBackendMode.js) still calls
+// the unchanged public path /api/health; only the routing underneath moved.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { requireGet } from '../scripts/lib/read-mirror.mjs';
 
 export default function handler(req, res) {
   if (!requireGet(req, res)) return;
+  if (req.query?.health) {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString(), mode: 'lite' });
+    return;
+  }
   let snapshot;
   try {
     const snapshotPath = path.join(process.cwd(), 'public', 'data', 'scores-snapshot.json');
