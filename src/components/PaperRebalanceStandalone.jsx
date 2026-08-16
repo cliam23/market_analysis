@@ -21,10 +21,40 @@ export default function PaperRebalanceStandalone({ date, occurrence }) {
       setErr(null);
       setRb(null);
       if (lite) {
-        setErr(
-          "Not available on this read-only deploy — individual rebalance report lookups need the full backend running locally. See README § Live deployment."
-        );
-        setLoading(false);
+        // /api/paper-trade/rebalance-entry (server.js) is a pure lookup into
+        // portfolio.rebalanceHistory — no live computation. That same array
+        // is already served verbatim by the mirrored /api/paper-trade/history
+        // endpoint, so the lookup can just run client-side instead of
+        // needing its own server route (and Vercel Hobby's serverless
+        // function count is already at the cap — see docs/API.md).
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const universe = params.get("universe") || params.get("universeId") || "";
+          const hq = universe ? `?universe=${encodeURIComponent(universe)}` : "";
+          const res = await apiFetch(`/api/paper-trade/history${hq}`);
+          const data = await res.json().catch(() => ({}));
+          if (aborted) return;
+          if (!res.ok) {
+            setErr(data.error || `Request failed (${res.status})`);
+            return;
+          }
+          const hist = data?.history?.rebalanceHistory || [];
+          const indices = [];
+          for (let i = 0; i < hist.length; i++) {
+            if (hist[i].date === date) indices.push(i);
+          }
+          if (indices.length === 0) {
+            setErr("No rebalance found for that date.");
+            return;
+          }
+          const occRaw = occurrence != null && occurrence !== "" ? parseInt(occurrence, 10) : NaN;
+          const occurrenceIdx = Number.isFinite(occRaw) && occRaw >= 0 && occRaw < indices.length ? occRaw : indices.length - 1;
+          setRb(hist[indices[occurrenceIdx]]);
+        } catch (e) {
+          if (!aborted) setErr(e.message || "Network error");
+        } finally {
+          if (!aborted) setLoading(false);
+        }
         return;
       }
       const q = new URLSearchParams({ date });
