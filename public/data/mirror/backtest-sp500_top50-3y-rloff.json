@@ -1,5 +1,5 @@
 {
-  "_snapshotTs": 1787262845594,
+  "_snapshotTs": 1787348956388,
   "_snapshotData": {
     "success": true,
     "strategy": "full_composite",
@@ -19,9 +19,9 @@
     "initialCapital": 10000,
     "pointInTime": false,
     "pitDetail": {
-      "ok": 52,
-      "fallback": 0,
-      "stale": 47
+      "ok": 48,
+      "fallback": 4,
+      "stale": 44
     },
     "adaptiveMode": "fixed",
     "positionSizing": "invVol",
@@ -77,14 +77,14 @@
         {
           "name": "fundamental",
           "label": "Quality",
-          "ic": -0.0365,
+          "ic": -0.0297,
           "icConfidence": {
-            "lower": -0.1931,
-            "upper": 0.1202,
+            "lower": -0.1874,
+            "upper": 0.128,
             "significant": false
           },
-          "spread": 0.23,
-          "contribution": 641.26,
+          "spread": -0.02,
+          "contribution": 674.07,
           "originalWeight": 0.11764705882352942,
           "suggestedWeight": 0.113,
           "color": "#22c55e"
@@ -92,13 +92,13 @@
         {
           "name": "dcf",
           "label": "DCF",
-          "ic": -0.0706,
+          "ic": -0.1028,
           "icConfidence": {
-            "lower": -0.2093,
-            "upper": 0.0682,
+            "lower": -0.2551,
+            "upper": 0.0495,
             "significant": false
           },
-          "spread": -2.72,
+          "spread": -4.67,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0,
@@ -107,13 +107,13 @@
         {
           "name": "valuation",
           "label": "Valuation",
-          "ic": -0.0734,
+          "ic": -0.0722,
           "icConfidence": {
-            "lower": -0.1367,
-            "upper": -0.01,
+            "lower": -0.1373,
+            "upper": -0.0071,
             "significant": true
           },
-          "spread": -2.17,
+          "spread": -1.77,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0.041,
@@ -122,31 +122,31 @@
         {
           "name": "momentum",
           "label": "Momentum",
-          "ic": 0.0088,
+          "ic": 0.0085,
           "icConfidence": {
             "lower": -0.0696,
-            "upper": 0.0872,
+            "upper": 0.0866,
             "significant": false
           },
           "spread": 1.65,
-          "contribution": 3768.55,
+          "contribution": 3752.84,
           "originalWeight": 0.35294117647058826,
-          "suggestedWeight": 0.339,
+          "suggestedWeight": 0.338,
           "color": "#06b6d4"
         },
         {
           "name": "value",
           "label": "Value",
-          "ic": 0.0172,
+          "ic": 0.016,
           "icConfidence": {
-            "lower": -0.1441,
-            "upper": 0.1785,
+            "lower": -0.1445,
+            "upper": 0.1765,
             "significant": false
           },
           "spread": 0.27,
-          "contribution": 2802.41,
+          "contribution": 2791.78,
           "originalWeight": 0.35294117647058826,
-          "suggestedWeight": 0.339,
+          "suggestedWeight": 0.338,
           "color": "#8b5cf6"
         },
         {
@@ -159,7 +159,7 @@
             "significant": false
           },
           "spread": 1.06,
-          "contribution": 985.21,
+          "contribution": 978.75,
           "originalWeight": 0.17647058823529413,
           "suggestedWeight": 0.169,
           "color": "#ec4899"
@@ -168,13 +168,13 @@
       "totalContribution": 8197.43,
       "periodsAnalyzed": 10,
       "avgStocksPerPeriod": 42,
-      "insight": "Earnings momentum had the highest average IC (+0.033, spread +1.1%/period). Valuation averaged negative IC (-0.073) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 17%.",
+      "insight": "Earnings momentum had the highest average IC (+0.033, spread +1.1%/period). DCF averaged negative IC (-0.103) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 17%.",
       "suggestedWeights": {
         "fundamental": 0.113,
         "dcf": 0,
         "valuation": 0.041,
-        "momentum": 0.339,
-        "value": 0.339,
+        "momentum": 0.338,
+        "value": 0.338,
         "earningsMomentum": 0.169
       }
     },
@@ -4728,7 +4728,7 @@
       {
         "date": "2026-08-11",
         "portfolio": 15953.486371154784,
-        "benchmark": 16213.768228460658,
+        "benchmark": 16215.627018951573,
         "cashInflationAdjusted": 10842.923800951825
       },
       {
@@ -5056,6 +5056,15 @@
       },
       {
         "type": "BUY",
+        "ticker": "JPM",
+        "shares": 5,
+        "price": 149.74000549316406,
+        "cost": 748.7000274658203,
+        "score": 84.54107142857143,
+        "date": "2023-11-15"
+      },
+      {
+        "type": "BUY",
         "ticker": "AMD",
         "shares": 2,
         "price": 118,
@@ -5065,20 +5074,11 @@
       },
       {
         "type": "BUY",
-        "ticker": "JPM",
-        "shares": 5,
-        "price": 149.74000549316406,
-        "cost": 748.7000274658203,
-        "score": 83.90357142857142,
-        "date": "2023-11-15"
-      },
-      {
-        "type": "BUY",
         "ticker": "WMT",
         "shares": 17,
         "price": 56.59333419799805,
         "cost": 962.0866813659668,
-        "score": 83.43125,
+        "score": 83.3375,
         "date": "2023-11-15"
       },
       {
@@ -5132,7 +5132,7 @@
         "shares": 18,
         "price": 34.06999969482422,
         "cost": 613.2599945068359,
-        "score": 92.21875,
+        "score": 92.85625,
         "date": "2024-02-15"
       },
       {
@@ -5146,20 +5146,20 @@
       },
       {
         "type": "BUY",
+        "ticker": "JPM",
+        "shares": 1,
+        "price": 179.8699951171875,
+        "cost": 179.8699951171875,
+        "score": 86.675,
+        "date": "2024-02-15"
+      },
+      {
+        "type": "BUY",
         "ticker": "MSFT",
         "shares": 1,
         "price": 406.55999755859375,
         "cost": 406.55999755859375,
         "score": 86.65,
-        "date": "2024-02-15"
-      },
-      {
-        "type": "BUY",
-        "ticker": "JPM",
-        "shares": 1,
-        "price": 179.8699951171875,
-        "cost": 179.8699951171875,
-        "score": 86.0375,
         "date": "2024-02-15"
       },
       {
@@ -5245,7 +5245,7 @@
         "shares": 4,
         "price": 38.90999984741211,
         "cost": 155.63999938964844,
-        "score": 90.83288043478261,
+        "score": 91.47038043478261,
         "date": "2024-05-15"
       },
       {
@@ -5482,7 +5482,7 @@
         "shares": 1,
         "price": 46.75,
         "cost": 46.75,
-        "score": 88.66611842105263,
+        "score": 89.30361842105263,
         "date": "2024-11-15"
       },
       {
@@ -5564,20 +5564,20 @@
       },
       {
         "type": "BUY",
+        "ticker": "ABT",
+        "shares": 9,
+        "price": 133.35000610351562,
+        "cost": 1200.1500549316406,
+        "score": 82.02857142857142,
+        "date": "2025-05-15"
+      },
+      {
+        "type": "BUY",
         "ticker": "IBM",
         "shares": 3,
         "price": 266.67999267578125,
         "cost": 800.0399780273438,
         "score": 81.425,
-        "date": "2025-05-15"
-      },
-      {
-        "type": "BUY",
-        "ticker": "ABT",
-        "shares": 9,
-        "price": 133.35000610351562,
-        "cost": 1200.1500549316406,
-        "score": 81.29107142857143,
         "date": "2025-05-15"
       },
       {
@@ -5942,8 +5942,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -5958,8 +5958,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -5971,7 +5971,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.48,
+        "avgTopScore": 84.63,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5998,8 +5998,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -6016,8 +6016,8 @@
           "MA",
           "NVDA",
           "BRK-B",
-          "MSFT",
           "JPM",
+          "MSFT",
           "IBM",
           "AVGO",
           "NFLX",
@@ -6028,7 +6028,7 @@
         "tradesExecuted": 6,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 86.68,
+        "avgTopScore": 86.87,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6078,14 +6078,14 @@
           "NEE",
           "V",
           "BRK-B",
+          "CRM",
           "DHR",
-          "NVDA",
-          "AMGN"
+          "NVDA"
         ],
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 87.39,
+        "avgTopScore": 87.58,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6133,16 +6133,16 @@
           "DHR",
           "XOM",
           "NVDA",
+          "JPM",
           "AVGO",
           "UNH",
-          "JPM",
           "ORCL",
           "ABBV"
         ],
         "tradesExecuted": 16,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 81.49,
+        "avgTopScore": 81.54,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6176,10 +6176,10 @@
           "ORCL"
         ],
         "topPicks": [
+          "CRM",
+          "BAC",
           "AMZN",
           "UNH",
-          "BAC",
-          "CRM",
           "JPM",
           "PM",
           "TSLA",
@@ -6191,7 +6191,7 @@
         "tradesExecuted": 6,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 83.05,
+        "avgTopScore": 83.24,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6234,13 +6234,13 @@
           "AMZN",
           "IBM",
           "ACN",
-          "PM",
-          "ABT"
+          "ABT",
+          "PM"
         ],
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.92,
+        "avgTopScore": 85.07,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6269,18 +6269,18 @@
           "RTX",
           "PM",
           "MA",
-          "IBM",
           "ABT",
+          "IBM",
           "MSFT",
           "V",
           "WMT"
         ],
         "topPicks": [
           "NFLX",
+          "ABT",
           "PM",
           "MA",
           "IBM",
-          "ABT",
           "JPM",
           "MSFT",
           "V",
@@ -6293,7 +6293,7 @@
         "tradesExecuted": 7,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 77.98,
+        "avgTopScore": 78.08,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6349,7 +6349,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.19,
+        "avgTopScore": 79.2,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6393,12 +6393,12 @@
           "NVDA",
           "GOOG",
           "GOOGL",
-          "AMD"
+          "JPM"
         ],
         "tradesExecuted": 7,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 83.7,
+        "avgTopScore": 83.79,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6525,8 +6525,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -6541,8 +6541,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -6554,7 +6554,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.48,
+        "avgTopScore": 84.63,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6581,8 +6581,8 @@
           "AVGO",
           "IBM",
           "BRK-B",
-          "AMD",
           "JPM",
+          "AMD",
           "WMT",
           "COST",
           "NFLX",
@@ -6599,8 +6599,8 @@
           "MA",
           "NVDA",
           "BRK-B",
-          "MSFT",
           "JPM",
+          "MSFT",
           "IBM",
           "AVGO",
           "NFLX",
@@ -6611,7 +6611,7 @@
         "tradesExecuted": 6,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 86.68,
+        "avgTopScore": 86.87,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6661,14 +6661,14 @@
           "NEE",
           "V",
           "BRK-B",
+          "CRM",
           "DHR",
-          "NVDA",
-          "AMGN"
+          "NVDA"
         ],
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 87.39,
+        "avgTopScore": 87.58,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6716,16 +6716,16 @@
           "DHR",
           "XOM",
           "NVDA",
+          "JPM",
           "AVGO",
           "UNH",
-          "JPM",
           "ORCL",
           "ABBV"
         ],
         "tradesExecuted": 16,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 81.49,
+        "avgTopScore": 81.54,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6759,10 +6759,10 @@
           "ORCL"
         ],
         "topPicks": [
+          "CRM",
+          "BAC",
           "AMZN",
           "UNH",
-          "BAC",
-          "CRM",
           "JPM",
           "PM",
           "TSLA",
@@ -6774,7 +6774,7 @@
         "tradesExecuted": 6,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 83.05,
+        "avgTopScore": 83.24,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6817,13 +6817,13 @@
           "AMZN",
           "IBM",
           "ACN",
-          "PM",
-          "ABT"
+          "ABT",
+          "PM"
         ],
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.92,
+        "avgTopScore": 85.07,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6852,18 +6852,18 @@
           "RTX",
           "PM",
           "MA",
-          "IBM",
           "ABT",
+          "IBM",
           "MSFT",
           "V",
           "WMT"
         ],
         "topPicks": [
           "NFLX",
+          "ABT",
           "PM",
           "MA",
           "IBM",
-          "ABT",
           "JPM",
           "MSFT",
           "V",
@@ -6876,7 +6876,7 @@
         "tradesExecuted": 7,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 77.98,
+        "avgTopScore": 78.08,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6932,7 +6932,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.19,
+        "avgTopScore": 79.2,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6976,12 +6976,12 @@
           "NVDA",
           "GOOG",
           "GOOGL",
-          "AMD"
+          "JPM"
         ],
         "tradesExecuted": 7,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 83.7,
+        "avgTopScore": 83.79,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -7224,8 +7224,8 @@
       "bars": {
         "sources": {
           "gold": 0,
-          "diskFresh": 0,
-          "yahoo": 53,
+          "diskFresh": 53,
+          "yahoo": 0,
           "stale": 0
         },
         "validation": {
@@ -7241,7 +7241,7 @@
         "benchmarkStaleWarning": null
       }
     },
-    "computedAt": "2026-08-20T21:54:05.591Z",
+    "computedAt": "2026-08-21T21:49:16.384Z",
     "cached": false
   }
 }
