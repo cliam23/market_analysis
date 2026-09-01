@@ -311,16 +311,6 @@ export default function DashboardTab({ setTab }) {
         </div>
       )}
 
-      {summary?.publicMirror && (
-        <div className="ma-dash-banner" style={{ background: "rgba(88,166,255,0.06)", borderColor: "rgba(88,166,255,0.28)" }} role="status">
-          <span className="ma-dash-muted">
-            Read-only public mirror — a copy of the local app's state as of {relTime(summary.mirroredAt)}, refreshed
-            daily by a scheduled pipeline. Rebalancing, RL training, and other actions need the full backend running
-            locally (see <span className="ma-mono">README § Live deployment</span>).
-          </span>
-        </div>
-      )}
-
       {liteMode && (
         <div className="ma-dash-banner" style={{ background: "rgba(88,166,255,0.06)", borderColor: "rgba(88,166,255,0.28)" }} role="status">
           <span className="ma-dash-muted">
