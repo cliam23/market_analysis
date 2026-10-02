@@ -1,13 +1,17 @@
 {
-  "_snapshotTs": 1790815385721,
+  "_snapshotTs": 1790902940273,
   "_snapshotData": {
     "success": true,
-    "regime": "pullback",
-    "exposure": 0.85,
-    "adjustedTopN": 11,
+    "regime": "caution",
+    "exposure": 0.7,
+    "adjustedTopN": 9,
     "sizingMethod": "invVol",
     "hedgeRecommendation": {
-      "action": "HOLD"
+      "action": "OPEN_HEDGE",
+      "hedgePct": 0.3,
+      "notionalHedge": 33203.346,
+      "regime": "caution",
+      "description": "Open SPY put hedge covering 30% of portfolio (~$33203 notional)"
     },
     "rlDecision": null,
     "health": {
@@ -15,11 +19,11 @@
       "positionsEligible": 10,
       "oldestPosition": {
         "ticker": "MKSI",
-        "daysHeld": 168
+        "daysHeld": 169
       },
       "youngestPosition": {
         "ticker": "PANW",
-        "daysHeld": 105
+        "daysHeld": 106
       },
       "nextEligibleDate": null,
       "rlPolicyMatch": false,
@@ -29,86 +33,85 @@
     "buys": [
       {
         "ticker": "KEYS",
-        "score": 90.31612301957131,
-        "shares": 16,
-        "price": 360.6499938964844
-      },
-      {
-        "ticker": "WST",
-        "score": 83.84603914259085,
-        "shares": 16,
-        "price": 376.6300048828125
+        "score": 89.66535626535627,
+        "shares": 19,
+        "price": 364.0400085449219
       },
       {
         "ticker": "FTNT",
-        "score": 82.53196644920783,
-        "shares": 34,
-        "price": 175.9600067138672
+        "score": 85.61965601965602,
+        "shares": 39,
+        "price": 178.75999450683594
       },
       {
         "ticker": "APH",
-        "score": 82.51602982292637,
-        "shares": 72,
-        "price": 84.33999633789062
+        "score": 84.4036855036855,
+        "shares": 83,
+        "price": 84.30000305175781
       },
       {
-        "ticker": "LLY",
-        "score": 79.67548928238583,
-        "shares": 5,
-        "price": 1184.6300048828125
+        "ticker": "WST",
+        "score": 82.9832923832924,
+        "shares": 18,
+        "price": 370.760009765625
       },
       {
-        "ticker": "UNH",
-        "score": 77.23112767940354,
-        "shares": 16,
-        "price": 374.94000244140625
+        "ticker": "GOOGL",
+        "score": 76.33694317577306,
+        "shares": 20,
+        "price": 344.0799865722656
       },
       {
-        "ticker": "CVX",
-        "score": 73.50055917986953,
-        "shares": 29,
-        "price": 204.3800048828125
+        "ticker": "ILMN",
+        "score": 74.75356265356265,
+        "shares": 25,
+        "price": 273.67999267578125
       }
     ],
     "sells": [
       {
         "ticker": "TER",
-        "holdingReturn": 0.104285396892,
-        "holdingDays": 168
+        "holdingReturn": 0.09850398139176916,
+        "holdingDays": 169
       },
       {
         "ticker": "GLW",
-        "holdingReturn": -0.05681343861568047,
-        "holdingDays": 168
+        "holdingReturn": -0.08623051879246732,
+        "holdingDays": 169
       },
       {
         "ticker": "BAC",
-        "holdingReturn": 0.011782021230560108,
-        "holdingDays": 168
+        "holdingReturn": 0.002025048066449892,
+        "holdingDays": 169
+      },
+      {
+        "ticker": "JPM",
+        "holdingReturn": 0.08139114991210722,
+        "holdingDays": 169
       },
       {
         "ticker": "CSX",
-        "holdingReturn": 0.11472688850627141,
-        "holdingDays": 168
+        "holdingReturn": 0.10475059399640929,
+        "holdingDays": 169
       },
       {
         "ticker": "ALGM",
-        "holdingReturn": -0.017449705392722316,
-        "holdingDays": 168
+        "holdingReturn": -0.02416111478869547,
+        "holdingDays": 169
       },
       {
         "ticker": "ON",
-        "holdingReturn": -0.08505005428625183,
-        "holdingDays": 165
+        "holdingReturn": -0.07396698267242399,
+        "holdingDays": 166
       }
     ],
     "stops": [],
-    "portfolioValue": 110866.93,
-    "cash": 8572.66,
+    "portfolioValue": 110677.82,
+    "cash": 18958.58,
     "portfolio": {
-      "asOfDate": "2026-10-01",
-      "cash": 8572.66,
-      "totalValue": 110866.93,
+      "asOfDate": "2026-10-02",
+      "cash": 18958.58,
+      "totalValue": 110677.82,
       "initialCapital": 100000,
       "holdings": [
         {
@@ -122,19 +125,6 @@
             "momentum": 100,
             "valuation": 26.80333333333333,
             "value": 93
-          }
-        },
-        {
-          "ticker": "JPM",
-          "shares": 31,
-          "entryPrice": 305.92999267578125,
-          "entryDate": "2026-04-16",
-          "scores": {
-            "composite": 93.50115472941928,
-            "fundamental": 53.6,
-            "momentum": 72.81974530932636,
-            "valuation": 42.20666666666666,
-            "value": 70
           }
         },
         {
@@ -165,93 +155,80 @@
         },
         {
           "ticker": "KEYS",
-          "shares": 16,
-          "entryPrice": 360.6499938964844,
-          "entryDate": "2026-10-01",
+          "shares": 19,
+          "entryPrice": 364.0400085449219,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 90.31612301957131,
+            "composite": 89.66535626535627,
             "fundamental": 54.1,
             "momentum": 100,
-            "valuation": 35.615,
-            "value": 95
-          }
-        },
-        {
-          "ticker": "WST",
-          "shares": 16,
-          "entryPrice": 376.6300048828125,
-          "entryDate": "2026-10-01",
-          "scores": {
-            "composite": 83.84603914259085,
-            "fundamental": 50.9,
-            "momentum": 100,
-            "valuation": 28.468333333333334,
+            "valuation": 32.281666666666666,
             "value": 88
           }
         },
         {
           "ticker": "FTNT",
-          "shares": 34,
-          "entryPrice": 175.9600067138672,
-          "entryDate": "2026-10-01",
+          "shares": 39,
+          "entryPrice": 178.75999450683594,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 82.53196644920783,
+            "composite": 85.61965601965602,
             "fundamental": 56.9,
             "momentum": 100,
             "valuation": 29.368333333333332,
-            "value": 78
+            "value": 93
           }
         },
         {
           "ticker": "APH",
-          "shares": 72,
-          "entryPrice": 84.33999633789062,
-          "entryDate": "2026-10-01",
+          "shares": 83,
+          "entryPrice": 84.30000305175781,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 82.51602982292637,
+            "composite": 84.4036855036855,
             "fundamental": 53.6,
             "momentum": 100,
-            "valuation": 37.20666666666666,
-            "value": 80
+            "valuation": 40.54,
+            "value": 90
           }
         },
         {
-          "ticker": "LLY",
-          "shares": 5,
-          "entryPrice": 1184.6300048828125,
-          "entryDate": "2026-10-01",
+          "ticker": "WST",
+          "shares": 18,
+          "entryPrice": 370.760009765625,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 79.67548928238583,
-            "fundamental": 49.4,
+            "composite": 82.9832923832924,
+            "fundamental": 50.9,
             "momentum": 100,
-            "valuation": 39.91,
-            "value": 80
+            "valuation": 35.135,
+            "value": 88
           }
         },
         {
-          "ticker": "UNH",
-          "shares": 16,
-          "entryPrice": 374.94000244140625,
-          "entryDate": "2026-10-01",
+          "ticker": "GOOGL",
+          "shares": 20,
+          "entryPrice": 344.0799865722656,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 77.23112767940354,
-            "fundamental": 45,
-            "momentum": 100,
-            "valuation": 45.916666666666664,
+            "composite": 76.33694317577306,
+            "fundamental": 54.1,
+            "momentum": 99.16858946067767,
+            "valuation": 47.281666666666666,
             "value": 75
           }
         },
         {
-          "ticker": "CVX",
-          "shares": 29,
-          "entryPrice": 204.3800048828125,
-          "entryDate": "2026-10-01",
+          "ticker": "ILMN",
+          "shares": 25,
+          "entryPrice": 273.67999267578125,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 73.50055917986953,
-            "fundamental": 41.8,
+            "composite": 74.75356265356265,
+            "fundamental": 49.9,
             "momentum": 100,
-            "valuation": 27.10333333333333,
-            "value": 35
+            "valuation": 28.31833333333333,
+            "value": 93
           }
         }
       ],
@@ -270,19 +247,6 @@
           }
         },
         {
-          "ticker": "JPM",
-          "shares": 31,
-          "entryPrice": 305.92999267578125,
-          "entryDate": "2026-04-16",
-          "scores": {
-            "composite": 93.50115472941928,
-            "fundamental": 53.6,
-            "momentum": 72.81974530932636,
-            "valuation": 42.20666666666666,
-            "value": 70
-          }
-        },
-        {
           "ticker": "MCHP",
           "shares": 42,
           "entryPrice": 78.76000213623047,
@@ -310,97 +274,84 @@
         },
         {
           "ticker": "KEYS",
-          "shares": 16,
-          "entryPrice": 360.6499938964844,
-          "entryDate": "2026-10-01",
+          "shares": 19,
+          "entryPrice": 364.0400085449219,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 90.31612301957131,
+            "composite": 89.66535626535627,
             "fundamental": 54.1,
             "momentum": 100,
-            "valuation": 35.615,
-            "value": 95
-          }
-        },
-        {
-          "ticker": "WST",
-          "shares": 16,
-          "entryPrice": 376.6300048828125,
-          "entryDate": "2026-10-01",
-          "scores": {
-            "composite": 83.84603914259085,
-            "fundamental": 50.9,
-            "momentum": 100,
-            "valuation": 28.468333333333334,
+            "valuation": 32.281666666666666,
             "value": 88
           }
         },
         {
           "ticker": "FTNT",
-          "shares": 34,
-          "entryPrice": 175.9600067138672,
-          "entryDate": "2026-10-01",
+          "shares": 39,
+          "entryPrice": 178.75999450683594,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 82.53196644920783,
+            "composite": 85.61965601965602,
             "fundamental": 56.9,
             "momentum": 100,
             "valuation": 29.368333333333332,
-            "value": 78
+            "value": 93
           }
         },
         {
           "ticker": "APH",
-          "shares": 72,
-          "entryPrice": 84.33999633789062,
-          "entryDate": "2026-10-01",
+          "shares": 83,
+          "entryPrice": 84.30000305175781,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 82.51602982292637,
+            "composite": 84.4036855036855,
             "fundamental": 53.6,
             "momentum": 100,
-            "valuation": 37.20666666666666,
-            "value": 80
+            "valuation": 40.54,
+            "value": 90
           }
         },
         {
-          "ticker": "LLY",
-          "shares": 5,
-          "entryPrice": 1184.6300048828125,
-          "entryDate": "2026-10-01",
+          "ticker": "WST",
+          "shares": 18,
+          "entryPrice": 370.760009765625,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 79.67548928238583,
-            "fundamental": 49.4,
+            "composite": 82.9832923832924,
+            "fundamental": 50.9,
             "momentum": 100,
-            "valuation": 39.91,
-            "value": 80
+            "valuation": 35.135,
+            "value": 88
           }
         },
         {
-          "ticker": "UNH",
-          "shares": 16,
-          "entryPrice": 374.94000244140625,
-          "entryDate": "2026-10-01",
+          "ticker": "GOOGL",
+          "shares": 20,
+          "entryPrice": 344.0799865722656,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 77.23112767940354,
-            "fundamental": 45,
-            "momentum": 100,
-            "valuation": 45.916666666666664,
+            "composite": 76.33694317577306,
+            "fundamental": 54.1,
+            "momentum": 99.16858946067767,
+            "valuation": 47.281666666666666,
             "value": 75
           }
         },
         {
-          "ticker": "CVX",
-          "shares": 29,
-          "entryPrice": 204.3800048828125,
-          "entryDate": "2026-10-01",
+          "ticker": "ILMN",
+          "shares": 25,
+          "entryPrice": 273.67999267578125,
+          "entryDate": "2026-10-02",
           "scores": {
-            "composite": 73.50055917986953,
-            "fundamental": 41.8,
+            "composite": 74.75356265356265,
+            "fundamental": 49.9,
             "momentum": 100,
-            "valuation": 27.10333333333333,
-            "value": 35
+            "valuation": 28.31833333333333,
+            "value": 93
           }
         }
       ],
-      "holdingsCount": 11,
+      "holdingsCount": 9,
       "config": {
         "initialCapital": 100000,
         "strategy": "full_composite",
@@ -425,76 +376,82 @@
       }
     },
     "report": {
-      "periodReturn": -3.6,
-      "spyReturn": -1.7,
-      "alpha": -1.8,
+      "periodReturn": -3.2,
+      "spyReturn": -1.6,
+      "alpha": -1.7,
       "soldPerformance": [
         {
           "ticker": "TER",
-          "pnl": 342.54,
-          "pnlPct": 10.43,
+          "pnl": 323.55,
+          "pnlPct": 9.85,
           "reason": "Dropped out of top N"
         },
         {
           "ticker": "GLW",
-          "pnl": -181.64,
-          "pnlPct": -5.68,
+          "pnl": -275.69,
+          "pnlPct": -8.62,
           "reason": "Dropped out of top N"
         },
         {
           "ticker": "BAC",
-          "pnl": 109.44,
-          "pnlPct": 1.18,
+          "pnl": 18.81,
+          "pnlPct": 0.2,
+          "reason": "Dropped out of top N"
+        },
+        {
+          "ticker": "JPM",
+          "pnl": 771.9,
+          "pnlPct": 8.14,
           "reason": "Dropped out of top N"
         },
         {
           "ticker": "CSX",
-          "pnl": 1086.75,
-          "pnlPct": 11.47,
+          "pnl": 992.25,
+          "pnlPct": 10.48,
           "reason": "Dropped out of top N"
         },
         {
           "ticker": "ALGM",
-          "pnl": -66.95,
-          "pnlPct": -1.74,
+          "pnl": -92.7,
+          "pnlPct": -2.42,
           "reason": "Dropped out of top N"
         },
         {
           "ticker": "ON",
-          "pnl": -275.34,
-          "pnlPct": -8.51,
+          "pnl": -239.46,
+          "pnlPct": -7.4,
           "reason": "Dropped out of top N"
         }
       ],
       "missedOpportunities": [
         {
           "ticker": "PAYC",
-          "returnPct": 75.1,
-          "currentRank": 13,
+          "returnPct": 74.3,
+          "currentRank": 19,
           "wasRanked": true
         },
         {
           "ticker": "INSP",
-          "returnPct": 71.7,
-          "currentRank": 77,
-          "wasRanked": true
-        },
-        {
-          "ticker": "ILMN",
-          "returnPct": 68,
-          "currentRank": 15,
+          "returnPct": 62.8,
+          "currentRank": 67,
           "wasRanked": true
         },
         {
           "ticker": "ZBRA",
-          "returnPct": 59.3,
-          "currentRank": 8,
+          "returnPct": 58.2,
+          "currentRank": 7,
           "wasRanked": true
         },
         {
           "ticker": "CRWD",
-          "returnPct": 53.5,
-          "currentRank": 47,
+          "returnPct": 54.6,
+          "currentRank": 42,
+          "wasRanked": true
+        },
+        {
+          "ticker": "RVTY",
+          "returnPct": 52.9,
+          "currentRank": 27,
           "wasRanked": true
         }
       ],
@@ -502,26 +459,26 @@
         {
           "name": "fundamental",
           "label": "Quality",
-          "avgScoreWinners": 44.6,
-          "avgScoreLosers": 43.1,
-          "spread": 1.6,
+          "avgScoreWinners": 44.7,
+          "avgScoreLosers": 43,
+          "spread": 1.7,
           "contribution": "weak"
         },
         {
           "name": "dcf",
           "label": "DCF",
-          "avgScoreWinners": 39,
-          "avgScoreLosers": 10,
-          "spread": 29,
+          "avgScoreWinners": 36,
+          "avgScoreLosers": 13,
+          "spread": 23,
           "contribution": "strong"
         },
         {
           "name": "valuation",
           "label": "Valuation",
-          "avgScoreWinners": 36.9,
-          "avgScoreLosers": 36,
-          "spread": 0.9,
-          "contribution": "weak"
+          "avgScoreWinners": 41.2,
+          "avgScoreLosers": 31.6,
+          "spread": 9.6,
+          "contribution": "strong"
         },
         {
           "name": "momentum",
@@ -534,17 +491,17 @@
         {
           "name": "value",
           "label": "Value",
-          "avgScoreWinners": 60.8,
-          "avgScoreLosers": 87.2,
-          "spread": -26.4,
+          "avgScoreWinners": 61.8,
+          "avgScoreLosers": 86.2,
+          "spread": -24.4,
           "contribution": "negative"
         },
         {
           "name": "earningsMomentum",
           "label": "Earnings momentum",
-          "avgScoreWinners": 51.1,
-          "avgScoreLosers": 57.7,
-          "spread": -6.6,
+          "avgScoreWinners": 49.1,
+          "avgScoreLosers": 59.8,
+          "spread": -10.7,
           "contribution": "negative"
         }
       ],
@@ -627,252 +584,238 @@
         "dcf": 0,
         "valuation": 0
       },
-      "narrative": "Portfolio returned -3.6% vs S&P -1.7% (alpha: -1.8%). This period: DCF was strongest predictor (spread +29.0). Value was weak (spread -26.4). Long-term IC (5 periods): Momentum strongest (IC +0.149), Valuation weakest (IC -0.086). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%). Missed: PAYC (+75.1% ranked #13), INSP (+71.7% ranked #77), ILMN (+68% ranked #15)."
+      "narrative": "Portfolio returned -3.2% vs S&P -1.6% (alpha: -1.7%). This period: DCF was strongest predictor (spread +23.0). Value was weak (spread -24.4). Long-term IC (5 periods): Momentum strongest (IC +0.149), Valuation weakest (IC -0.086). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%). Missed: PAYC (+74.3% ranked #19), INSP (+62.8% ranked #67), ZBRA (+58.2% ranked #7)."
     },
     "rebalance": {
-      "date": "2026-10-01",
+      "date": "2026-10-02",
       "pointInTime": false,
       "pitDetail": {
         "ok": 142,
         "fallback": 6,
         "stale": 133
       },
-      "regime": "pullback",
-      "adjustedTopN": 11,
+      "regime": "caution",
+      "adjustedTopN": 9,
       "adaptiveMode": "fixed",
       "positionSizing": "invVol",
-      "exposureForBuys": 0.85,
+      "exposureForBuys": 0.7,
       "sells": [
         {
           "ticker": "TER",
           "shares": 9,
           "entryPrice": 364.9599914550781,
-          "sellPrice": 403.0199890136719,
-          "pnl": 342.54,
-          "pnlPct": 10.43,
-          "holdingReturn": 0.104285396892,
-          "holdingDays": 168,
+          "sellPrice": 400.9100036621094,
+          "pnl": 323.55,
+          "pnlPct": 9.85,
+          "holdingReturn": 0.09850398139176916,
+          "holdingDays": 169,
           "reason": "ROTATION"
         },
         {
           "ticker": "GLW",
           "shares": 19,
           "entryPrice": 168.27000427246094,
-          "sellPrice": 158.7100067138672,
-          "pnl": -181.64,
-          "pnlPct": -5.68,
-          "holdingReturn": -0.05681343861568047,
-          "holdingDays": 168,
+          "sellPrice": 153.75999450683594,
+          "pnl": -275.69,
+          "pnlPct": -8.62,
+          "holdingReturn": -0.08623051879246732,
+          "holdingDays": 169,
           "reason": "ROTATION"
         },
         {
           "ticker": "BAC",
           "shares": 171,
           "entryPrice": 54.31999969482422,
-          "sellPrice": 54.959999084472656,
-          "pnl": 109.44,
-          "pnlPct": 1.18,
-          "holdingReturn": 0.011782021230560108,
-          "holdingDays": 168,
+          "sellPrice": 54.43000030517578,
+          "pnl": 18.81,
+          "pnlPct": 0.2,
+          "holdingReturn": 0.002025048066449892,
+          "holdingDays": 169,
+          "reason": "ROTATION"
+        },
+        {
+          "ticker": "JPM",
+          "shares": 31,
+          "entryPrice": 305.92999267578125,
+          "sellPrice": 330.8299865722656,
+          "pnl": 771.9,
+          "pnlPct": 8.14,
+          "holdingReturn": 0.08139114991210722,
+          "holdingDays": 169,
           "reason": "ROTATION"
         },
         {
           "ticker": "CSX",
           "shares": 225,
           "entryPrice": 42.099998474121094,
-          "sellPrice": 46.93000030517578,
-          "pnl": 1086.75,
-          "pnlPct": 11.47,
-          "holdingReturn": 0.11472688850627141,
-          "holdingDays": 168,
+          "sellPrice": 46.5099983215332,
+          "pnl": 992.25,
+          "pnlPct": 10.48,
+          "holdingReturn": 0.10475059399640929,
+          "holdingDays": 169,
           "reason": "ROTATION"
         },
         {
           "ticker": "ALGM",
           "shares": 103,
           "entryPrice": 37.25,
-          "sellPrice": 36.599998474121094,
-          "pnl": -66.95,
-          "pnlPct": -1.74,
-          "holdingReturn": -0.017449705392722316,
-          "holdingDays": 168,
+          "sellPrice": 36.349998474121094,
+          "pnl": -92.7,
+          "pnlPct": -2.42,
+          "holdingReturn": -0.02416111478869547,
+          "holdingDays": 169,
           "reason": "ROTATION"
         },
         {
           "ticker": "ON",
           "shares": 39,
           "entryPrice": 83.01000213623047,
-          "sellPrice": 75.94999694824219,
-          "pnl": -275.34,
-          "pnlPct": -8.51,
-          "holdingReturn": -0.08505005428625183,
-          "holdingDays": 165,
+          "sellPrice": 76.87000274658203,
+          "pnl": -239.46,
+          "pnlPct": -7.4,
+          "holdingReturn": -0.07396698267242399,
+          "holdingDays": 166,
           "reason": "ROTATION"
         }
       ],
       "buys": [
         {
           "ticker": "KEYS",
-          "shares": 16,
-          "buyPrice": 360.6499938964844,
-          "cost": 5770.4,
+          "shares": 19,
+          "buyPrice": 364.0400085449219,
+          "cost": 6916.76,
           "scores": {
-            "composite": 90.31612301957131,
+            "composite": 89.66535626535627,
             "fundamental": 54.1,
             "momentum": 100,
-            "valuation": 35.615,
-            "value": 95
-          }
-        },
-        {
-          "ticker": "WST",
-          "shares": 16,
-          "buyPrice": 376.6300048828125,
-          "cost": 6026.08,
-          "scores": {
-            "composite": 83.84603914259085,
-            "fundamental": 50.9,
-            "momentum": 100,
-            "valuation": 28.468333333333334,
+            "valuation": 32.281666666666666,
             "value": 88
           }
         },
         {
           "ticker": "FTNT",
-          "shares": 34,
-          "buyPrice": 175.9600067138672,
-          "cost": 5982.64,
+          "shares": 39,
+          "buyPrice": 178.75999450683594,
+          "cost": 6971.64,
           "scores": {
-            "composite": 82.53196644920783,
+            "composite": 85.61965601965602,
             "fundamental": 56.9,
             "momentum": 100,
             "valuation": 29.368333333333332,
-            "value": 78
+            "value": 93
           }
         },
         {
           "ticker": "APH",
-          "shares": 72,
-          "buyPrice": 84.33999633789062,
-          "cost": 6072.48,
+          "shares": 83,
+          "buyPrice": 84.30000305175781,
+          "cost": 6996.9,
           "scores": {
-            "composite": 82.51602982292637,
+            "composite": 84.4036855036855,
             "fundamental": 53.6,
             "momentum": 100,
-            "valuation": 37.20666666666666,
-            "value": 80
+            "valuation": 40.54,
+            "value": 90
           }
         },
         {
-          "ticker": "LLY",
-          "shares": 5,
-          "buyPrice": 1184.6300048828125,
-          "cost": 5923.15,
+          "ticker": "WST",
+          "shares": 18,
+          "buyPrice": 370.760009765625,
+          "cost": 6673.68,
           "scores": {
-            "composite": 79.67548928238583,
-            "fundamental": 49.4,
+            "composite": 82.9832923832924,
+            "fundamental": 50.9,
             "momentum": 100,
-            "valuation": 39.91,
-            "value": 80
+            "valuation": 35.135,
+            "value": 88
           }
         },
         {
-          "ticker": "UNH",
-          "shares": 16,
-          "buyPrice": 374.94000244140625,
-          "cost": 5999.04,
+          "ticker": "GOOGL",
+          "shares": 20,
+          "buyPrice": 344.0799865722656,
+          "cost": 6881.6,
           "scores": {
-            "composite": 77.23112767940354,
-            "fundamental": 45,
-            "momentum": 100,
-            "valuation": 45.916666666666664,
+            "composite": 76.33694317577306,
+            "fundamental": 54.1,
+            "momentum": 99.16858946067767,
+            "valuation": 47.281666666666666,
             "value": 75
           }
         },
         {
-          "ticker": "CVX",
-          "shares": 29,
-          "buyPrice": 204.3800048828125,
-          "cost": 5927.02,
+          "ticker": "ILMN",
+          "shares": 25,
+          "buyPrice": 273.67999267578125,
+          "cost": 6842,
           "scores": {
-            "composite": 73.50055917986953,
-            "fundamental": 41.8,
+            "composite": 74.75356265356265,
+            "fundamental": 49.9,
             "momentum": 100,
-            "valuation": 27.10333333333333,
-            "value": 35
+            "valuation": 28.31833333333333,
+            "value": 93
           }
         }
       ],
       "rankings": [
         {
           "ticker": "KEYS",
-          "compositeScore": 90.31612301957131,
+          "compositeScore": 89.66535626535627,
           "fundamentalScore": 54.1,
           "momentumScore": 100
         },
         {
-          "ticker": "WST",
-          "compositeScore": 83.84603914259085,
-          "fundamentalScore": 50.9,
-          "momentumScore": 100
-        },
-        {
           "ticker": "FTNT",
-          "compositeScore": 82.53196644920783,
+          "compositeScore": 85.61965601965602,
           "fundamentalScore": 56.9,
           "momentumScore": 100
         },
         {
           "ticker": "APH",
-          "compositeScore": 82.51602982292637,
+          "compositeScore": 84.4036855036855,
           "fundamentalScore": 53.6,
           "momentumScore": 100
         },
         {
-          "ticker": "LLY",
-          "compositeScore": 79.67548928238583,
-          "fundamentalScore": 49.4,
+          "ticker": "WST",
+          "compositeScore": 82.9832923832924,
+          "fundamentalScore": 50.9,
           "momentumScore": 100
         },
         {
-          "ticker": "UNH",
-          "compositeScore": 77.23112767940354,
-          "fundamentalScore": 45,
+          "ticker": "GOOGL",
+          "compositeScore": 76.33694317577306,
+          "fundamentalScore": 54.1,
+          "momentumScore": 99.16858946067767
+        },
+        {
+          "ticker": "ILMN",
+          "compositeScore": 74.75356265356265,
+          "fundamentalScore": 49.9,
           "momentumScore": 100
         },
         {
           "ticker": "CVX",
-          "compositeScore": 73.50055917986953,
+          "compositeScore": 74.63243243243242,
           "fundamentalScore": 41.8,
           "momentumScore": 100
         },
         {
+          "ticker": "LLY",
+          "compositeScore": 74.53367364624464,
+          "fundamentalScore": 49.4,
+          "momentumScore": 80.85233152297232
+        },
+        {
           "ticker": "XOM",
-          "compositeScore": 70.53122087604845,
+          "compositeScore": 71.94348894348894,
           "fundamentalScore": 42.5,
-          "momentumScore": 100
-        },
-        {
-          "ticker": "AMZN",
-          "compositeScore": 68.24987047560117,
-          "fundamentalScore": 53.1,
-          "momentumScore": 68.15694405310364
-        },
-        {
-          "ticker": "ROK",
-          "compositeScore": 67.37665996303369,
-          "fundamentalScore": 40,
-          "momentumScore": 66.81532819109974
-        },
-        {
-          "ticker": "ETN",
-          "compositeScore": 66.88126747437092,
-          "fundamentalScore": 45.3,
           "momentumScore": 100
         }
       ],
-      "holdingsAfter": 11,
-      "cashAfter": 8572.66,
+      "holdingsAfter": 9,
+      "cashAfter": 18958.58,
       "activeWeights": {
         "fundamental": 8.1,
         "dcf": 0,
@@ -901,10 +844,10 @@
         "periodsAnalyzed": 7
       },
       "report": {
-        "periodReturn": -3.6,
-        "spyReturn": -1.7,
-        "alpha": -1.8,
-        "narrative": "Portfolio returned -3.6% vs S&P -1.7% (alpha: -1.8%). This period: DCF was strongest predictor (spread +29.0). Value was weak (spread -26.4). Long-term IC (5 periods): Momentum strongest (IC +0.149), Valuation weakest (IC -0.086). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%). Missed: PAYC (+75.1% ranked #13), INSP (+71.7% ranked #77), ILMN (+68% ranked #15).",
+        "periodReturn": -3.2,
+        "spyReturn": -1.6,
+        "alpha": -1.7,
+        "narrative": "Portfolio returned -3.2% vs S&P -1.6% (alpha: -1.7%). This period: DCF was strongest predictor (spread +23.0). Value was weak (spread -24.4). Long-term IC (5 periods): Momentum strongest (IC +0.149), Valuation weakest (IC -0.086). Shifting weight toward Momentum (20% → 21.6%), Value (20% → 21.6%), Earnings momentum (45% → 48.6%). Reducing Quality (15% → 8.1%). Missed: PAYC (+74.3% ranked #19), INSP (+62.8% ranked #67), ZBRA (+58.2% ranked #7).",
         "weightChanges": {
           "previous": {
             "fundamental": 15,
@@ -969,7 +912,11 @@
         }
       },
       "hedgeRecommendation": {
-        "action": "HOLD"
+        "action": "OPEN_HEDGE",
+        "hedgePct": 0.3,
+        "notionalHedge": 33203.346,
+        "regime": "caution",
+        "description": "Open SPY put hedge covering 30% of portfolio (~$33203 notional)"
       }
     },
     "preview": true
