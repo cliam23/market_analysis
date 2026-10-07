@@ -1,5 +1,5 @@
 {
-  "_snapshotTs": 1791251392453,
+  "_snapshotTs": 1791334462312,
   "_snapshotData": {
     "success": true,
     "strategy": "full_composite",
@@ -19,9 +19,9 @@
     "initialCapital": 10000,
     "pointInTime": false,
     "pitDetail": {
-      "ok": 49,
-      "fallback": 3,
-      "stale": 48
+      "ok": 52,
+      "fallback": 0,
+      "stale": 51
     },
     "adaptiveMode": "fixed",
     "positionSizing": "invVol",
@@ -77,14 +77,14 @@
         {
           "name": "fundamental",
           "label": "Quality",
-          "ic": 0.0135,
+          "ic": 0.001,
           "icConfidence": {
-            "lower": -0.1407,
-            "upper": 0.1677,
+            "lower": -0.1515,
+            "upper": 0.1535,
             "significant": false
           },
-          "spread": -0.2,
-          "contribution": 264.41,
+          "spread": 0.06,
+          "contribution": 264.69,
           "originalWeight": 0.11764705882352942,
           "suggestedWeight": 0.116,
           "color": "#22c55e"
@@ -92,13 +92,13 @@
         {
           "name": "dcf",
           "label": "DCF",
-          "ic": -0.084,
+          "ic": -0.0927,
           "icConfidence": {
-            "lower": -0.2153,
-            "upper": 0.0473,
+            "lower": -0.2283,
+            "upper": 0.0429,
             "significant": false
           },
-          "spread": -0.46,
+          "spread": -0.26,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0,
@@ -107,13 +107,13 @@
         {
           "name": "valuation",
           "label": "Valuation",
-          "ic": -0.0028,
+          "ic": -0.0107,
           "icConfidence": {
-            "lower": -0.126,
-            "upper": 0.1204,
+            "lower": -0.1366,
+            "upper": 0.1152,
             "significant": false
           },
-          "spread": 1.06,
+          "spread": 0.04,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0,
@@ -122,14 +122,14 @@
         {
           "name": "momentum",
           "label": "Momentum",
-          "ic": -0.0177,
+          "ic": -0.0159,
           "icConfidence": {
-            "lower": -0.1253,
-            "upper": 0.0899,
+            "lower": -0.1216,
+            "upper": 0.0898,
             "significant": false
           },
           "spread": 1.44,
-          "contribution": 1419.4,
+          "contribution": 1423.04,
           "originalWeight": 0.35294117647058826,
           "suggestedWeight": 0.349,
           "color": "#06b6d4"
@@ -137,14 +137,14 @@
         {
           "name": "value",
           "label": "Value",
-          "ic": 0.0466,
+          "ic": 0.0463,
           "icConfidence": {
-            "lower": -0.0976,
-            "upper": 0.1909,
+            "lower": -0.0982,
+            "upper": 0.1908,
             "significant": false
           },
           "spread": 1.13,
-          "contribution": 1119.11,
+          "contribution": 1123.5,
           "originalWeight": 0.35294117647058826,
           "suggestedWeight": 0.349,
           "color": "#8b5cf6"
@@ -152,23 +152,23 @@
         {
           "name": "earningsMomentum",
           "label": "Earnings momentum",
-          "ic": 0.0966,
+          "ic": 0.0961,
           "icConfidence": {
-            "lower": 0.0028,
-            "upper": 0.1904,
+            "lower": 0.0021,
+            "upper": 0.1901,
             "significant": true
           },
-          "spread": 2.63,
-          "contribution": 454.11,
+          "spread": 2.44,
+          "contribution": 449.5,
           "originalWeight": 0.17647058823529413,
           "suggestedWeight": 0.186,
           "color": "#ec4899"
         }
       ],
-      "totalContribution": 3257.04,
+      "totalContribution": 3260.73,
       "periodsAnalyzed": 10,
       "avgStocksPerPeriod": 42,
-      "insight": "Earnings momentum had the highest average IC (+0.097, spread +2.6%/period). DCF averaged negative IC (-0.084) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 19%.",
+      "insight": "Earnings momentum had the highest average IC (+0.096, spread +2.4%/period). DCF averaged negative IC (-0.093) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 19%.",
       "suggestedWeights": {
         "fundamental": 0.116,
         "dcf": 0,
@@ -325,7 +325,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "GOOG": {
+      "AAPL": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -334,6 +334,14 @@
         "politicians": []
       },
       "AMGN": {
+        "score": 0,
+        "sentiment": "neutral",
+        "hasSignal": false,
+        "netBuys": 0,
+        "netSells": 0,
+        "politicians": []
+      },
+      "GOOG": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -405,7 +413,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "BAC": {
+      "CVX": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -413,7 +421,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "CVX": {
+      "BAC": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -438,14 +446,6 @@
         "politicians": []
       },
       "HD": {
-        "score": 0,
-        "sentiment": "neutral",
-        "hasSignal": false,
-        "netBuys": 0,
-        "netSells": 0,
-        "politicians": []
-      },
-      "AAPL": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -485,7 +485,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "ABT": {
+      "MCD": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -493,7 +493,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "MCD": {
+      "ABT": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -542,35 +542,35 @@
     "regimeSplit": {
       "strong_bull": {
         "daysInRegime": 233,
-        "return": 44.5,
-        "alpha": 7.3,
-        "sharpe": 0.94,
+        "return": 44.19,
+        "alpha": 6.98,
+        "sharpe": 0.9,
         "maxDD": -4.43,
         "benchmarkReturn": 37.2,
         "numPeriods": 36
       },
       "normal": {
         "daysInRegime": 62,
-        "return": 11.52,
-        "alpha": -17.06,
-        "sharpe": -6.14,
+        "return": 11.01,
+        "alpha": -17.57,
+        "sharpe": -6.37,
         "maxDD": -2.38,
         "benchmarkReturn": 28.58,
         "numPeriods": 11
       },
       "pullback": {
         "daysInRegime": 244,
-        "return": 3.5,
-        "alpha": 1.45,
-        "sharpe": 0.21,
+        "return": 3.4,
+        "alpha": 1.35,
+        "sharpe": 0.2,
         "maxDD": -10.35,
         "benchmarkReturn": 2.05,
         "numPeriods": 50
       },
       "caution": {
         "daysInRegime": 59,
-        "return": -5.85,
-        "alpha": 0.37,
+        "return": -5.81,
+        "alpha": 0.41,
         "sharpe": null,
         "maxDD": -10.3,
         "benchmarkReturn": -6.22,
@@ -589,9 +589,9 @@
     "regimeDiversification": {
       "positiveAlphaRegimes": 4,
       "totalRegimesObserved": 5,
-      "worstRegimeAlpha": -17.06,
-      "bestRegimeAlpha": 7.3,
-      "alphaRange": 24.36,
+      "worstRegimeAlpha": -17.57,
+      "bestRegimeAlpha": 6.98,
+      "alphaRange": 24.55,
       "robustnessScore": 0.8
     },
     "inflationSource": "constant_fallback",
@@ -600,21 +600,21 @@
     "inflationDetail": "Set FRED_API_KEY for official U.S. CPI (free key: fred.stlouisfed.org/docs/api/api_key.html). Using ~3%/yr compound fallback.",
     "inflationBaselineAnnualPct": 3,
     "performance": {
-      "totalReturn": "42.62",
-      "annualizedReturn": "15.29",
+      "totalReturn": "41.59",
+      "annualizedReturn": "14.95",
       "benchmarkReturn": "46.63",
       "benchmarkAnnualized": "16.57",
-      "alpha": "-1.29",
-      "sharpe": "0.83",
+      "alpha": "-1.62",
+      "sharpe": "0.81",
       "benchmarkSharpe": "0.89",
       "maxDrawdown": "-13.31",
       "benchmarkMaxDD": "-16.75",
-      "annualizedVol": "13.26",
+      "annualizedVol": "13.12",
       "benchmarkVol": "13.76",
       "winRate": "60.5",
-      "avgWin": "18.1",
+      "avgWin": "18.2",
       "avgLoss": "-9.0",
-      "hitRate": "54.8",
+      "hitRate": "51.6",
       "totalTrades": 96,
       "totalStops": 3,
       "period": "2024-01-16 to 2026-07-15",
@@ -623,7 +623,7 @@
       "nameSwapsTotal": 35,
       "nameSwapsPerRebalance": 3.1818,
       "monthlyTurnover": 1.1686,
-      "avgHoldingPeriodDays": 221.3,
+      "avgHoldingPeriodDays": 223.7,
       "oneMonthSellCount": 0,
       "oneMonthSellAvgReturnPct": 0,
       "rebuyWithin60d": 0,
@@ -4022,373 +4022,373 @@
       },
       {
         "date": "2026-04-16",
-        "portfolio": 12927.228776092528,
+        "portfolio": 12916.658829803466,
         "benchmark": 14026.065977018054,
         "cashInflationAdjusted": 10687.849889872117
       },
       {
         "date": "2026-04-17",
-        "portfolio": 13012.038758392333,
+        "portfolio": 12992.17877304077,
         "benchmark": 14131.146130619807,
         "cashInflationAdjusted": 10688.714866805589
       },
       {
         "date": "2026-04-20",
-        "portfolio": 13025.51863204956,
+        "portfolio": 13017.07869064331,
         "benchmark": 14077.02470284948,
         "cashInflationAdjusted": 10691.310217648654
       },
       {
         "date": "2026-04-21",
-        "portfolio": 12961.818787689208,
+        "portfolio": 12966.71881210327,
         "benchmark": 13983.809888281092,
         "cashInflationAdjusted": 10692.175474629445
       },
       {
         "date": "2026-04-22",
-        "portfolio": 13044.828789825438,
+        "portfolio": 13017.358758087157,
         "benchmark": 14095.028898867768,
         "cashInflationAdjusted": 10693.04080163623
       },
       {
         "date": "2026-04-23",
-        "portfolio": 13262.088708038329,
+        "portfolio": 13187.278740997313,
         "benchmark": 14072.65703433222,
         "cashInflationAdjusted": 10693.90619867468
       },
       {
         "date": "2026-04-24",
-        "portfolio": 13329.208779449462,
+        "portfolio": 13243.698769683837,
         "benchmark": 14119.354661745163,
         "cashInflationAdjusted": 10694.771665750462
       },
       {
         "date": "2026-04-27",
-        "portfolio": 13290.628762359618,
+        "portfolio": 13184.848824615477,
         "benchmark": 14075.161733506866,
         "cashInflationAdjusted": 10697.368487258473
       },
       {
         "date": "2026-04-28",
-        "portfolio": 13271.998688812255,
+        "portfolio": 13171.458710784911,
         "benchmark": 14055.383736512336,
         "cashInflationAdjusted": 10698.234234540261
       },
       {
         "date": "2026-04-29",
-        "portfolio": 13326.1886378479,
+        "portfolio": 13222.258675689696,
         "benchmark": 14070.09327096549,
         "cashInflationAdjusted": 10699.100051887726
       },
       {
         "date": "2026-04-30",
-        "portfolio": 13680.148713226317,
+        "portfolio": 13485.02871810913,
         "benchmark": 14301.722212789427,
         "cashInflationAdjusted": 10699.965939306538
       },
       {
         "date": "2026-05-01",
-        "portfolio": 13652.028817291259,
+        "portfolio": 13443.31882583618,
         "benchmark": 14309.471364781532,
         "cashInflationAdjusted": 10700.831896802367
       },
       {
         "date": "2026-05-04",
-        "portfolio": 13562.218751068114,
+        "portfolio": 13357.63873397827,
         "benchmark": 14209.324781139776,
         "cashInflationAdjusted": 10703.430189808678
       },
       {
         "date": "2026-05-05",
-        "portfolio": 13667.088647003173,
+        "portfolio": 13452.778710479735,
         "benchmark": 14301.54261596978,
         "cashInflationAdjusted": 10704.296427669295
       },
       {
         "date": "2026-05-06",
-        "portfolio": 13868.178841705321,
+        "portfolio": 13627.448830718993,
         "benchmark": 14488.734172241358,
         "cashInflationAdjusted": 10705.162735635295
       },
       {
         "date": "2026-05-07",
-        "portfolio": 13769.738648529052,
+        "portfolio": 13530.038697357177,
         "benchmark": 14471.0572291683,
         "cashInflationAdjusted": 10706.029113712342
       },
       {
         "date": "2026-05-08",
-        "portfolio": 13927.948609466552,
+        "portfolio": 13673.538666839599,
         "benchmark": 14565.924975136491,
         "cashInflationAdjusted": 10706.89556190612
       },
       {
         "date": "2026-05-11",
-        "portfolio": 13988.248620147704,
+        "portfolio": 13752.278679962157,
         "benchmark": 14595.797074864104,
         "cashInflationAdjusted": 10709.495327244562
       },
       {
         "date": "2026-05-12",
-        "portfolio": 14018.89891921997,
+        "portfolio": 13798.478905792235,
         "benchmark": 14580.553499591535,
         "cashInflationAdjusted": 10710.362055962
       },
       {
         "date": "2026-05-13",
-        "portfolio": 14232.25886642456,
+        "portfolio": 13952.908860321044,
         "benchmark": 14666.534628940928,
         "cashInflationAdjusted": 10711.22885482454
       },
       {
         "date": "2026-05-14",
-        "portfolio": 14485.49893295288,
+        "portfolio": 14213.938904876708,
         "benchmark": 14809.981967377797,
         "cashInflationAdjusted": 10712.09572383786
       },
       {
         "date": "2026-05-15",
-        "portfolio": 14324.768822784423,
+        "portfolio": 14054.88881790161,
         "benchmark": 14656.215190415678,
         "cashInflationAdjusted": 10712.962663007642
       },
       {
         "date": "2026-05-18",
-        "portfolio": 14350.64868270874,
+        "portfolio": 14085.058747406005,
         "benchmark": 14706.079578526793,
         "cashInflationAdjusted": 10715.563901512516
       },
       {
         "date": "2026-05-19",
-        "portfolio": 14243.308694000243,
+        "portfolio": 14008.158730621337,
         "benchmark": 14627.02799565998,
         "cashInflationAdjusted": 10716.431121364916
       },
       {
         "date": "2026-05-20",
-        "portfolio": 14248.368867034911,
+        "portfolio": 14017.198914642333,
         "benchmark": 14696.581171834443,
         "cashInflationAdjusted": 10717.298411402166
       },
       {
         "date": "2026-05-21",
-        "portfolio": 14195.55858718872,
+        "portfolio": 13966.258599395751,
         "benchmark": 14715.29464514982,
         "cashInflationAdjusted": 10718.16577162995
       },
       {
         "date": "2026-05-22",
-        "portfolio": 14247.92878829956,
+        "portfolio": 14029.808793182372,
         "benchmark": 14815.704522063445,
         "cashInflationAdjusted": 10719.033202053946
       },
       {
         "date": "2026-05-26",
-        "portfolio": 14283.928811187743,
+        "portfolio": 14049.328835601806,
         "benchmark": 14822.031306608225,
         "cashInflationAdjusted": 10722.503625825697
       },
       {
         "date": "2026-05-27",
-        "portfolio": 14225.198678131102,
+        "portfolio": 13998.658730621337,
         "benchmark": 14815.020666934235,
         "cashInflationAdjusted": 10723.371407315984
       },
       {
         "date": "2026-05-28",
-        "portfolio": 14268.708985443114,
+        "portfolio": 14069.309022064208,
         "benchmark": 14932.04303424867,
         "cashInflationAdjusted": 10724.239259036578
       },
       {
         "date": "2026-05-29",
-        "portfolio": 14118.258668060302,
+        "portfolio": 13953.218720550536,
         "benchmark": 14989.138376440604,
         "cashInflationAdjusted": 10725.107180993164
       },
       {
         "date": "2026-06-01",
-        "portfolio": 14034.758820648192,
+        "portfolio": 13882.79889022827,
         "benchmark": 14967.44944830942,
         "cashInflationAdjusted": 10727.711368335704
       },
       {
         "date": "2026-06-02",
-        "portfolio": 14118.048646087645,
+        "portfolio": 13996.698609466552,
         "benchmark": 14986.769657605993,
         "cashInflationAdjusted": 10728.579571293098
       },
       {
         "date": "2026-06-03",
-        "portfolio": 14111.668816680907,
+        "portfolio": 13990.318871612548,
         "benchmark": 14911.617584554408,
         "cashInflationAdjusted": 10729.447844514905
       },
       {
         "date": "2026-06-04",
-        "portfolio": 14323.85871231079,
+        "portfolio": 14169.818764801024,
         "benchmark": 14954.49940842526,
         "cashInflationAdjusted": 10730.316188006816
       },
       {
         "date": "2026-06-05",
-        "portfolio": 13957.578751678466,
+        "portfolio": 13804.838730926513,
         "benchmark": 14607.62864688327,
         "cashInflationAdjusted": 10731.184601774517
       },
       {
         "date": "2026-06-08",
-        "portfolio": 14033.348801727294,
+        "portfolio": 13891.208787078856,
         "benchmark": 14631.462336848726,
         "cashInflationAdjusted": 10733.790264789235
       },
       {
         "date": "2026-06-09",
-        "portfolio": 13965.97889816284,
+        "portfolio": 13844.918900604247,
         "benchmark": 14594.687136453202,
         "cashInflationAdjusted": 10734.658959716977
       },
       {
         "date": "2026-06-10",
-        "portfolio": 13785.518876190185,
+        "portfolio": 13679.338883514403,
         "benchmark": 14371.695354587693,
         "cashInflationAdjusted": 10735.527724948946
       },
       {
         "date": "2026-06-11",
-        "portfolio": 14007.408776397704,
+        "portfolio": 13885.128808135985,
         "benchmark": 14529.138408123661,
         "cashInflationAdjusted": 10736.396560490839
       },
       {
         "date": "2026-06-12",
-        "portfolio": 14109.008660430907,
+        "portfolio": 13975.608666534423,
         "benchmark": 14595.148112764178,
         "cashInflationAdjusted": 10737.265466348343
       },
       {
         "date": "2026-06-15",
-        "portfolio": 14229.868706817626,
+        "portfolio": 14073.998772735595,
         "benchmark": 14745.622181324157,
         "cashInflationAdjusted": 10739.872605871435
       },
       {
         "date": "2026-06-16",
-        "portfolio": 14175.788834686278,
+        "portfolio": 14006.858842010497,
         "benchmark": 14675.630443728092,
         "cashInflationAdjusted": 10740.741793048297
       },
       {
         "date": "2026-06-17",
-        "portfolio": 14048.658776397704,
+        "portfolio": 13895.788781280517,
         "benchmark": 14490.387649873082,
         "cashInflationAdjusted": 10741.611050569229
       },
       {
         "date": "2026-06-18",
-        "portfolio": 14149.428712005614,
+        "portfolio": 13983.398743743895,
         "benchmark": 14552.631860564505,
         "cashInflationAdjusted": 10742.480378439925
       },
       {
         "date": "2026-06-22",
-        "portfolio": 14104.898713226317,
+        "portfolio": 13994.308747406005,
         "benchmark": 14442.938677260685,
         "cashInflationAdjusted": 10745.958393534209
       },
       {
         "date": "2026-06-23",
-        "portfolio": 14010.828614349364,
+        "portfolio": 13913.678681488036,
         "benchmark": 14350.176377658574,
         "cashInflationAdjusted": 10746.82807323913
       },
       {
         "date": "2026-06-24",
-        "portfolio": 13962.838791961669,
+        "portfolio": 13891.658799285888,
         "benchmark": 14349.199323054558,
         "cashInflationAdjusted": 10747.697823327979
       },
       {
         "date": "2026-06-25",
-        "portfolio": 13958.418740386962,
+        "portfolio": 13909.338753814696,
         "benchmark": 14322.676961246301,
         "cashInflationAdjusted": 10748.567643806458
       },
       {
         "date": "2026-06-26",
-        "portfolio": 13789.828713531493,
+        "portfolio": 13770.528756256102,
         "benchmark": 14356.367371032451,
         "cashInflationAdjusted": 10749.437534680259
       },
       {
         "date": "2026-06-29",
-        "portfolio": 13999.238816375731,
+        "portfolio": 13923.558854217528,
         "benchmark": 14488.160378725066,
         "cashInflationAdjusted": 10752.047629730576
       },
       {
         "date": "2026-06-30",
-        "portfolio": 14116.548562164306,
+        "portfolio": 14029.658608551024,
         "benchmark": 14537.503144423617,
         "cashInflationAdjusted": 10752.91780224265
       },
       {
         "date": "2026-07-01",
-        "portfolio": 14014.90883743286,
+        "portfolio": 13926.308831329345,
         "benchmark": 14554.350028338467,
         "cashInflationAdjusted": 10753.788045178533
       },
       {
         "date": "2026-07-02",
-        "portfolio": 14026.438683624267,
+        "portfolio": 13953.078728790282,
         "benchmark": 14666.46754853701,
         "cashInflationAdjusted": 10754.658358543931
       },
       {
         "date": "2026-07-06",
-        "portfolio": 14167.278733367919,
+        "portfolio": 14061.918748016356,
         "benchmark": 14781.288404717308,
         "cashInflationAdjusted": 10758.140316414663
       },
       {
         "date": "2026-07-07",
-        "portfolio": 14147.848664398192,
+        "portfolio": 14045.34869491577,
         "benchmark": 14771.382328397078,
         "cashInflationAdjusted": 10759.010982013137
       },
       {
         "date": "2026-07-08",
-        "portfolio": 14127.558701629638,
+        "portfolio": 14033.298752899169,
         "benchmark": 14687.2755723022,
         "cashInflationAdjusted": 10759.88171807533
       },
       {
         "date": "2026-07-09",
-        "portfolio": 14212.65866958618,
+        "portfolio": 14140.388741607665,
         "benchmark": 14763.354558649753,
         "cashInflationAdjusted": 10760.752524606945
       },
       {
         "date": "2026-07-10",
-        "portfolio": 14350.728783721923,
+        "portfolio": 14284.428795928954,
         "benchmark": 14817.595840263184,
         "cashInflationAdjusted": 10761.623401613684
       },
       {
         "date": "2026-07-13",
-        "portfolio": 14242.788697357177,
+        "portfolio": 14191.028687591552,
         "benchmark": 14709.169141009485,
         "cashInflationAdjusted": 10764.2364555417
       },
       {
         "date": "2026-07-14",
-        "portfolio": 14329.838700408935,
+        "portfolio": 14263.65876876831,
         "benchmark": 14615.986759928695,
         "cashInflationAdjusted": 10765.107614505985
       },
       {
         "date": "2026-07-15",
-        "portfolio": 14262.228715057372,
+        "portfolio": 14158.628739471435,
         "benchmark": 14663.343288822993,
         "cashInflationAdjusted": 10765.978843973915
       }
@@ -4531,22 +4531,22 @@
       },
       {
         "month": "2026-04",
-        "portfolio": 8.48273421197359,
+        "portfolio": 6.935444704128218,
         "benchmark": 7.63817251052539
       },
       {
         "month": "2026-05",
-        "portfolio": 3.415095712210407,
+        "portfolio": 3.7929614057385828,
         "benchmark": 4.749770234921945
       },
       {
         "month": "2026-06",
-        "portfolio": 0.5827655648473469,
+        "portfolio": 1.0578538195646163,
         "benchmark": -2.8725422148284965
       },
       {
         "month": "2026-07",
-        "portfolio": 1.764691304762092,
+        "portfolio": 1.6682087906843694,
         "benchmark": 0.7488706831449486
       }
     ],
@@ -4651,7 +4651,7 @@
         "shares": 3,
         "price": 144.0800018310547,
         "cost": 432.24000549316406,
-        "score": 85.86874999999999,
+        "score": 86.01875,
         "date": "2024-01-16"
       },
       {
@@ -4660,7 +4660,7 @@
         "shares": 1,
         "price": 681.489990234375,
         "cost": 681.489990234375,
-        "score": 85.19375,
+        "score": 84.59375,
         "date": "2024-01-16"
       },
       {
@@ -4705,7 +4705,7 @@
         "shares": 5,
         "price": 161.47999572753906,
         "cost": 807.3999786376953,
-        "score": 80.25,
+        "score": 80.39999999999999,
         "date": "2024-01-16"
       },
       {
@@ -4723,7 +4723,7 @@
         "shares": 5,
         "price": 167.99000549316406,
         "cost": 839.9500274658203,
-        "score": 78.51249999999999,
+        "score": 77.875,
         "date": "2024-01-16"
       },
       {
@@ -4741,7 +4741,7 @@
         "shares": 2,
         "price": 428.3500061035156,
         "cost": 856.7000122070312,
-        "score": 76.89375,
+        "score": 77.04375,
         "date": "2024-01-16"
       },
       {
@@ -4789,7 +4789,7 @@
         "shares": 2,
         "price": 156.3300018310547,
         "cost": 312.6600036621094,
-        "score": 85.06199324324324,
+        "score": 85.26469594594595,
         "date": "2024-04-15"
       },
       {
@@ -4832,15 +4832,6 @@
       },
       {
         "type": "BUY",
-        "ticker": "JPM",
-        "shares": 3,
-        "price": 210.0500030517578,
-        "cost": 630.1500091552734,
-        "score": 90.38035714285714,
-        "date": "2024-07-15"
-      },
-      {
-        "type": "BUY",
         "ticker": "BRK-B",
         "shares": 2,
         "price": 434.4200134277344,
@@ -4850,11 +4841,11 @@
       },
       {
         "type": "BUY",
-        "ticker": "BAC",
-        "shares": 20,
-        "price": 41.88999938964844,
-        "cost": 837.7999877929688,
-        "score": 85.92767857142857,
+        "ticker": "JPM",
+        "shares": 3,
+        "price": 210.0500030517578,
+        "cost": 630.1500091552734,
+        "score": 89.74285714285713,
         "date": "2024-07-15"
       },
       {
@@ -4864,6 +4855,15 @@
         "price": 158.0399932861328,
         "cost": 790.1999664306641,
         "score": 85.29719387755102,
+        "date": "2024-07-15"
+      },
+      {
+        "type": "BUY",
+        "ticker": "BAC",
+        "shares": 20,
+        "price": 41.88999938964844,
+        "cost": 837.7999877929688,
+        "score": 85.13711734693878,
         "date": "2024-07-15"
       },
       {
@@ -4881,7 +4881,7 @@
         "shares": 1,
         "price": 330.1499938964844,
         "cost": 330.1499938964844,
-        "score": 81.8172193877551,
+        "score": 81.97028061224489,
         "date": "2024-07-15"
       },
       {
@@ -4967,7 +4967,7 @@
         "shares": 3,
         "price": 233.85000610351562,
         "cost": 701.5500183105469,
-        "score": 84.36704545454545,
+        "score": 84.5375,
         "date": "2024-10-15"
       },
       {
@@ -5146,20 +5146,20 @@
       },
       {
         "type": "BUY",
-        "ticker": "ABT",
-        "shares": 8,
-        "price": 126.22000122070312,
-        "cost": 1009.760009765625,
-        "score": 65.35657894736842,
-        "date": "2025-04-15"
-      },
-      {
-        "type": "BUY",
         "ticker": "MCD",
         "shares": 3,
         "price": 312.4800109863281,
         "cost": 937.4400329589844,
-        "score": 64.86085526315789,
+        "score": 64.46611842105263,
+        "date": "2025-04-15"
+      },
+      {
+        "type": "BUY",
+        "ticker": "ABT",
+        "shares": 8,
+        "price": 126.22000122070312,
+        "cost": 1009.760009765625,
+        "score": 64.22434210526316,
         "date": "2025-04-15"
       },
       {
@@ -5225,7 +5225,7 @@
         "shares": 3,
         "price": 286.54998779296875,
         "cost": 859.6499633789062,
-        "score": 88.3375,
+        "score": 87.69999999999999,
         "date": "2025-07-15"
       },
       {
@@ -5334,22 +5334,22 @@
       },
       {
         "type": "SELL",
-        "ticker": "COST",
-        "shares": 1,
-        "price": 954.989990234375,
-        "proceeds": 954.989990234375,
-        "holdingReturn": 0.40132651090875027,
-        "holdingDays": 638,
-        "date": "2025-10-15"
-      },
-      {
-        "type": "SELL",
         "ticker": "ABT",
         "shares": 8,
         "price": 129.4499969482422,
         "proceeds": 1035.5999755859375,
         "holdingReturn": 0.02559020516796878,
         "holdingDays": 183,
+        "date": "2025-10-15"
+      },
+      {
+        "type": "SELL",
+        "ticker": "COST",
+        "shares": 1,
+        "price": 954.989990234375,
+        "proceeds": 954.989990234375,
+        "holdingReturn": 0.40132651090875027,
+        "holdingDays": 638,
         "date": "2025-10-15"
       },
       {
@@ -5376,7 +5376,7 @@
         "shares": 1,
         "price": 527.8699951171875,
         "cost": 527.8699951171875,
-        "score": 85.60335365853658,
+        "score": 85.96920731707317,
         "date": "2025-10-15"
       },
       {
@@ -5446,16 +5446,6 @@
         "holdingDays": 47
       },
       {
-        "type": "SELL",
-        "ticker": "TMO",
-        "shares": 1,
-        "price": 531.6699829101562,
-        "proceeds": 531.6699829101562,
-        "holdingReturn": 0.007198719056053091,
-        "holdingDays": 182,
-        "date": "2026-04-15"
-      },
-      {
         "type": "BUY",
         "ticker": "TXN",
         "shares": 3,
@@ -5483,15 +5473,6 @@
         "date": "2026-04-15"
       },
       {
-        "type": "BUY",
-        "ticker": "GOOG",
-        "shares": 3,
-        "price": 334.4700012207031,
-        "cost": 1003.4100036621094,
-        "score": 85.97271341463414,
-        "date": "2026-04-15"
-      },
-      {
         "type": "SELL",
         "ticker": "WMT",
         "shares": 11,
@@ -5512,12 +5493,31 @@
         "date": "2026-07-15"
       },
       {
+        "type": "SELL",
+        "ticker": "TMO",
+        "shares": 1,
+        "price": 535.2899780273438,
+        "proceeds": 535.2899780273438,
+        "holdingReturn": 0.014056458936464098,
+        "holdingDays": 273,
+        "date": "2026-07-15"
+      },
+      {
         "type": "BUY",
         "ticker": "AMZN",
         "shares": 1,
         "price": 254.9600067138672,
         "cost": 254.9600067138672,
         "score": 85.56875,
+        "date": "2026-07-15"
+      },
+      {
+        "type": "BUY",
+        "ticker": "AAPL",
+        "shares": 3,
+        "price": 327.5,
+        "cost": 982.5,
+        "score": 84.61875,
         "date": "2026-07-15"
       }
     ],
@@ -5561,7 +5561,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 82.73,
+        "avgTopScore": 82.68,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5602,13 +5602,13 @@
           "AMZN",
           "MSFT",
           "CRM",
-          "BAC",
-          "AVGO"
+          "AVGO",
+          "MRK"
         ],
         "tradesExecuted": 7,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 80.78,
+        "avgTopScore": 80.68,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5638,24 +5638,24 @@
           "AMD",
           "VRTX",
           "MA",
-          "JPM",
           "BRK-B",
-          "BAC",
+          "JPM",
           "CVX",
+          "BAC",
           "IBM",
           "AMGN"
         ],
         "topPicks": [
           "AMZN",
-          "JPM",
           "BRK-B",
+          "JPM",
           "AMD",
-          "BAC",
           "LLY",
           "CVX",
+          "BAC",
           "GOOGL",
-          "IBM",
           "GOOG",
+          "IBM",
           "XOM",
           "MSFT",
           "AMGN",
@@ -5665,7 +5665,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 85.13,
+        "avgTopScore": 85.06,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5692,8 +5692,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "IBM",
           "CSCO",
@@ -5714,14 +5714,14 @@
           "BRK-B",
           "XOM",
           "IBM",
-          "BAC",
           "GOOGL",
+          "BAC",
           "GOOG"
         ],
         "tradesExecuted": 9,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.67,
+        "avgTopScore": 84.58,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5747,8 +5747,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "CSCO",
           "AVGO"
@@ -5762,12 +5762,12 @@
           "CVX",
           "TXN",
           "MA",
-          "BAC"
+          "V"
         ],
         "tradesExecuted": 5,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 75.23,
+        "avgTopScore": 75.17,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5794,8 +5794,8 @@
           "WMT",
           "PM",
           "KO",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
@@ -5806,15 +5806,15 @@
           "BRK-B",
           "KO",
           "COST",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
         "tradesExecuted": 16,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 56.03,
+        "avgTopScore": 55.98,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5871,7 +5871,7 @@
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.7,
+        "avgTopScore": 79.66,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5920,7 +5920,7 @@
         "tradesExecuted": 12,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 82.16,
+        "avgTopScore": 82.12,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5969,7 +5969,7 @@
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.14,
+        "avgTopScore": 84.18,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5997,12 +5997,12 @@
           "CSCO",
           "RTX",
           "NEE",
+          "TMO",
           "JNJ",
           "XOM",
           "TXN",
           "GOOGL",
-          "AMZN",
-          "GOOG"
+          "AMZN"
         ],
         "topPicks": [
           "TXN",
@@ -6019,10 +6019,10 @@
           "HON",
           "RTX"
         ],
-        "tradesExecuted": 5,
+        "tradesExecuted": 3,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 82.45,
+        "avgTopScore": 82.49,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6041,7 +6041,7 @@
       },
       {
         "date": "2026-07-15",
-        "portfolioValue": 14262.228715057372,
+        "portfolioValue": 14158.628739471435,
         "holdings": [
           "NVDA",
           "JPM",
@@ -6053,25 +6053,25 @@
           "TXN",
           "GOOGL",
           "AMZN",
-          "GOOG"
+          "AAPL"
         ],
         "topPicks": [
           "AMZN",
-          "BAC",
           "AAPL",
+          "BAC",
           "JPM",
           "AMGN",
           "UNH",
-          "GOOGL",
           "ABBV",
+          "GOOGL",
           "V",
           "AMD",
           "NVDA"
         ],
-        "tradesExecuted": 3,
+        "tradesExecuted": 5,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 80.69,
+        "avgTopScore": 80.63,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6129,7 +6129,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 82.73,
+        "avgTopScore": 82.68,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6170,13 +6170,13 @@
           "AMZN",
           "MSFT",
           "CRM",
-          "BAC",
-          "AVGO"
+          "AVGO",
+          "MRK"
         ],
         "tradesExecuted": 7,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 80.78,
+        "avgTopScore": 80.68,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6206,24 +6206,24 @@
           "AMD",
           "VRTX",
           "MA",
-          "JPM",
           "BRK-B",
-          "BAC",
+          "JPM",
           "CVX",
+          "BAC",
           "IBM",
           "AMGN"
         ],
         "topPicks": [
           "AMZN",
-          "JPM",
           "BRK-B",
+          "JPM",
           "AMD",
-          "BAC",
           "LLY",
           "CVX",
+          "BAC",
           "GOOGL",
-          "IBM",
           "GOOG",
+          "IBM",
           "XOM",
           "MSFT",
           "AMGN",
@@ -6233,7 +6233,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 85.13,
+        "avgTopScore": 85.06,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6260,8 +6260,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "IBM",
           "CSCO",
@@ -6282,14 +6282,14 @@
           "BRK-B",
           "XOM",
           "IBM",
-          "BAC",
           "GOOGL",
+          "BAC",
           "GOOG"
         ],
         "tradesExecuted": 9,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.67,
+        "avgTopScore": 84.58,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6315,8 +6315,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "CSCO",
           "AVGO"
@@ -6330,12 +6330,12 @@
           "CVX",
           "TXN",
           "MA",
-          "BAC"
+          "V"
         ],
         "tradesExecuted": 5,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 75.23,
+        "avgTopScore": 75.17,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6362,8 +6362,8 @@
           "WMT",
           "PM",
           "KO",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
@@ -6374,15 +6374,15 @@
           "BRK-B",
           "KO",
           "COST",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
         "tradesExecuted": 16,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 56.03,
+        "avgTopScore": 55.98,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6439,7 +6439,7 @@
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.7,
+        "avgTopScore": 79.66,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6488,7 +6488,7 @@
         "tradesExecuted": 12,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 82.16,
+        "avgTopScore": 82.12,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6537,7 +6537,7 @@
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.14,
+        "avgTopScore": 84.18,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6565,12 +6565,12 @@
           "CSCO",
           "RTX",
           "NEE",
+          "TMO",
           "JNJ",
           "XOM",
           "TXN",
           "GOOGL",
-          "AMZN",
-          "GOOG"
+          "AMZN"
         ],
         "topPicks": [
           "TXN",
@@ -6587,10 +6587,10 @@
           "HON",
           "RTX"
         ],
-        "tradesExecuted": 5,
+        "tradesExecuted": 3,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 82.45,
+        "avgTopScore": 82.49,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6609,7 +6609,7 @@
       },
       {
         "date": "2026-07-15",
-        "portfolioValue": 14262.228715057372,
+        "portfolioValue": 14158.628739471435,
         "holdings": [
           "NVDA",
           "JPM",
@@ -6621,25 +6621,25 @@
           "TXN",
           "GOOGL",
           "AMZN",
-          "GOOG"
+          "AAPL"
         ],
         "topPicks": [
           "AMZN",
-          "BAC",
           "AAPL",
+          "BAC",
           "JPM",
           "AMGN",
           "UNH",
-          "GOOGL",
           "ABBV",
+          "GOOGL",
           "V",
           "AMD",
           "NVDA"
         ],
-        "tradesExecuted": 3,
+        "tradesExecuted": 5,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 80.69,
+        "avgTopScore": 80.63,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6769,11 +6769,11 @@
         "congressNetBuys": 0
       },
       {
-        "ticker": "GOOG",
+        "ticker": "AAPL",
         "shares": 3,
-        "entryPrice": 334.4700012207031,
-        "currentPrice": 370.2099914550781,
-        "return": 10.685559274056281,
+        "entryPrice": 327.5,
+        "currentPrice": 327.5,
+        "return": 0,
         "congressScore": 0,
         "congressSentiment": "neutral",
         "congressPoliticians": [],
@@ -6784,8 +6784,8 @@
       "bars": {
         "sources": {
           "gold": 0,
-          "diskFresh": 53,
-          "yahoo": 0,
+          "diskFresh": 0,
+          "yahoo": 53,
           "stale": 0
         },
         "validation": {
@@ -6801,7 +6801,7 @@
         "benchmarkStaleWarning": null
       }
     },
-    "computedAt": "2026-10-06T01:49:52.449Z",
+    "computedAt": "2026-10-07T00:54:22.309Z",
     "cached": false
   }
 }
