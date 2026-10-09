@@ -1,5 +1,5 @@
 {
-  "_snapshotTs": 1791421864520,
+  "_snapshotTs": 1791508785707,
   "_snapshotData": {
     "success": true,
     "strategy": "full_composite",
@@ -19,9 +19,9 @@
     "initialCapital": 10000,
     "pointInTime": false,
     "pitDetail": {
-      "ok": 49,
-      "fallback": 3,
-      "stale": 48
+      "ok": 52,
+      "fallback": 0,
+      "stale": 51
     },
     "adaptiveMode": "fixed",
     "positionSizing": "invVol",
@@ -77,14 +77,14 @@
         {
           "name": "fundamental",
           "label": "Quality",
-          "ic": 0.0149,
+          "ic": 0.0005,
           "icConfidence": {
-            "lower": -0.1398,
-            "upper": 0.1697,
+            "lower": -0.152,
+            "upper": 0.1531,
             "significant": false
           },
-          "spread": 0.33,
-          "contribution": 254.97,
+          "spread": 0.06,
+          "contribution": 252.83,
           "originalWeight": 0.11764705882352942,
           "suggestedWeight": 0.118,
           "color": "#22c55e"
@@ -92,13 +92,13 @@
         {
           "name": "dcf",
           "label": "DCF",
-          "ic": -0.094,
+          "ic": -0.0867,
           "icConfidence": {
-            "lower": -0.2263,
-            "upper": 0.0383,
+            "lower": -0.2196,
+            "upper": 0.0462,
             "significant": false
           },
-          "spread": -0.17,
+          "spread": -0.26,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0,
@@ -107,13 +107,13 @@
         {
           "name": "valuation",
           "label": "Valuation",
-          "ic": -0.0024,
+          "ic": -0.0107,
           "icConfidence": {
-            "lower": -0.1254,
-            "upper": 0.1207,
+            "lower": -0.1366,
+            "upper": 0.1152,
             "significant": false
           },
-          "spread": 1.06,
+          "spread": 0.04,
           "contribution": 0,
           "originalWeight": 0,
           "suggestedWeight": 0,
@@ -122,14 +122,14 @@
         {
           "name": "momentum",
           "label": "Momentum",
-          "ic": -0.0183,
+          "ic": -0.0164,
           "icConfidence": {
-            "lower": -0.1258,
-            "upper": 0.0892,
+            "lower": -0.1218,
+            "upper": 0.0891,
             "significant": false
           },
           "spread": 1.44,
-          "contribution": 1372.12,
+          "contribution": 1373.12,
           "originalWeight": 0.35294117647058826,
           "suggestedWeight": 0.353,
           "color": "#06b6d4"
@@ -137,14 +137,14 @@
         {
           "name": "value",
           "label": "Value",
-          "ic": 0.0461,
+          "ic": 0.0463,
           "icConfidence": {
             "lower": -0.0982,
-            "upper": 0.1905,
+            "upper": 0.1909,
             "significant": false
           },
           "spread": 1.18,
-          "contribution": 1070.54,
+          "contribution": 1071.22,
           "originalWeight": 0.35294117647058826,
           "suggestedWeight": 0.353,
           "color": "#8b5cf6"
@@ -159,7 +159,7 @@
             "significant": false
           },
           "spread": 2.9,
-          "contribution": 426.66,
+          "contribution": 427.11,
           "originalWeight": 0.17647058823529413,
           "suggestedWeight": 0.176,
           "color": "#ec4899"
@@ -168,7 +168,7 @@
       "totalContribution": 3124.29,
       "periodsAnalyzed": 10,
       "avgStocksPerPeriod": 42,
-      "insight": "Earnings momentum had the highest average IC (+0.092, spread +2.9%/period). DCF averaged negative IC (-0.094) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 18%.",
+      "insight": "Earnings momentum had the highest average IC (+0.092, spread +2.9%/period). DCF averaged negative IC (-0.087) — adaptive weights should not increase that pillar when IC stays negative. Suggested blend vs effective ranking mix: Earnings momentum 18% → 18%.",
       "suggestedWeights": {
         "fundamental": 0.118,
         "dcf": 0,
@@ -405,7 +405,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "BAC": {
+      "CVX": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -413,7 +413,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "CVX": {
+      "BAC": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -485,7 +485,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "ABT": {
+      "MCD": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -493,7 +493,7 @@
         "netSells": 0,
         "politicians": []
       },
-      "MCD": {
+      "ABT": {
         "score": 0,
         "sentiment": "neutral",
         "hasSignal": false,
@@ -4696,7 +4696,7 @@
         "shares": 2,
         "price": 158.74000549316406,
         "cost": 317.4800109863281,
-        "score": 80.8125,
+        "score": 80.875,
         "date": "2024-01-16"
       },
       {
@@ -4723,7 +4723,7 @@
         "shares": 5,
         "price": 167.99000549316406,
         "cost": 839.9500274658203,
-        "score": 78.51249999999999,
+        "score": 77.875,
         "date": "2024-01-16"
       },
       {
@@ -4832,15 +4832,6 @@
       },
       {
         "type": "BUY",
-        "ticker": "JPM",
-        "shares": 3,
-        "price": 210.0500030517578,
-        "cost": 630.1500091552734,
-        "score": 90.38035714285714,
-        "date": "2024-07-15"
-      },
-      {
-        "type": "BUY",
         "ticker": "BRK-B",
         "shares": 2,
         "price": 434.4200134277344,
@@ -4850,11 +4841,11 @@
       },
       {
         "type": "BUY",
-        "ticker": "BAC",
-        "shares": 20,
-        "price": 41.88999938964844,
-        "cost": 837.7999877929688,
-        "score": 85.62155612244898,
+        "ticker": "JPM",
+        "shares": 3,
+        "price": 210.0500030517578,
+        "cost": 630.1500091552734,
+        "score": 89.74285714285713,
         "date": "2024-07-15"
       },
       {
@@ -4864,6 +4855,15 @@
         "price": 158.0399932861328,
         "cost": 790.1999664306641,
         "score": 85.29719387755102,
+        "date": "2024-07-15"
+      },
+      {
+        "type": "BUY",
+        "ticker": "BAC",
+        "shares": 20,
+        "price": 41.88999938964844,
+        "cost": 837.7999877929688,
+        "score": 84.98405612244898,
         "date": "2024-07-15"
       },
       {
@@ -5128,20 +5128,20 @@
       },
       {
         "type": "BUY",
-        "ticker": "ABT",
-        "shares": 8,
-        "price": 126.22000122070312,
-        "cost": 1009.760009765625,
-        "score": 64.96184210526316,
-        "date": "2025-04-15"
-      },
-      {
-        "type": "BUY",
         "ticker": "MCD",
         "shares": 3,
         "price": 312.4800109863281,
         "cost": 937.4400329589844,
         "score": 64.86085526315789,
+        "date": "2025-04-15"
+      },
+      {
+        "type": "BUY",
+        "ticker": "ABT",
+        "shares": 8,
+        "price": 126.22000122070312,
+        "cost": 1009.760009765625,
+        "score": 64.22434210526316,
         "date": "2025-04-15"
       },
       {
@@ -5207,7 +5207,7 @@
         "shares": 3,
         "price": 286.54998779296875,
         "cost": 859.6499633789062,
-        "score": 88.3375,
+        "score": 87.69999999999999,
         "date": "2025-07-15"
       },
       {
@@ -5216,7 +5216,7 @@
         "shares": 2,
         "price": 155.61000061035156,
         "cost": 311.2200012207031,
-        "score": 84.91305799161088,
+        "score": 84.97555799161088,
         "date": "2025-07-15"
       },
       {
@@ -5316,22 +5316,22 @@
       },
       {
         "type": "SELL",
-        "ticker": "COST",
-        "shares": 1,
-        "price": 954.989990234375,
-        "proceeds": 954.989990234375,
-        "holdingReturn": 0.40132651090875027,
-        "holdingDays": 638,
-        "date": "2025-10-15"
-      },
-      {
-        "type": "SELL",
         "ticker": "ABT",
         "shares": 8,
         "price": 129.4499969482422,
         "proceeds": 1035.5999755859375,
         "holdingReturn": 0.02559020516796878,
         "holdingDays": 183,
+        "date": "2025-10-15"
+      },
+      {
+        "type": "SELL",
+        "ticker": "COST",
+        "shares": 1,
+        "price": 954.989990234375,
+        "proceeds": 954.989990234375,
+        "holdingReturn": 0.40132651090875027,
+        "holdingDays": 638,
         "date": "2025-10-15"
       },
       {
@@ -5552,7 +5552,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 82.75,
+        "avgTopScore": 82.71,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5594,12 +5594,12 @@
           "MSFT",
           "CRM",
           "AVGO",
-          "BAC"
+          "MRK"
         ],
         "tradesExecuted": 7,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 80.75,
+        "avgTopScore": 80.71,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5629,22 +5629,22 @@
           "AMD",
           "VRTX",
           "MA",
-          "JPM",
           "BRK-B",
-          "BAC",
+          "JPM",
           "CVX",
+          "BAC",
           "XOM",
           "AMGN"
         ],
         "topPicks": [
           "AMZN",
-          "JPM",
           "BRK-B",
+          "JPM",
           "AMD",
-          "BAC",
           "GOOGL",
           "LLY",
           "CVX",
+          "BAC",
           "GOOG",
           "XOM",
           "IBM",
@@ -5656,7 +5656,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 85.09,
+        "avgTopScore": 85.01,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5683,8 +5683,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "XOM",
           "CSCO",
@@ -5706,13 +5706,13 @@
           "XOM",
           "ACN",
           "GOOGL",
-          "BAC",
-          "GOOG"
+          "GOOG",
+          "BAC"
         ],
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.65,
+        "avgTopScore": 84.57,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5738,8 +5738,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "CSCO",
           "AVGO"
@@ -5758,7 +5758,7 @@
         "tradesExecuted": 4,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 75.27,
+        "avgTopScore": 75.18,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5785,8 +5785,8 @@
           "WMT",
           "PM",
           "KO",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
@@ -5797,15 +5797,15 @@
           "BRK-B",
           "KO",
           "COST",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
         "tradesExecuted": 16,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 56,
+        "avgTopScore": 55.95,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5862,7 +5862,7 @@
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.65,
+        "avgTopScore": 79.61,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5911,7 +5911,7 @@
         "tradesExecuted": 13,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 82.19,
+        "avgTopScore": 82.11,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -5960,7 +5960,7 @@
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.19,
+        "avgTopScore": 84.2,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6013,7 +6013,7 @@
         "tradesExecuted": 5,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 82.46,
+        "avgTopScore": 82.47,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6048,8 +6048,8 @@
         ],
         "topPicks": [
           "AMZN",
-          "BAC",
           "AAPL",
+          "BAC",
           "JPM",
           "AMGN",
           "UNH",
@@ -6062,7 +6062,7 @@
         "tradesExecuted": 3,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 80.73,
+        "avgTopScore": 80.65,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6120,7 +6120,7 @@
         "tradesExecuted": 14,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 82.75,
+        "avgTopScore": 82.71,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6162,12 +6162,12 @@
           "MSFT",
           "CRM",
           "AVGO",
-          "BAC"
+          "MRK"
         ],
         "tradesExecuted": 7,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 80.75,
+        "avgTopScore": 80.71,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6197,22 +6197,22 @@
           "AMD",
           "VRTX",
           "MA",
-          "JPM",
           "BRK-B",
-          "BAC",
+          "JPM",
           "CVX",
+          "BAC",
           "XOM",
           "AMGN"
         ],
         "topPicks": [
           "AMZN",
-          "JPM",
           "BRK-B",
+          "JPM",
           "AMD",
-          "BAC",
           "GOOGL",
           "LLY",
           "CVX",
+          "BAC",
           "GOOG",
           "XOM",
           "IBM",
@@ -6224,7 +6224,7 @@
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 85.09,
+        "avgTopScore": 85.01,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6251,8 +6251,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "XOM",
           "CSCO",
@@ -6274,13 +6274,13 @@
           "XOM",
           "ACN",
           "GOOGL",
-          "BAC",
-          "GOOG"
+          "GOOG",
+          "BAC"
         ],
         "tradesExecuted": 8,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 84.65,
+        "avgTopScore": 84.57,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6306,8 +6306,8 @@
           "COST",
           "AMZN",
           "MA",
-          "JPM",
           "BRK-B",
+          "JPM",
           "BAC",
           "CSCO",
           "AVGO"
@@ -6326,7 +6326,7 @@
         "tradesExecuted": 4,
         "regime": "caution",
         "exposure": 0.7,
-        "avgTopScore": 75.27,
+        "avgTopScore": 75.18,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6353,8 +6353,8 @@
           "WMT",
           "PM",
           "KO",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
@@ -6365,15 +6365,15 @@
           "BRK-B",
           "KO",
           "COST",
-          "ABT",
           "MCD",
+          "ABT",
           "VRTX",
           "IBM"
         ],
         "tradesExecuted": 16,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 56,
+        "avgTopScore": 55.95,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6430,7 +6430,7 @@
         "tradesExecuted": 10,
         "regime": "strong_bull",
         "exposure": 1,
-        "avgTopScore": 79.65,
+        "avgTopScore": 79.61,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6479,7 +6479,7 @@
         "tradesExecuted": 13,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 82.19,
+        "avgTopScore": 82.11,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6528,7 +6528,7 @@
         "tradesExecuted": 4,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 84.19,
+        "avgTopScore": 84.2,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6581,7 +6581,7 @@
         "tradesExecuted": 5,
         "regime": "normal",
         "exposure": 0.95,
-        "avgTopScore": 82.46,
+        "avgTopScore": 82.47,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6616,8 +6616,8 @@
         ],
         "topPicks": [
           "AMZN",
-          "BAC",
           "AAPL",
+          "BAC",
           "JPM",
           "AMGN",
           "UNH",
@@ -6630,7 +6630,7 @@
         "tradesExecuted": 3,
         "regime": "pullback",
         "exposure": 0.85,
-        "avgTopScore": 80.73,
+        "avgTopScore": 80.65,
         "pillarWeights": {
           "momentum": 0.375,
           "value": 0.375,
@@ -6792,7 +6792,7 @@
         "benchmarkStaleWarning": null
       }
     },
-    "computedAt": "2026-10-08T01:11:04.517Z",
+    "computedAt": "2026-10-09T01:19:45.704Z",
     "cached": false
   }
 }
